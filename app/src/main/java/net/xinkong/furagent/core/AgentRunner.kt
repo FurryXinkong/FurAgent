@@ -40,6 +40,7 @@ object AgentRunner {
         val sessionId: String = "",
         val history: List<ChatMessage> = emptyList(),
         val thinking: String = "",
+        val reasoning: String = "",
         val streaming: String = "",
         val isRunning: Boolean = false,
         val currentToolName: String = "",
@@ -152,6 +153,12 @@ object AgentRunner {
                         if (!isCurrent()) return@runAgentTurn
                         _snapshot.value = _snapshot.value.copy(thinking = text)
                     },
+                    onReasoning = { r ->
+                        if (!isCurrent()) return@runAgentTurn
+                        _snapshot.value = _snapshot.value.copy(
+                            reasoning = _snapshot.value.reasoning + r
+                        )
+                    },
                     onStreamChunk = { chunk ->
                         if (!isCurrent()) return@runAgentTurn
                         _snapshot.value = _snapshot.value.copy(
@@ -160,7 +167,8 @@ object AgentRunner {
                     },
                     onStreamCommit = {
                         if (!isCurrent()) return@runAgentTurn
-                        _snapshot.value = _snapshot.value.copy(streaming = "")
+                        // reasoning 已随 assistant 消息落库，清空运行时状态避免与消息内面板重复
+                        _snapshot.value = _snapshot.value.copy(streaming = "", reasoning = "")
                     },
                     onFinish = finish@{
                         if (!isCurrent()) return@finish
@@ -170,6 +178,7 @@ object AgentRunner {
                             isRunning = false,
                             currentToolName = "",
                             thinking = "",
+                            reasoning = "",
                             streaming = ""
                         )
                         currentJob = null
@@ -202,7 +211,7 @@ object AgentRunner {
                 if (isCurrent()) {
                     AgentLogger.log("SYS", "Agent 任务被取消")
                     _snapshot.value = _snapshot.value.copy(
-                        isRunning = false, currentToolName = "", thinking = "", streaming = ""
+                        isRunning = false, currentToolName = "", thinking = "", reasoning = "", streaming = ""
                     )
                     currentJob = null
                     mainHandler.post {

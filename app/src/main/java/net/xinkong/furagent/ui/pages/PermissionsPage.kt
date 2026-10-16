@@ -29,6 +29,7 @@ import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
 
 /**
@@ -60,37 +61,11 @@ fun PermissionsPage(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "权限",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            if (allGranted) "所有权限已就绪"
-                            else "${permissions.count { !it.granted }} 项待授权",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+            PocoPageTopBar(
+                title = "权限",
+                subtitle = if (allGranted) "所有权限已就绪"
+                    else "${permissions.count { !it.granted }} 项待授权",
+                onBack = onBack
             )
         },
         containerColor = glassPageBg(),

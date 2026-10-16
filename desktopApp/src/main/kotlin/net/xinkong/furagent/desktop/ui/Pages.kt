@@ -1296,7 +1296,7 @@ private fun DirectDevicesSection(onInfo: (String) -> Unit) {
             )
             Spacer(Modifier.height(6.dp))
             Text(
-                "把「短码」口头报给对方，或把「连接串」复制过去。" +
+                "把「短码」报给对方（复制时会自动带上本机 IP），或把「连接串」复制过去。" +
                         "对方在「添加直连设备」里输入任意一种即可配对。",
                 fontSize = 11.sp,
                 color = TextSecondary()
@@ -1326,10 +1326,17 @@ private fun DirectDevicesSection(onInfo: (String) -> Unit) {
                             color = AccentColor(),
                             letterSpacing = 3.sp
                         )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "复制后为 ${localIp}:${localShortCode}，对方粘贴即可",
+                            fontSize = 10.sp,
+                            color = TextMuted()
+                        )
                     }
                     SecondaryButton(text = "复制短码") {
-                        val ok = SafeClipboard.setText(localShortCode)
-                        onInfo(if (ok) "短码已复制：$localShortCode" else "复制失败")
+                        val copyText = DirectDeviceCodec.buildShortCodeString(localIp, localShortCode)
+                        val ok = SafeClipboard.setText(copyText)
+                        onInfo(if (ok) "已复制：$copyText" else "复制失败")
                     }
                 }
 
@@ -1398,7 +1405,7 @@ private fun DirectDevicesSection(onInfo: (String) -> Unit) {
                     Text("暂无直连设备", fontSize = 13.sp, color = TextSecondary())
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        "在另一台设备上打开 FurAgent，把它的短码报过来，" +
+                        "在另一台设备上打开 FurAgent，复制它的短码（形如 192.168.1.100:A3F7C1），" +
                                 "或复制它的连接串，然后在这里点「添加」。",
                         fontSize = 11.sp,
                         color = TextMuted(),
@@ -1475,14 +1482,14 @@ private fun DirectDevicesSection(onInfo: (String) -> Unit) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     HintText(
                         "支持两种输入：\n" +
-                                "· 短码：6 位字母数字（例如 A3F7C1），会自动向对方换取凭证\n" +
+                                "· 短码：IP:短码（例如 192.168.1.100:A3F7C1），会自动向对方换取凭证\n" +
                                 "· 完整连接串：IP:端口:Token，直接可用"
                     )
                     GlassTextField(
                         input,
                         { input = it; errMsg = null },
                         label = "短码 或 连接串",
-                        placeholder = "A3F7C1  或  192.168.1.100:8426:abc123def",
+                        placeholder = "192.168.1.100:A3F7C1  或  192.168.1.100:8426:abc123def",
                         singleLine = false, minLines = 2, maxLines = 3, monospace = true
                     )
                     GlassTextField(
@@ -1518,11 +1525,16 @@ private fun DirectDevicesSection(onInfo: (String) -> Unit) {
                             return@TextButton
                         }
 
+                        if (DirectDeviceCodec.isBareShortCode(raw)) {
+                            errMsg = "短码需配合对方 IP，请填 IP:短码（如 192.168.1.100:${raw.uppercase()}）"
+                            return@TextButton
+                        }
+
                         if (DirectDeviceCodec.isShortCode(raw)) {
                             // 短码流程：先解析 host/port/code，再调 /pair
                             val triple = extractHostPortCode(raw)
                             if (triple == null) {
-                                errMsg = "短码格式不正确（应为 host:port:code 或 host:code）"
+                                errMsg = "短码格式不正确（应为 IP:短码 或 IP:端口:短码）"
                                 return@TextButton
                             }
                             val (host, port, code) = triple

@@ -142,6 +142,7 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         history: List<DesktopMessage>,
         onUpdate: (List<DesktopMessage>) -> Unit,
         onThinking: (String) -> Unit,
+        onReasoning: (String) -> Unit,
         onStream: (String) -> Unit,
         onStreamCommit: () -> Unit
     ): List<DesktopMessage> = withContext(Dispatchers.IO) {
@@ -218,7 +219,11 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                 put("stream", true)
             }
             // 【P1-2】按模型能力强制关闭思考（与手机端 Agent.kt 一致）
-            applyDisableThinking(body, profile)
+            if (settings.enableThinking) {
+                net.xinkong.furagent.shared.util.applyEnableThinking(body, profile.baseUrl)
+            } else {
+                applyDisableThinking(body, profile)
+            }
 
             val request = Request.Builder()
                 .url(profile.baseUrl)
@@ -256,6 +261,7 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             }
 
             val contentBuilder = StringBuilder()
+            val reasoningBuilder = StringBuilder()
             var toolCalls: MutableMap<Int, ToolCallAccumulator> = mutableMapOf()
 
             try {
@@ -265,6 +271,10 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                         onContent = { content ->
                             contentBuilder.append(content)
                             onStream(content)
+                        },
+                        onReasoning = { r ->
+                            reasoningBuilder.append(r)
+                            onReasoning(r)
                         },
                         onParseError = { cls, data ->
                             DesktopLogger.warn("Agent", "SSE 单行 JSON 解析失败：$cls，行：${data.take(120)}")
@@ -285,7 +295,10 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             if (toolCalls.isEmpty()) {
                 onThinking("")
                 val final = contentStr.ifBlank { "(无回复)" }
-                current = current + DesktopMessage(role = "assistant", content = final, type = "text")
+                current = current + DesktopMessage(
+                    role = "assistant", content = final, type = "text",
+                    reasoning = reasoningBuilder.toString()
+                )
                 onUpdate(current)
                 onStreamCommit()
                 DesktopLogger.info("Agent", "对话结束")
@@ -293,7 +306,10 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             }
 
             if (contentStr.isNotBlank()) {
-                current = current + DesktopMessage(role = "assistant", content = contentStr, type = "text")
+                current = current + DesktopMessage(
+                    role = "assistant", content = contentStr, type = "text",
+                    reasoning = reasoningBuilder.toString()
+                )
                 onUpdate(current)
                 onStreamCommit()
             }

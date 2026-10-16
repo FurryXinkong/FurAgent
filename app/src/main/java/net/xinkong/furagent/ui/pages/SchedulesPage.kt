@@ -57,32 +57,10 @@ fun SchedulesPage(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "定时任务",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "${tasks.size} 个 · $enabledCount 个启用",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            PocoPageTopBar(
+                title = "定时任务",
+                subtitle = "${tasks.size} 个 · $enabledCount 个启用",
+                onBack = onBack,
                 actions = {
                     TextButton(onClick = { showNewTask = true }) {
                         Icon(
@@ -97,11 +75,7 @@ fun SchedulesPage(onBack: () -> Unit) {
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                }
             )
         },
         containerColor = glassPageBg(),
@@ -118,7 +92,22 @@ fun SchedulesPage(onBack: () -> Unit) {
                 alpha = 0.06f
             )
             if (tasks.isEmpty()) {
-                EmptySchedulesState(onCreate = { showNewTask = true })
+                PocoEmptyState(
+                    icon = Icons.Default.Schedule,
+                    title = "暂无定时任务",
+                    subtitle = "点右上角\"新建\"，或让 AI 帮你设置",
+                    modifier = Modifier.fillMaxSize(),
+                    action = {
+                        Button(
+                            onClick = { showNewTask = true },
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("新建任务")
+                        }
+                    }
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -209,48 +198,7 @@ fun SchedulesPage(onBack: () -> Unit) {
     }
 }
 
-// ============================================================
-// 空状态
-// ============================================================
-
-@Composable
-private fun EmptySchedulesState(onCreate: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                Icons.Default.Schedule,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "暂无定时任务",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "点右上角\"新建\"，或让 AI 帮你设置",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(20.dp))
-            Button(
-                onClick = onCreate,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("新建任务")
-            }
-        }
-    }
-}
+// 【批次 20 UI 收口】EmptySchedulesState 已合并到 PocoEmptyState（Glass.kt）。
 
 // ============================================================
 // 定时任务卡片（【F4】加 Switch）

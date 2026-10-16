@@ -24,6 +24,10 @@ data class DesktopModelProfile(
      */
     val kind: String = "chat",
     val supportsDisableThinking: Boolean = true,
+    /**
+     * 模型是否支持深度思考。关闭时 ChatPage 输入框不显示「深度思考」开关。
+     */
+    val supportsThinking: Boolean = true,
     val supportsVision: Boolean = true,
     /**
      * 采样温度。默认 0.1（Agent 场景要稳定调工具，低温更可靠）。
@@ -41,7 +45,7 @@ data class ModelPreset(
 )
 
 val BUILTIN_MODEL_PRESETS: List<ModelPreset> = listOf(
-    ModelPreset("deepseek", "DeepSeek", "https://api.deepseek.com/chat/completions", "deepseek-chat", "官方"),
+    ModelPreset("deepseek", "DeepSeek", "https://api.deepseek.com/chat/completions", "deepseek-flash", "官方"),
     ModelPreset("ollama", "Ollama", "http://localhost:11434/v1/chat/completions", "qwen2.5:7b", "本地"),
     ModelPreset("oneapi", "自建中转站", "http://localhost:3000/v1/chat/completions", "gpt-4o-mini", "自建")
 )
@@ -51,7 +55,7 @@ fun defaultModelProfiles(): List<DesktopModelProfile> = listOf(
         id = "default-deepseek",
         name = "DeepSeek",
         baseUrl = "https://api.deepseek.com/chat/completions",
-        model = "deepseek-chat",
+        model = "deepseek-flash",
         isBuiltIn = true
     )
 )
@@ -83,6 +87,12 @@ data class DesktopSettings(
 
     val autoSpeak: Boolean = false,
     val port: Int = 8425,
+
+    /**
+     * 是否主动开启深度思考（全局开关，ChatPage 输入框切换）。
+     * 开启后按厂商加"启用思考"参数。
+     */
+    val enableThinking: Boolean = false,
 
     val requireConfirmWrite: Boolean = true,
     val requireConfirmDelete: Boolean = true,
@@ -152,6 +162,7 @@ data class DesktopSettings(
                             put("apiKey", if (p.apiKey.isBlank()) "" else SecretCodec.obfuscate(p.apiKey))
                             put("isBuiltIn", p.isBuiltIn)
                             put("supportsDisableThinking", p.supportsDisableThinking)
+                            put("supportsThinking", p.supportsThinking)
                             put("supportsVision", p.supportsVision)
                             put("temperature", p.temperature)
                             put("kind", p.kind)
@@ -168,6 +179,7 @@ data class DesktopSettings(
                 put("systemPromptAddon", systemPromptAddon)
                 put("systemPromptFull", systemPromptFull)
                 put("autoSpeak", autoSpeak)
+                put("enableThinking", enableThinking)
                 put("port", port)
                 put("requireConfirmWrite", requireConfirmWrite)
                 put("requireConfirmDelete", requireConfirmDelete)
@@ -240,6 +252,7 @@ data class DesktopSettings(
                                 apiKey = safeDeobfuscate(p.optString("apiKey", "")),
                                 isBuiltIn = p.optBoolean("isBuiltIn", false),
                                 supportsDisableThinking = p.optBoolean("supportsDisableThinking", true),
+                                supportsThinking = p.optBoolean("supportsThinking", true),
                                 supportsVision = p.optBoolean("supportsVision", true),
                                 temperature = p.optDouble("temperature", 0.1),
                                 kind = p.optString("kind", "chat").ifBlank { "chat" }
@@ -314,6 +327,7 @@ data class DesktopSettings(
                     systemPromptAddon = o.optString("systemPromptAddon", ""),
                     systemPromptFull = o.optString("systemPromptFull", ""),
                     autoSpeak = o.optBoolean("autoSpeak", false),
+                    enableThinking = o.optBoolean("enableThinking", false),
                     port = o.optInt("port", 8425).coerceIn(1, 65535),
                     requireConfirmWrite = o.optBoolean("requireConfirmWrite", true),
                     requireConfirmDelete = o.optBoolean("requireConfirmDelete", true),

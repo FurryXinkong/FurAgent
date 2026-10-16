@@ -32,6 +32,8 @@ import net.xinkong.furagent.data.SessionMeta
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoEmptyState
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
 import java.text.SimpleDateFormat
 import java.util.*
@@ -72,32 +74,10 @@ fun SessionsPage(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "会话",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "${sessions.size} 个会话",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            PocoPageTopBar(
+                title = "会话",
+                subtitle = "${sessions.size} 个会话",
+                onBack = onBack,
                 actions = {
                     Box {
                         IconButton(onClick = { headerMenuOpen = true }) {
@@ -142,11 +122,7 @@ fun SessionsPage(
                             )
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                }
             )
         },
         containerColor = glassPageBg(),
@@ -193,8 +169,11 @@ fun SessionsPage(
                 )
 
                 if (filtered.isEmpty()) {
-                    EmptySessionsState(
-                        isEmpty = searchQuery.isBlank(),
+                    val empty = searchQuery.isBlank()
+                    PocoEmptyState(
+                        icon = Icons.AutoMirrored.Filled.List,
+                        title = if (empty) "暂无会话" else "无匹配结果",
+                        subtitle = if (empty) "点击右上角 + 新建一个会话" else null,
                         modifier = Modifier.fillMaxWidth().weight(1f)
                     )
                 } else {
@@ -235,46 +214,7 @@ fun SessionsPage(
     }
 }
 
-// ============================================================
-// 空状态
-// ============================================================
-//
-// 【统一标准】图标 56dp、onSurfaceVariant 标题、次级说明，间距 16/8。
-
-@Composable
-private fun EmptySessionsState(
-    isEmpty: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Box(
-        modifier = modifier,
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                Icons.AutoMirrored.Filled.List,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                if (isEmpty) "暂无会话" else "无匹配结果",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (isEmpty) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "点击右上角 + 新建一个会话",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
+// 【批次 20 UI 收口】EmptySessionsState 已合并到 PocoEmptyState（Glass.kt）。
 
 // ============================================================
 // 会话行
@@ -295,113 +235,94 @@ private fun SessionRow(
     var showMenu by remember { mutableStateOf(false) }
     val time = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(meta.updatedAt))
 
-    val borderColor by animateColorAsState(
-        targetValue = if (isCurrent) MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-        else Color.Transparent,
-        animationSpec = tween(180),
-        label = "sessionRowBorder"
-    )
-
-    Box(
-        Modifier.fillMaxWidth()
-            .then(
-                if (isCurrent) Modifier
-                    .border(
-                        width = 1.dp,
-                        color = borderColor,
-                        shape = RoundedCornerShape(24.dp)
-                    )
-                else Modifier
-            )
-    ) {
-        PocoCard {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { onSelect() }
-                    .padding(horizontal = 16.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        meta.title,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "$time · ${meta.messageCount} 条",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+    // 【批次 22 UI 收口】用 PocoCard(selectedBorder) 替代「外层 Box 描边 + 内层 PocoCard」双层结构。
+    PocoCard(selectedBorder = isCurrent) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { onSelect() }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    meta.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "$time · ${meta.messageCount} 条",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Box {
+                IconButton(
+                    onClick = { showMenu = true },
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "更多",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
-                Box {
-                    IconButton(
-                        onClick = { showMenu = true },
-                        modifier = Modifier.size(32.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.MoreVert,
-                            contentDescription = "更多",
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showMenu,
-                        onDismissRequest = { showMenu = false },
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("复制会话") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.ContentCopy,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = { showMenu = false; onDuplicate() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("导出 Markdown") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Share,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = { showMenu = false; onExport() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("重命名") },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Edit,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            },
-                            onClick = { showMenu = false; onRename() }
-                        )
-                        DropdownMenuItem(
-                            text = {
-                                Text("删除", color = MaterialTheme.colorScheme.error)
-                            },
-                            leadingIcon = {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    null,
-                                    tint = MaterialTheme.colorScheme.error
-                                )
-                            },
-                            onClick = { showMenu = false; onDelete() }
-                        )
-                    }
+                DropdownMenu(
+                    expanded = showMenu,
+                    onDismissRequest = { showMenu = false },
+                    containerColor = MaterialTheme.colorScheme.surface
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("复制会话") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.ContentCopy,
+                                null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onClick = { showMenu = false; onDuplicate() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("导出 Markdown") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Share,
+                                null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onClick = { showMenu = false; onExport() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("重命名") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Edit,
+                                null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        onClick = { showMenu = false; onRename() }
+                    )
+                    DropdownMenuItem(
+                        text = {
+                            Text("删除", color = MaterialTheme.colorScheme.error)
+                        },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.Delete,
+                                null,
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        },
+                        onClick = { showMenu = false; onDelete() }
+                    )
                 }
             }
         }

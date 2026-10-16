@@ -1747,7 +1747,7 @@ private fun EditModelProfileDialog(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var model by remember { mutableStateOf(initial.model) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
-    var supportsDisable by remember { mutableStateOf(initial.supportsDisableThinking) }
+    var supportsThinking by remember { mutableStateOf(initial.supportsThinking) }
     var supportsVision by remember { mutableStateOf(initial.supportsVision) }
     var temperature by remember { mutableStateOf(initial.temperature.toFloat()) }
     var selectedPresetId by remember { mutableStateOf<String?>(null) }
@@ -1801,7 +1801,11 @@ private fun EditModelProfileDialog(
                     GlassTextField(baseUrl, { baseUrl = it }, label = "Base URL", placeholder = "https://.../v1/chat/completions")
                     GlassTextField(model, { model = it }, label = "模型名", placeholder = "deepseek-chat")
                     GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...")
-                    GlassSwitchRow("支持关闭深度思考", null, supportsDisable) { supportsDisable = it }
+                    GlassSwitchRow(
+                        title = "支持深度思考",
+                        subtitle = "关闭后聊天页不显示「深度思考」开关（如 DeepSeek-V3 非思考版）",
+                        checked = supportsThinking
+                    ) { supportsThinking = it }
                     GlassSwitchRow(
                         title = "支持图片输入（多模态）",
                         subtitle = "关闭后禁用「截图」「查看图片」工具，并拒绝手动发送的图片",
@@ -1845,7 +1849,7 @@ private fun EditModelProfileDialog(
                         initial.copy(
                             name = name.trim(), baseUrl = baseUrl.trim(),
                             model = model.trim(), apiKey = apiKey.trim(),
-                            supportsDisableThinking = supportsDisable,
+                            supportsThinking = supportsThinking,
                             supportsVision = supportsVision,
                             temperature = temperature.toDouble(),
                             kind = initial.kind

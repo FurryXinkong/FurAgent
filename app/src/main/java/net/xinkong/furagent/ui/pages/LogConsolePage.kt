@@ -39,6 +39,7 @@ import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
 import java.io.File
 import java.text.SimpleDateFormat
@@ -199,33 +200,12 @@ fun LogConsolePage(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "日志",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "${sourceLogs.size} 条 · 显示 ${displayLogs.size} 条 · Token ≈ ${TokenStats.total}",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.clickable { showTokenDetail = true }
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            PocoPageTopBar(
+                title = "日志",
+                subtitle = "${sourceLogs.size} 条 · 显示 ${displayLogs.size} 条 · Token ≈ ${TokenStats.total}",
+                onBack = onBack,
+                subtitleColor = MaterialTheme.colorScheme.primary,
+                onSubtitleClick = { showTokenDetail = true },
                 actions = {
                     TextButton(onClick = { showClearConfirm = true }) {
                         Text(
@@ -233,11 +213,7 @@ fun LogConsolePage(
                             color = MaterialTheme.colorScheme.error
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                }
             )
         },
         containerColor = glassPageBg(),

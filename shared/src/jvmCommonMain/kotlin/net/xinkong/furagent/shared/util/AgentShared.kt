@@ -51,6 +51,37 @@ fun applyDisableThinking(body: JSONObject, baseUrl: String) {
     } catch (_: Exception) { }
 }
 
+/**
+ * 按模型能力主动开启思考。
+ *
+ * 与 applyDisableThinking 对称：各厂商字段名不同，按 baseUrl 关键字分派。
+ * 仅当 profile.enableThinking 为 true 时由调用方调用。
+ *
+ * 注意：开启思考与关闭思考互斥，调用方应保证不会同时加两套参数。
+ */
+fun applyEnableThinking(body: JSONObject, baseUrl: String) {
+    val url = baseUrl.lowercase(Locale.ROOT)
+    try {
+        when {
+            url.contains("deepseek") -> {
+                body.put("thinking", JSONObject().put("type", "enabled"))
+                body.put("reasoning_effort", "high")
+            }
+            url.contains("dashscope") -> body.put("enable_thinking", true)
+            url.contains("moonshot") -> body.put("thinking", JSONObject().put("type", "enabled"))
+            url.contains("bigmodel") || url.contains("z.ai") ->
+                body.put("thinking", JSONObject().put("type", "enabled"))
+            url.contains("openai") -> body.put("reasoning_effort", "medium")
+            url.contains("localhost") || url.contains("11434") -> body.put("think", true)
+            else -> {
+                body.put("thinking", JSONObject().put("type", "enabled"))
+                body.put("enable_thinking", true)
+                body.put("reasoning_effort", "medium")
+            }
+        }
+    } catch (_: Exception) { }
+}
+
 // ============================================================
 // tool_search 结果解析
 // ============================================================
@@ -189,6 +220,7 @@ class ToolCallAccumulator {
 suspend fun parseSseStream(
     readLine: () -> String?,
     onContent: (String) -> Unit,
+    onReasoning: (String) -> Unit = {},
     onParseError: (String, String) -> Unit = { _, _ -> }
 ): MutableMap<Int, ToolCallAccumulator> {
     val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
@@ -210,6 +242,13 @@ suspend fun parseSseStream(
 
         val content = delta.optString("content", "")
         if (content.isNotEmpty()) onContent(content)
+
+        // 【深度思考】兼容三种字段名：reasoning_content（DeepSeek 系）/ reasoning（部分中转）/ thinking。
+        // 只用于实时展示，不持久化、不回传。
+        val reasoning = delta.optString("reasoning_content", "")
+            .ifEmpty { delta.optString("reasoning", "") }
+            .ifEmpty { delta.optString("thinking", "") }
+        if (reasoning.isNotEmpty()) onReasoning(reasoning)
 
         delta.optJSONArray("tool_calls")?.let { tcs ->
             for (i in 0 until tcs.length()) {

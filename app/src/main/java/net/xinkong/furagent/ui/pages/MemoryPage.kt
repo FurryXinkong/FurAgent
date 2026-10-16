@@ -33,7 +33,10 @@ import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoEmptyState
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
+import net.xinkong.furagent.ui.pocoFieldColors
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -68,43 +71,17 @@ fun MemoryPage(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "长期记忆",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "${allMemories.size} 条 · $enabledCount 条启用",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            PocoPageTopBar(
+                title = "长期记忆",
+                subtitle = "${allMemories.size} 条 · $enabledCount 条启用",
+                onBack = onBack,
                 actions = {
                     if (allMemories.isNotEmpty()) {
                         TextButton(onClick = { showClearConfirm = true }) {
                             Text("清空", color = MaterialTheme.colorScheme.error)
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                }
             )
         },
         bottomBar = {
@@ -160,16 +137,17 @@ fun MemoryPage(onBack: () -> Unit) {
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                )
+                colors = pocoFieldColors()
             )
 
             if (memories.isEmpty()) {
-                EmptyMemoryState(isEmpty = searchQuery.isBlank())
+                val empty = searchQuery.isBlank()
+                PocoEmptyState(
+                    icon = Icons.Default.Psychology,
+                    title = if (empty) "暂无记忆" else "无匹配结果",
+                    subtitle = if (empty) "对 AI 说「记住我不吃香菜」，它就会记住" else null,
+                    modifier = Modifier.fillMaxSize()
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().weight(1f),
@@ -280,12 +258,7 @@ fun MemoryPage(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                     minLines = 3,
                     shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
             },
             confirmButton = {
@@ -319,12 +292,7 @@ fun MemoryPage(onBack: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                     minLines = 3,
                     shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
             },
             confirmButton = {
@@ -344,41 +312,7 @@ fun MemoryPage(onBack: () -> Unit) {
     }
 }
 
-// ============================================================
-// 空状态
-// ============================================================
-
-@Composable
-private fun EmptyMemoryState(isEmpty: Boolean) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                Icons.Default.Psychology,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                if (isEmpty) "暂无记忆" else "无匹配结果",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            if (isEmpty) {
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "对 AI 说“记住我不吃香菜”，它就会记住",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
+// 【批次 20 UI 收口】EmptyMemoryState 已合并到 PocoEmptyState（Glass.kt）。
 
 // ============================================================
 // 记忆行（【F2】右侧加 Switch）

@@ -3,9 +3,12 @@ package net.xinkong.furagent.ui
 import android.app.Activity
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -18,8 +21,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -249,6 +255,67 @@ fun GlassDragHandle() {
 }
 
 // ============================================================
+// 【页面模板】PocoPageTopBar
+// ============================================================
+//
+// 所有整屏 Page 的顶部标题栏统一走这一个实现：
+//   - 标题：20sp Black + onBackground
+//   - 副标题：11sp + onSurfaceVariant
+//   - 返回按钮：ArrowBack + onBackground
+//   - actions：可选（RowScope）
+//   - 背景透明（透出 glassPageBg）
+//
+// 【为什么收口】10+ 个 Page 各写一份几乎一样的 TopAppBar，改一处要动 10+ 个文件。
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PocoPageTopBar(
+    title: String,
+    subtitle: String,
+    onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit = {},
+    /** 副标题颜色，默认 onSurfaceVariant。日志页副标题是 primary，需要覆盖。 */
+    subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    /** 副标题可点击（如日志页点 Token 数看明细）。 */
+    onSubtitleClick: (() -> Unit)? = null
+) {
+    TopAppBar(
+        title = {
+            Column {
+                Text(
+                    title,
+                    fontWeight = FontWeight.Black,
+                    fontSize = 20.sp,
+                    color = MaterialTheme.colorScheme.onBackground
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    subtitle,
+                    fontSize = 11.sp,
+                    color = subtitleColor,
+                    modifier = if (onSubtitleClick != null) {
+                        Modifier.clickable(onClick = onSubtitleClick)
+                    } else Modifier
+                )
+            }
+        },
+        navigationIcon = {
+            IconButton(onClick = onBack) {
+                Icon(
+                    Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "返回",
+                    tint = MaterialTheme.colorScheme.onBackground
+                )
+            }
+        },
+        actions = actions,
+        colors = TopAppBarDefaults.topAppBarColors(
+            containerColor = Color.Transparent,
+            titleContentColor = MaterialTheme.colorScheme.onBackground
+        )
+    )
+}
+
+// ============================================================
 // 【标准卡片】PocoCard
 // ============================================================
 //
@@ -268,9 +335,15 @@ fun GlassDragHandle() {
 @Composable
 fun PocoCard(
     modifier: Modifier = Modifier,
+    /** true 时用 primary 描边，表示“选中/当前”状态。 */
+    selectedBorder: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val shadowColor = glassShadowColor()
+    val borderColor = if (selectedBorder) {
+        MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
+    } else glassCardBorder()
+    val borderWidth = if (selectedBorder) 1.dp else 0.5.dp
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -285,11 +358,86 @@ fun PocoCard(
         Surface(
             color = glassCardBg(),
             shape = RoundedCornerShape(24.dp),
-            border = BorderStroke(0.5.dp, glassCardBorder()),
+            border = BorderStroke(borderWidth, borderColor),
             modifier = Modifier.fillMaxWidth()
         ) { Column(content = content) }
     }
 }
+
+/**
+ * 统一的空状态组件。
+ *
+ * 全项目所有页面级空状态（无会话 / 无记忆 / 无定时任务 / 无 MCP / 无变量）统一走这里：
+ *   - 图标 56dp
+ *   - 标题 bodyLarge + onSurfaceVariant
+ *   - 副标题 bodySmall + onSurfaceVariant，居中
+ *   - 可选 action（主按钮）
+ *
+ * 【为什么收口】之前 5 个页面各写一份几乎一样的空状态，改一处要动 5 个文件。
+ */
+@Composable
+fun PocoEmptyState(
+    icon: ImageVector,
+    title: String,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    action: (@Composable () -> Unit)? = null
+) {
+    Box(
+        modifier = modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 40.dp)
+        ) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(56.dp)
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (subtitle != null) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    lineHeight = 18.sp
+                )
+            }
+            if (action != null) {
+                Spacer(Modifier.height(20.dp))
+                action()
+            }
+        }
+    }
+}
+
+/**
+ * 统一的 OutlinedTextField 配色。
+ *
+ * 全项目所有 dialog / page 的输入框统一走这里：
+ *   - 底色 surfaceVariant 50%
+ *   - 主色描边走 primary，非主色描边 outlineVariant
+ *
+ * 【为什么收口】30+ 处重复的 OutlinedTextFieldDefaults.colors(...) 分散在 5 个文件里，
+ * 改一处配色要动 30 处。现在只有这一个来源。
+ */
+@Composable
+fun pocoFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    focusedBorderColor = MaterialTheme.colorScheme.primary,
+    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+)
 
 @Composable
 fun PocoDivider(startIndent: Dp = 0.dp) {

@@ -1802,7 +1802,8 @@ private fun DirectTransferTab(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        "把「短码」口头报给对方，或把「连接串」复制过去。对方输入任意一种即可配对。",
+                        "把「短码」报给对方（复制时会自动带上本机 IP），或把「连接串」复制过去。" +
+                                "对方输入任意一种即可配对。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1836,16 +1837,25 @@ private fun DirectTransferTab(
                                     color = MaterialTheme.colorScheme.primary,
                                     letterSpacing = 3.sp
                                 )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    "复制后为 ${localIp}:${localShortCode}，对方粘贴即可",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             OutlinedButton(
                                 onClick = {
                                     try {
+                                        val copyText = DirectDeviceCodec.buildShortCodeString(
+                                            localIp, localShortCode
+                                        )
                                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
                                                 as android.content.ClipboardManager
                                         cm.setPrimaryClip(
-                                            android.content.ClipData.newPlainText("shortcode", localShortCode)
+                                            android.content.ClipData.newPlainText("shortcode", copyText)
                                         )
-                                        onInfo("短码已复制：$localShortCode")
+                                        onInfo("已复制：$copyText")
                                     } catch (e: Exception) {
                                         onInfo("复制失败：${e.message}")
                                     }
@@ -1947,7 +1957,7 @@ private fun DirectTransferTab(
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "在另一台设备上打开 FurAgent，把它的短码报过来，" +
+                            "在另一台设备上打开 FurAgent，复制它的短码（形如 192.168.1.100:A3F7C1），" +
                                     "或复制它的连接串，然后在这里点「添加」。",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -2004,7 +2014,7 @@ private fun DirectTransferTab(
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
                         "支持两种输入：\n" +
-                                "· 短码：6 位字母数字（例如 A3F7C1），会自动向对方换取凭证\n" +
+                                "· 短码：IP:短码（例如 192.168.1.100:A3F7C1），会自动向对方换取凭证\n" +
                                 "· 完整连接串：IP:端口:Token，直接可用",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -2013,7 +2023,7 @@ private fun DirectTransferTab(
                         value = input,
                         onValueChange = { input = it; errMsg = null },
                         label = { Text("短码 或 连接串") },
-                        placeholder = { Text("A3F7C1  或  192.168.1.100:8426:abc123def") },
+                        placeholder = { Text("192.168.1.100:A3F7C1  或  192.168.1.100:8426:abc123def") },
                         singleLine = false,
                         minLines = 2,
                         modifier = Modifier.fillMaxWidth(),
@@ -2069,10 +2079,15 @@ private fun DirectTransferTab(
                             return@TextButton
                         }
 
+                        if (DirectDeviceCodec.isBareShortCode(raw)) {
+                            errMsg = "短码需配合对方 IP，请填 IP:短码（如 192.168.1.100:${raw.uppercase()}）"
+                            return@TextButton
+                        }
+
                         if (DirectDeviceCodec.isShortCode(raw)) {
                             val triple = extractHostPortCode(raw)
                             if (triple == null) {
-                                errMsg = "短码格式不正确"
+                                errMsg = "短码格式不正确（应为 IP:短码 或 IP:端口:短码）"
                                 return@TextButton
                             }
                             val (host, port, code) = triple

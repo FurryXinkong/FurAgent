@@ -25,6 +25,7 @@ object SettingsStore {
                             model = o.getString("model"),
                             isBuiltIn = o.optBoolean("isBuiltIn", false),
                             supportsDisableThinking = o.optBoolean("supportsDisableThinking", true),
+                            supportsThinking = o.optBoolean("supportsThinking", true),
                             supportsVision = o.optBoolean("supportsVision", true),
                             temperature = o.optDouble("temperature", 0.1),
                             kind = o.optString("kind", "chat").ifBlank { "chat" }
@@ -66,6 +67,7 @@ object SettingsStore {
             customSystemPrompt = prefs.getString("custom_system", "") ?: "",
             disabledTools = disabled,
             disableThinking = prefs.getBoolean("disable_thinking", false),
+            enableThinking = prefs.getBoolean("enable_thinking", false),
             autoSpeakReplies = prefs.getBoolean("auto_speak_replies", false),
             // 【去掉硬编码上限】用户设多少就多少，只保证 >= 1
             maxToolCallLoops = prefs.getInt("max_tool_call_loops", 20).coerceAtLeast(1),
@@ -94,6 +96,7 @@ object SettingsStore {
                 put("model", it.model)
                 put("isBuiltIn", it.isBuiltIn)
                 put("supportsDisableThinking", it.supportsDisableThinking)
+                put("supportsThinking", it.supportsThinking)
                 put("supportsVision", it.supportsVision)
                 put("temperature", it.temperature)
                 put("kind", it.kind)
@@ -112,6 +115,7 @@ object SettingsStore {
                 .putString("custom_system", s.customSystemPrompt)
                 .putString("disabled_tools", s.disabledTools.joinToString("|"))
                 .putBoolean("disable_thinking", s.disableThinking)
+                .putBoolean("enable_thinking", s.enableThinking)
                 .putBoolean("auto_speak_replies", s.autoSpeakReplies)
                 .putInt("max_tool_call_loops", s.maxToolCallLoops.coerceAtLeast(1))
                 .putString("notification_mode", s.notificationMode)

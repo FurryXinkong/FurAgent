@@ -119,12 +119,9 @@ private fun ToastItem(msg: ToastBus.Message, onDismiss: () -> Unit) {
         ToastBus.Level.ERROR -> Icons.Default.Error to ErrorColor()
     }
 
-    Surface(
-        color = CardColor(),
-        shape = RoundedCornerShape(Radius.MD),
-        border = BorderStroke(1.dp, tint.copy(alpha = 0.4f)),
-        shadowElevation = Shadow.LG,
-        modifier = Modifier.widthIn(min = 240.dp, max = 380.dp)
+    GlassFloatingCard(
+        modifier = Modifier.widthIn(min = 240.dp, max = 380.dp),
+        borderColor = tint.copy(alpha = 0.4f)
     ) {
         Row(
             Modifier.padding(horizontal = 12.dp, vertical = 10.dp),

@@ -309,6 +309,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     // runningSessions：哪些会话正在跑；sessionThinking/sessionStreaming：各会话的中间态。
     var runningSessions by remember { mutableStateOf<Set<String>>(emptySet()) }
     var sessionThinking by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var sessionReasoning by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var sessionStreaming by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     // 【多会话并发】运行中会话的最新消息列表（供悬浮窗显示非当前会话的工具名/进度）。
     var sessionMessages by remember { mutableStateOf<Map<String, List<DesktopMessage>>>(emptyMap()) }
@@ -345,6 +346,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     // 当前会话的派生状态（UI 用）
     val isLoading = currentSessionId != null && currentSessionId in runningSessions
     val thinking = currentSessionId?.let { sessionThinking[it] } ?: ""
+    val reasoning = currentSessionId?.let { sessionReasoning[it] } ?: ""
     val streamingText = currentSessionId?.let { sessionStreaming[it] } ?: ""
 
     // ============================================================
@@ -365,6 +367,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         } catch (_: Throwable) { }
         runningSessions = runningSessions - sessionId
         sessionThinking = sessionThinking - sessionId
+        sessionReasoning = sessionReasoning - sessionId
         sessionStreaming = sessionStreaming - sessionId
         sessionMessages = sessionMessages - sessionId
         if (currentSessionId == sessionId) {
@@ -464,6 +467,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
 
         runningSessions = runningSessions + taskSessionId
         sessionThinking = sessionThinking + (taskSessionId to "")
+        sessionReasoning = sessionReasoning + (taskSessionId to "")
         sessionStreaming = sessionStreaming + (taskSessionId to "")
         sessionMessages = sessionMessages + (taskSessionId to history)
 
@@ -485,13 +489,19 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                         if (!isCurrent()) return@runTurn
                         sessionThinking = sessionThinking + (taskSessionId to t)
                     },
+                    onReasoning = { r ->
+                        if (!isCurrent()) return@runTurn
+                        sessionReasoning = sessionReasoning + (taskSessionId to ((sessionReasoning[taskSessionId] ?: "") + r))
+                    },
                     onStream = { chunk ->
                         if (!isCurrent()) return@runTurn
                         sessionStreaming = sessionStreaming + (taskSessionId to ((sessionStreaming[taskSessionId] ?: "") + chunk))
                     },
                     onStreamCommit = {
                         if (!isCurrent()) return@runTurn
+                        // reasoning 已随 assistant 消息落库，清空运行时状态避免与消息内面板重复
                         sessionStreaming = sessionStreaming + (taskSessionId to "")
+                        sessionReasoning = sessionReasoning + (taskSessionId to "")
                     }
                 )
                 if (isCurrent()) {
@@ -527,6 +537,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                     runningSessions = runningSessions - taskSessionId
                     sessionStreaming = sessionStreaming - taskSessionId
                     sessionThinking = sessionThinking - taskSessionId
+                    sessionReasoning = sessionReasoning - taskSessionId
                     sessionMessages = sessionMessages - taskSessionId
                 }
                 sessionJobs = sessionJobs - taskSessionId
@@ -741,10 +752,21 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                         messages = messages,
                         streamingText = streamingText,
                         thinking = thinking,
+                        reasoning = reasoning,
                         isLoading = isLoading,
                         inputText = inputText,
                         hasApiKey = settings.currentProfile()?.apiKey?.isNotBlank() == true,
                         modelName = settings.currentProfile()?.name ?: "未配置模型",
+                        enableThinking = settings.enableThinking,
+                        supportsThinking = settings.currentProfile()?.supportsThinking ?: true,
+                        chatProfiles = settings.chatProfiles().map { it.id to it.name },
+                        currentProfileId = settings.currentProfileId,
+                        onToggleThinking = { on ->
+                            onSettingsChange(settings.copy(enableThinking = on))
+                        },
+                        onSelectProfile = { id ->
+                            onSettingsChange(settings.copy(currentProfileId = id))
+                        },
                         scrollToMessageId = scrollToMessageId,
                         onScrollToMessageHandled = { scrollToMessageId = null },
                         onInputChange = { inputText = it },

@@ -782,6 +782,7 @@ object SessionStore {
                     put("apiKey", if (key.isBlank()) "" else SecretCodec.obfuscate(key))
                     put("isBuiltIn", p.optBoolean("isBuiltIn", false))
                     put("supportsDisableThinking", p.optBoolean("supportsDisableThinking", true))
+                    put("supportsThinking", p.optBoolean("supportsThinking", true))
                     put("supportsVision", p.optBoolean("supportsVision", true))
                     put("temperature", p.optDouble("temperature", 0.1))
                 })

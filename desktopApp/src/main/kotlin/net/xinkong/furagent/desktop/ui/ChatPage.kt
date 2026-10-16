@@ -125,10 +125,17 @@ fun ChatPage(
     messages: List<DesktopMessage>,
     streamingText: String,
     thinking: String,
+    reasoning: String,
     isLoading: Boolean,
     inputText: String,
     hasApiKey: Boolean,
     modelName: String,
+    enableThinking: Boolean = false,
+    supportsThinking: Boolean = true,
+    chatProfiles: List<Pair<String, String>> = emptyList(),
+    currentProfileId: String = "",
+    onToggleThinking: (Boolean) -> Unit = {},
+    onSelectProfile: (String) -> Unit = {},
     scrollToMessageId: String? = null,
     onScrollToMessageHandled: () -> Unit = {},
     onInputChange: (String) -> Unit,
@@ -158,6 +165,7 @@ fun ChatPage(
             messages = messages,
             streamingText = streamingText,
             thinking = thinking,
+            reasoning = reasoning,
             hasApiKey = hasApiKey,
             onOpenSettings = onOpenSettings,
             onCopyMessage = onCopyMessage,
@@ -220,7 +228,14 @@ fun ChatPage(
                         enabled = hasApiKey,
                         attachments = attachments,
                         onAttachmentsChange = { attachments = it },
-                        onImageClick = { viewingImage = it }
+                        onImageClick = { viewingImage = it },
+                        modelName = modelName,
+                        enableThinking = enableThinking,
+                        supportsThinking = supportsThinking,
+                        chatProfiles = chatProfiles,
+                        currentProfileId = currentProfileId,
+                        onToggleThinking = onToggleThinking,
+                        onSelectProfile = onSelectProfile
                     )
                 }
             }
@@ -392,6 +407,7 @@ private fun ChatMessageList(
     messages: List<DesktopMessage>,
     streamingText: String,
     thinking: String,
+    reasoning: String,
     hasApiKey: Boolean,
     onOpenSettings: () -> Unit,
     onCopyMessage: (DesktopMessage) -> Unit,
@@ -536,6 +552,14 @@ private fun ChatMessageList(
                                     )
                                 }
                             }
+                        }
+                    }
+                }
+
+                if (reasoning.isNotEmpty()) {
+                    item {
+                        Box(Modifier.animateItem(fadeOutSpec = null)) {
+                            ReasoningPanel(reasoning)
                         }
                     }
                 }
@@ -1120,6 +1144,10 @@ private fun TextMessageRow(
             Modifier.widthIn(max = 1000.dp),
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
+            if (!isUser && msg.reasoning.isNotBlank()) {
+                ReasoningPanel(msg.reasoning)
+                Spacer(Modifier.height(6.dp))
+            }
             Box(
                 Modifier.shadow(
                     elevation = Shadow.MD,
@@ -1463,17 +1491,94 @@ private fun SystemNoteRow(msg: DesktopMessage) {
 }
 
 // ============================================================
+// 深度思考面板（默认折叠，可展开）
+// ============================================================
+
+/**
+ * 展示模型返回的深度思考内容（reasoning_content / reasoning / thinking）。
+ * 默认折叠，点标题栏展开。不持久化，仅实时展示。
+ */
+@Composable
+private fun ReasoningPanel(text: String) {
+    var expanded by remember { mutableStateOf(false) }
+    Surface(
+        color = CardColor(),
+        shape = RoundedCornerShape(Radius.MD),
+        border = BorderStroke(1.dp, ToolColor().copy(alpha = 0.3f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Psychology,
+                    contentDescription = null,
+                    tint = ToolColor(),
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    "深度思考",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextPrimary(),
+                    modifier = Modifier.weight(1f)
+                )
+                val rotation by animateFloatAsState(
+                    targetValue = if (expanded) 180f else 0f,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
+                    label = "reasoningArrow"
+                )
+                Icon(
+                    Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = TextSecondary(),
+                    modifier = Modifier
+                        .size(16.dp)
+                        .graphicsLayer { rotationZ = rotation }
+                )
+            }
+            if (expanded) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text,
+                    fontSize = 12.sp,
+                    color = TextSecondary()
+                )
+            }
+        }
+    }
+}
+
+// ============================================================
 // 思考状态行
 // ============================================================
 
 @Composable
 private fun StatusRow(text: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(12.dp), strokeWidth = 2.dp, color = AccentColor()
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(text, fontSize = 12.sp, color = TextSecondary())
+    // 【UI 统一】与 ReasoningPanel / ToolCallRow 同款卡片风格。
+    Surface(
+        color = CardColor(),
+        shape = RoundedCornerShape(Radius.MD),
+        border = BorderStroke(1.dp, ToolColor().copy(alpha = 0.3f)),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 2.dp,
+                color = AccentColor()
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(text, fontSize = 12.sp, color = TextSecondary())
+        }
     }
 }
 
@@ -1491,7 +1596,14 @@ private fun ChatInputCard(
     enabled: Boolean,
     attachments: List<PendingAttachment>,
     onAttachmentsChange: (List<PendingAttachment>) -> Unit,
-    onImageClick: (String) -> Unit
+    onImageClick: (String) -> Unit,
+    modelName: String,
+    enableThinking: Boolean,
+    supportsThinking: Boolean,
+    chatProfiles: List<Pair<String, String>>,
+    currentProfileId: String,
+    onToggleThinking: (Boolean) -> Unit,
+    onSelectProfile: (String) -> Unit
 ) {
     val focusRequester = remember { FocusRequester() }
     var focused by remember { mutableStateOf(false) }
@@ -1605,6 +1717,26 @@ private fun ChatInputCard(
             modifier = Modifier.fillMaxWidth()
         ) {
             Column(Modifier.padding(horizontal = 6.dp, vertical = 6.dp)) {
+                // 顶部工具行：深度思考开关 + 模型快捷选择（左上角，与工具调用同风格）
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (supportsThinking) {
+                        ThinkingToggleChip(
+                            enabled = enableThinking,
+                            onClick = { onToggleThinking(!enableThinking) }
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    ModelQuickSelector(
+                        modelName = modelName,
+                        profiles = chatProfiles,
+                        currentProfileId = currentProfileId,
+                        onSelect = onSelectProfile
+                    )
+                }
+
                 AnimatedVisibility(
                     visible = attachments.isNotEmpty(),
                     enter = fadeIn(tween(180)) +
@@ -1799,6 +1931,90 @@ private fun ChatInputCard(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+// ============================================================
+// 输入框顶部：深度思考开关 + 模型快捷选择
+// ============================================================
+
+@Composable
+private fun ThinkingToggleChip(enabled: Boolean, onClick: () -> Unit) {
+    Surface(
+        color = if (enabled) AccentSoft() else CardStrongColor(),
+        shape = RoundedCornerShape(Radius.SM),
+        border = BorderStroke(
+            1.dp,
+            if (enabled) AccentColor().copy(alpha = 0.45f) else BorderSubtle()
+        ),
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Text(
+            "深度思考",
+            fontSize = 12.sp,
+            fontWeight = if (enabled) FontWeight.Medium else FontWeight.Normal,
+            color = if (enabled) AccentColor() else TextSecondary(),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+        )
+    }
+}
+
+@Composable
+private fun ModelQuickSelector(
+    modelName: String,
+    profiles: List<Pair<String, String>>,
+    currentProfileId: String,
+    onSelect: (String) -> Unit
+) {
+    var open by remember { mutableStateOf(false) }
+    Box {
+        Surface(
+            color = CardStrongColor(),
+            shape = RoundedCornerShape(Radius.SM),
+            border = BorderStroke(1.dp, BorderSubtle()),
+            modifier = Modifier.clickable(enabled = profiles.isNotEmpty()) { open = true }
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    modelName,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = TextPrimary(),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 160.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Icon(
+                    Icons.Default.ArrowDropDown,
+                    contentDescription = null,
+                    tint = TextSecondary(),
+                    modifier = Modifier.size(16.dp)
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = open,
+            onDismissRequest = { open = false },
+            containerColor = CardColor()
+        ) {
+            profiles.forEach { (id, name) ->
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            name,
+                            fontSize = 13.sp,
+                            color = if (id == currentProfileId) AccentColor() else TextPrimary(),
+                            fontWeight = if (id == currentProfileId) FontWeight.SemiBold else FontWeight.Normal
+                        )
+                    },
+                    onClick = { open = false; onSelect(id) }
+                )
             }
         }
     }

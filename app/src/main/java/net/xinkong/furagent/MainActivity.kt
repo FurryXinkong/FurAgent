@@ -404,6 +404,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     val isLoading = agentSnapshot.isRunning && agentSnapshot.sessionId == currentSessionId
     val streamingText = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.streaming else ""
     val currentThinking = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.thinking else ""
+    val currentReasoning = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.reasoning else ""
 
     // ============================================================
     // 整屏 Page 导航
@@ -1735,6 +1736,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 }
                             }
                         }
+                        if (currentReasoning.isNotEmpty()) {
+                            item(key = "reasoning_panel", contentType = "reasoning") {
+                                ReasoningPanel(text = currentReasoning)
+                            }
+                        }
                         if (currentThinking.isNotEmpty() && streamingText.isEmpty()) {
                             item(key = "thinking_indicator", contentType = "thinking") {
                                 ThinkingBubble(text = currentThinking)
@@ -1939,6 +1945,103 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                                             }
                                                     )
                                                 }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                // 输入框顶部工具行：深度思考开关 + 模型快捷选择（左上角）
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 12.dp, end = 12.dp, top = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    if (currentProfileValue?.supportsThinking != false) {
+                                        val thinkingOn = settings.enableThinking
+                                        Surface(
+                                            color = if (thinkingOn)
+                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                                            else glassInputBg(),
+                                            shape = RoundedCornerShape(16.dp),
+                                            border = BorderStroke(
+                                                1.dp,
+                                                if (thinkingOn)
+                                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
+                                                else glassInputBorder()
+                                            ),
+                                            modifier = Modifier.clickable {
+                                                val newSettings = settings.copy(enableThinking = !thinkingOn)
+                                                settings = newSettings
+                                                SettingsStore.save(prefs, newSettings)
+                                            }
+                                        ) {
+                                            Text(
+                                                "深度思考",
+                                                fontSize = 12.sp,
+                                                fontWeight = if (thinkingOn) FontWeight.Medium else FontWeight.Normal,
+                                                color = if (thinkingOn)
+                                                    MaterialTheme.colorScheme.primary
+                                                else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    var modelMenuOpen by remember { mutableStateOf(false) }
+                                    Box {
+                                        Surface(
+                                            color = glassInputBg(),
+                                            shape = RoundedCornerShape(16.dp),
+                                            border = BorderStroke(1.dp, glassInputBorder()),
+                                            modifier = Modifier.clickable { modelMenuOpen = true }
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                Text(
+                                                    currentProfileValue?.name ?: "未配置",
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Medium,
+                                                    color = MaterialTheme.colorScheme.onSurface,
+                                                    maxLines = 1,
+                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                                    modifier = Modifier.widthIn(max = 160.dp)
+                                                )
+                                                Spacer(Modifier.width(4.dp))
+                                                Icon(
+                                                    Icons.Default.ArrowDropDown,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                        DropdownMenu(
+                                            expanded = modelMenuOpen,
+                                            onDismissRequest = { modelMenuOpen = false }
+                                        ) {
+                                            settings.chatProfiles().forEach { p ->
+                                                DropdownMenuItem(
+                                                    text = {
+                                                        Text(
+                                                            p.name,
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            color = if (p.id == settings.currentProfileId)
+                                                                MaterialTheme.colorScheme.primary
+                                                            else MaterialTheme.colorScheme.onSurface,
+                                                            fontWeight = if (p.id == settings.currentProfileId)
+                                                                FontWeight.SemiBold else FontWeight.Normal
+                                                        )
+                                                    },
+                                                    onClick = {
+                                                        modelMenuOpen = false
+                                                        val newSettings = settings.copy(currentProfileId = p.id)
+                                                        settings = newSettings
+                                                        SettingsStore.save(prefs, newSettings)
+                                                    }
+                                                )
                                             }
                                         }
                                     }

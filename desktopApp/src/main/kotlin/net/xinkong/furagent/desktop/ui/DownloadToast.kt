@@ -158,13 +158,7 @@ private fun DownloadToastItem(task: DownloadManager.Task) {
         label = "downloadBytes"
     )
 
-    Surface(
-        color = CardColor(),
-        shape = RoundedCornerShape(Radius.MD),
-        border = BorderStroke(1.dp, BorderColor()),
-        shadowElevation = Shadow.LG,
-        modifier = Modifier.width(340.dp)
-    ) {
+    GlassFloatingCard(modifier = Modifier.width(340.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, null, tint = iconTint, modifier = Modifier.size(16.dp))

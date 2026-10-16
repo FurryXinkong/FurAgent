@@ -50,12 +50,7 @@ fun InputDialog(
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
                 shape = RoundedCornerShape(14.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                )
+                colors = pocoFieldColors()
             )
         },
         confirmButton = {
@@ -82,7 +77,7 @@ fun EditModelDialog(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var model by remember { mutableStateOf(initial.model) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
-    var supportsDisable by remember { mutableStateOf(initial.supportsDisableThinking) }
+    var supportsThinking by remember { mutableStateOf(initial.supportsThinking) }
     var supportsVision by remember { mutableStateOf(initial.supportsVision) }
     var temperature by remember { mutableStateOf(initial.temperature.toFloat()) }
     val isImageModel = initial.kind == "image"
@@ -105,12 +100,7 @@ fun EditModelDialog(
                     placeholder = { Text("例如：本地 Ollama") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
                 OutlinedTextField(
                     value = baseUrl, onValueChange = { baseUrl = it },
@@ -118,12 +108,7 @@ fun EditModelDialog(
                     placeholder = { Text("http://192.168.1.100:11434/v1/chat/completions") },
                     modifier = Modifier.fillMaxWidth(), singleLine = false, maxLines = 3,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
                 OutlinedTextField(
                     value = model, onValueChange = { model = it },
@@ -131,12 +116,7 @@ fun EditModelDialog(
                     placeholder = { Text("例如：qwen2.5:7b") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
                 OutlinedTextField(
                     value = apiKey, onValueChange = { apiKey = it },
@@ -144,39 +124,34 @@ fun EditModelDialog(
                     placeholder = { Text("sk-... 或留空") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
+                if (!isImageModel) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable { supportsDisable = !supportsDisable },
+                        .clickable { supportsThinking = !supportsThinking },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Checkbox(
-                        checked = supportsDisable,
-                        onCheckedChange = { supportsDisable = it }
+                        checked = supportsThinking,
+                        onCheckedChange = { supportsThinking = it }
                     )
                     Spacer(Modifier.width(4.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            "支持关闭深度思考",
+                            "支持深度思考",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                         Spacer(Modifier.height(2.dp))
                         Text(
-                            "强制思考的模型请取消勾选",
+                            "关闭后聊天页不显示「深度思考」开关（如 DeepSeek-V3 非思考版）",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
-                if (!isImageModel) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -241,7 +216,7 @@ fun EditModelDialog(
                         apiKey = apiKey.trim(),
                         baseUrl = baseUrl.trim(),
                         model = model.trim(),
-                        supportsDisableThinking = supportsDisable,
+                        supportsThinking = supportsThinking,
                         supportsVision = supportsVision,
                         temperature = temperature.toDouble()
                     ))
@@ -348,12 +323,7 @@ fun EditScheduleDialog(
                     shape = RoundedCornerShape(12.dp),
                     isError = timeError != null,
                     supportingText = timeError?.let { { Text(it) } },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
                 Column {
                     Text(
@@ -387,12 +357,7 @@ fun EditScheduleDialog(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                            )
+                            colors = pocoFieldColors()
                         )
                         Spacer(Modifier.height(4.dp))
                         val sec = intervalText.toIntOrNull() ?: 0
@@ -543,24 +508,14 @@ fun NewScheduleDialog(
                         placeholder = { Text("com.example.app") },
                         modifier = Modifier.fillMaxWidth(), singleLine = true,
                         shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                        )
+                        colors = pocoFieldColors()
                     )
                     OutlinedTextField(
                         value = appName, onValueChange = { appName = it },
                         label = { Text("显示名称（可选）") },
                         modifier = Modifier.fillMaxWidth(), singleLine = true,
                         shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                        )
+                        colors = pocoFieldColors()
                     )
                 } else {
                     OutlinedTextField(
@@ -570,12 +525,7 @@ fun NewScheduleDialog(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
                         minLines = 3,
                         shape = RoundedCornerShape(12.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                        )
+                        colors = pocoFieldColors()
                     )
                 }
 
@@ -604,12 +554,7 @@ fun NewScheduleDialog(
                     shape = RoundedCornerShape(12.dp),
                     isError = timeError != null,
                     supportingText = timeError?.let { { Text(it) } },
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
 
                 AnimatedVisibility(
@@ -626,12 +571,7 @@ fun NewScheduleDialog(
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                            )
+                            colors = pocoFieldColors()
                         )
                         Spacer(Modifier.height(4.dp))
                         val sec = intervalText.toIntOrNull() ?: 0

@@ -43,6 +43,7 @@ import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
 import net.xinkong.furagent.ui.PocoDivider
 import net.xinkong.furagent.ui.PocoGroupTitle
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.PocoSwitchRow
 import net.xinkong.furagent.ui.PocoTextField
 import net.xinkong.furagent.ui.glassPageBg
@@ -200,36 +201,10 @@ fun SettingsPage(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "快捷设置",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "模型、对话、图片、通知与语音",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = { flushAndBack() }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+            PocoPageTopBar(
+                title = "快捷设置",
+                subtitle = "模型、对话、图片、通知与语音",
+                onBack = { flushAndBack() }
             )
         },
         containerColor = glassPageBg(),
@@ -695,140 +670,128 @@ private fun ModelProfileCard(
     onDelete: () -> Unit,
     onTest: () -> Unit
 ) {
-    Box(
-        Modifier.fillMaxWidth()
-            .then(
-                if (isCurrent) Modifier
-                    .border(
-                        width = 1.dp,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.5f),
-                        shape = RoundedCornerShape(24.dp)
+    // 【批次 22 UI 收口】用 PocoCard(selectedBorder) 替代「外层 Box 描边 + 内层 PocoCard」双层结构。
+    PocoCard(selectedBorder = isCurrent) {
+        Column(
+            modifier = Modifier
+                .padding(12.dp)
+                .animateContentSize(
+                    animationSpec = spring(
+                        dampingRatio = 0.75f,
+                        stiffness = Spring.StiffnessMediumLow
                     )
-                else Modifier
-            )
-    ) {
-        PocoCard {
-            Column(
-                modifier = Modifier
-                    .padding(12.dp)
-                    .animateContentSize(
-                        animationSpec = spring(
-                            dampingRatio = 0.75f,
-                            stiffness = Spring.StiffnessMediumLow
-                        )
-                    )
+                )
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { onToggleExpand() },
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().clickable { onToggleExpand() },
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    RadioButton(
-                        selected = isCurrent,
-                        onClick = onSetCurrent,
-                        enabled = profile.kind != "image",
-                        colors = RadioButtonDefaults.colors(
-                            selectedColor = MaterialTheme.colorScheme.primary
-                        )
+                RadioButton(
+                    selected = isCurrent,
+                    onClick = onSetCurrent,
+                    enabled = profile.kind != "image",
+                    colors = RadioButtonDefaults.colors(
+                        selectedColor = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(Modifier.width(4.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                profile.name.ifBlank { "未命名" },
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            if (profile.kind == "image") {
-                                Spacer(Modifier.width(6.dp))
-                                Surface(
-                                    color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
-                                    Text(
-                                        "生图",
-                                        fontSize = 10.sp,
-                                        color = MaterialTheme.colorScheme.tertiary,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                    )
-                                }
+                )
+                Spacer(Modifier.width(4.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            profile.name.ifBlank { "未命名" },
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        if (profile.kind == "image") {
+                            Spacer(Modifier.width(6.dp))
+                            Surface(
+                                color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text(
+                                    "生图",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.tertiary,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                                )
                             }
                         }
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            when {
-                                profile.apiKey.isBlank() -> "未配置 API Key"
-                                isCurrent -> "当前使用中"
-                                else -> "已配置"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (profile.apiKey.isBlank()) MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
                     }
-                    val rotation by animateFloatAsState(
-                        targetValue = if (expanded) 180f else 0f,
-                        animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
-                        label = "profileArrow"
-                    )
-                    Icon(
-                        Icons.Default.KeyboardArrowDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .size(20.dp)
-                            .graphicsLayer { rotationZ = rotation }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        when {
+                            profile.apiKey.isBlank() -> "未配置 API Key"
+                            isCurrent -> "当前使用中"
+                            else -> "已配置"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (profile.apiKey.isBlank()) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                if (expanded) {
-                    Spacer(Modifier.height(12.dp))
-                    InfoRow("API Key", maskKey(profile.apiKey))
-                    Spacer(Modifier.height(6.dp))
-                    InfoRow("Base URL", profile.baseUrl.ifBlank { "未设置" })
-                    Spacer(Modifier.height(6.dp))
-                    InfoRow("Model", profile.model.ifBlank { "未设置" })
-                    Spacer(Modifier.height(6.dp))
-                    InfoRow(
-                        "关闭深度思考",
-                        if (profile.supportsDisableThinking) "支持" else "不支持"
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                val rotation by animateFloatAsState(
+                    targetValue = if (expanded) 180f else 0f,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
+                    label = "profileArrow"
+                )
+                Icon(
+                    Icons.Default.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(20.dp)
+                        .graphicsLayer { rotationZ = rotation }
+                )
+            }
+            if (expanded) {
+                Spacer(Modifier.height(12.dp))
+                InfoRow("API Key", maskKey(profile.apiKey))
+                Spacer(Modifier.height(6.dp))
+                InfoRow("Base URL", profile.baseUrl.ifBlank { "未设置" })
+                Spacer(Modifier.height(6.dp))
+                InfoRow("Model", profile.model.ifBlank { "未设置" })
+                Spacer(Modifier.height(6.dp))
+                InfoRow(
+                    "关闭深度思考",
+                    if (profile.supportsDisableThinking) "支持" else "不支持"
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onTest,
+                        enabled = !testing,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
-                        OutlinedButton(
-                            onClick = onTest,
-                            enabled = !testing,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            if (testing) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text("测试中")
-                            } else {
-                                Text("测试连接")
-                            }
+                        if (testing) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("测试中")
+                        } else {
+                            Text("测试连接")
                         }
-                        OutlinedButton(
-                            onClick = onEdit,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.weight(1f)
-                        ) { Text("编辑") }
-                        OutlinedButton(
-                            onClick = onDelete,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.error
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) { Text("删除") }
                     }
+                    OutlinedButton(
+                        onClick = onEdit,
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("编辑") }
+                    OutlinedButton(
+                        onClick = onDelete,
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        ),
+                        modifier = Modifier.weight(1f)
+                    ) { Text("删除") }
                 }
             }
         }

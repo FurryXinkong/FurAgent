@@ -387,6 +387,7 @@ object DesktopSessionStore {
                             put("apiKey", if (p.apiKey.isBlank()) "" else SecretCodec.obfuscate(p.apiKey))
                             put("isBuiltIn", p.isBuiltIn)
                             put("supportsDisableThinking", p.supportsDisableThinking)
+                            put("supportsThinking", p.supportsThinking)
                             put("supportsVision", p.supportsVision)
                         })
                     }
@@ -533,6 +534,7 @@ object DesktopSessionStore {
                             apiKey = if (importedKey.isBlank()) "" else SecretCodec.deobfuscate(importedKey),
                             isBuiltIn = p.optBoolean("isBuiltIn", false),
                             supportsDisableThinking = p.optBoolean("supportsDisableThinking", true),
+                            supportsThinking = p.optBoolean("supportsThinking", true),
                             supportsVision = p.optBoolean("supportsVision", true)
                         ))
                     }

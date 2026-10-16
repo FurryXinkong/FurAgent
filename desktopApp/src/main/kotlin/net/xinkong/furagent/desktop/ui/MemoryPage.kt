@@ -341,32 +341,23 @@ private fun MemoryRow(
     onDelete: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
     val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(memory.createdAt))
     val isSummary = memory.sessionId.isNotBlank()
 
-    val bg by animateColorAsState(
-        targetValue = if (hovered) CardHoverColor() else CardColor(),
-        animationSpec = tween(140),
-        label = "memoryRowBg"
-    )
-
-    Surface(
-        color = bg,
-        shape = RoundedCornerShape(Radius.MD),
-        border = BorderStroke(1.dp, BorderColor()),
-        shadowElevation = 2.dp,
-        modifier = Modifier.fillMaxWidth()
-            .then(if (isSummary) Modifier.clickable { onOpenSession() } else Modifier)
+    // 【批次 16 UI 统一】卡片渲染收口到 GlassCard，不再手写 Surface + border + shadow。
+    // hover 效果通过 GlassCard 的 hoverable 参数保留（原来无条件 hover）。
+    // isSummary 时可点击（跳转会话），其他情况传 null。
+    GlassCard(
+        modifier = Modifier.fillMaxWidth(),
+        onClick = if (isSummary) onOpenSession else null,
+        padding = PaddingValues(
+            horizontal = Spacing.LIST_H,
+            vertical = Spacing.LIST_V,
+        ),
+        hoverable = true,
     ) {
         Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(
-                    horizontal = Spacing.LIST_H,
-                    vertical = Spacing.LIST_V,
-                ),
+            Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {

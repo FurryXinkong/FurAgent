@@ -39,5 +39,13 @@ data class ChatMessage(
      * 流式标记。仅 Android 端 UI 层使用（不序列化到磁盘）。
      * 桌面端的流式状态由 UI 层的独立参数传递，不用此字段。
      */
-    val isStreaming: Boolean = false
+    val isStreaming: Boolean = false,
+    /**
+     * 模型返回的深度思考内容（reasoning_content / reasoning / thinking）。
+     *
+     * 【重要】只用于本地展示与持久化，**绝不回传给 AI**：
+     * buildHistoryMessages 构建 API 请求时不读此字段。
+     * 仅 assistant 消息会填。
+     */
+    val reasoning: String = ""
 )

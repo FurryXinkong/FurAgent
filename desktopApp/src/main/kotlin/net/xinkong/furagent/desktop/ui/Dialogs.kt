@@ -27,6 +27,23 @@ import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import java.util.*
 
+// ============================================================
+// 统一 OutlinedTextField 配色（批次 17 色板统一）
+// ============================================================
+// 输入框配色统一到 FurColors，不再混用 M3 colorScheme，
+// 与 GlassTextField 的配色逻辑保持一致。
+
+@Composable
+private fun workflowDialogFieldColors() = OutlinedTextFieldDefaults.colors(
+    focusedContainerColor = CardColor(),
+    unfocusedContainerColor = CardColor(),
+    focusedBorderColor = AccentColor(),
+    unfocusedBorderColor = BorderColor(),
+    cursorColor = AccentColor(),
+    focusedTextColor = TextPrimary(),
+    unfocusedTextColor = TextPrimary()
+)
+
 /**
  * 工作流可视化编辑器。
  *
@@ -74,12 +91,7 @@ fun WorkflowEditorDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(Radius.SM),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = workflowDialogFieldColors()
                 )
                 OutlinedTextField(
                     value = description, onValueChange = { description = it },
@@ -87,12 +99,7 @@ fun WorkflowEditorDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(Radius.SM),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = workflowDialogFieldColors()
                 )
                 OutlinedTextField(
                     value = paramsText, onValueChange = { paramsText = it },
@@ -101,12 +108,7 @@ fun WorkflowEditorDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(Radius.SM),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = workflowDialogFieldColors()
                 )
 
                 Text(
@@ -419,12 +421,7 @@ fun StepEditorDialog(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(Radius.SM),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                )
+                                colors = workflowDialogFieldColors()
                             )
                             Text(
                                 "支持 contains:x / notContains:x / startsWith:x / endsWith:x / equals:x / matches:regex / isEmpty / isNotEmpty",
@@ -504,12 +501,7 @@ fun StepEditorDialog(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(Radius.SM),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                )
+                                colors = workflowDialogFieldColors()
                             )
                             OutlinedTextField(
                                 value = loopItems, onValueChange = { loopItems = it },
@@ -520,12 +512,7 @@ fun StepEditorDialog(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(Radius.SM),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                )
+                                colors = workflowDialogFieldColors()
                             )
                             BranchEditor(
                                 label = "循环体",
@@ -568,12 +555,7 @@ fun StepEditorDialog(
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(Radius.SM),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                            )
+                            colors = workflowDialogFieldColors()
                         )
                     }
                     "set_var" -> {
@@ -584,12 +566,7 @@ fun StepEditorDialog(
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(Radius.SM),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                )
+                                colors = workflowDialogFieldColors()
                             )
                             OutlinedTextField(
                                 value = varValue, onValueChange = { varValue = it },
@@ -600,12 +577,7 @@ fun StepEditorDialog(
                                 modifier = Modifier.fillMaxWidth(),
                                 minLines = 2,
                                 shape = RoundedCornerShape(Radius.SM),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                                )
+                                colors = workflowDialogFieldColors()
                             )
                         }
                     }
@@ -842,12 +814,7 @@ private fun CallStepForm(
                     singleLine = true,
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(Radius.SM),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = workflowDialogFieldColors()
                 )
                 OutlinedTextField(
                     value = v,
@@ -858,12 +825,7 @@ private fun CallStepForm(
                     singleLine = true,
                     modifier = Modifier.weight(1.6f),
                     shape = RoundedCornerShape(Radius.SM),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = workflowDialogFieldColors()
                 )
                 IconButton(
                     onClick = {

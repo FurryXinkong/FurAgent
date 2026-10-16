@@ -232,74 +232,80 @@ fun TextBubble(
     }
     val allImages = (message.imagePaths + contentImages).distinct()
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
-        Surface(
-            color = if (isUser) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.surface,
-            shape = RoundedCornerShape(
-                topStart = 24.dp, topEnd = 24.dp,
-                bottomStart = if (isUser) 24.dp else 8.dp,
-                bottomEnd = if (isUser) 8.dp else 24.dp
-            ),
-            border = if (isUser) null else BorderStroke(
-                0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            ),
-            modifier = Modifier.widthIn(max = maxBubbleWidth)
+    Column(Modifier.fillMaxWidth()) {
+        if (!isUser && message.reasoning.isNotBlank()) {
+            ReasoningPanel(text = message.reasoning)
+            Spacer(Modifier.height(6.dp))
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
         ) {
-            Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
-                Row {
-                    RichMessageText(
-                        content = message.content,
-                        textColor = if (isUser) MaterialTheme.colorScheme.onPrimary
-                        else MaterialTheme.colorScheme.onSurface,
-                        isOnPrimary = isUser,
-                        context = context,
-                        onLongPress = onLongPress
-                    )
-                    if (message.isStreaming) {
-                        Spacer(Modifier.width(4.dp))
-                        BlinkingCursor(
-                            color = if (isUser) MaterialTheme.colorScheme.onPrimary
-                            else MaterialTheme.colorScheme.primary
+            Surface(
+                color = if (isUser) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(
+                    topStart = 24.dp, topEnd = 24.dp,
+                    bottomStart = if (isUser) 24.dp else 8.dp,
+                    bottomEnd = if (isUser) 8.dp else 24.dp
+                ),
+                border = if (isUser) null else BorderStroke(
+                    0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                ),
+                modifier = Modifier.widthIn(max = maxBubbleWidth)
+            ) {
+                Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp)) {
+                    Row {
+                        RichMessageText(
+                            content = message.content,
+                            textColor = if (isUser) MaterialTheme.colorScheme.onPrimary
+                            else MaterialTheme.colorScheme.onSurface,
+                            isOnPrimary = isUser,
+                            context = context,
+                            onLongPress = onLongPress
+                        )
+                        if (message.isStreaming) {
+                            Spacer(Modifier.width(4.dp))
+                            BlinkingCursor(
+                                color = if (isUser) MaterialTheme.colorScheme.onPrimary
+                                else MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                    if (allImages.isNotEmpty()) {
+                        Spacer(Modifier.height(6.dp))
+                        allImages.forEach { path ->
+                            MessageImage(path = path, onClick = { onImageClick(path) })
+                            Spacer(Modifier.height(6.dp))
+                        }
+                    }
+
+                    if (!message.isStreaming) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            android.text.format.DateFormat.format("HH:mm", message.timestamp).toString(),
+                            fontSize = 10.sp,
+                            color = if (isUser) {
+                                MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.65f)
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
+                            }
                         )
                     }
-                }
-                if (allImages.isNotEmpty()) {
-                    Spacer(Modifier.height(6.dp))
-                    allImages.forEach { path ->
-                        MessageImage(path = path, onClick = { onImageClick(path) })
-                        Spacer(Modifier.height(6.dp))
+
+                    if (message.interrupted && !message.isStreaming) {
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "（已中断）",
+                            fontSize = 11.sp,
+                            fontStyle = FontStyle.Italic,
+                            color = if (isUser) {
+                                MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            }
+                        )
                     }
-                }
-
-                if (!message.isStreaming) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        android.text.format.DateFormat.format("HH:mm", message.timestamp).toString(),
-                        fontSize = 10.sp,
-                        color = if (isUser) {
-                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.65f)
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.65f)
-                        }
-                    )
-                }
-
-                if (message.interrupted && !message.isStreaming) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        "（已中断）",
-                        fontSize = 11.sp,
-                        fontStyle = FontStyle.Italic,
-                        color = if (isUser) {
-                            MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f)
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        }
-                    )
                 }
             }
         }
@@ -403,31 +409,108 @@ fun ThinkingBubble(text: String) {
         ), label = "d3"
     )
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.Start,
-        verticalAlignment = Alignment.CenterVertically
+    // 【UI 统一】与 ReasoningPanel / ToolsGroupBubble 同款卡片风格。
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+        ),
+        modifier = Modifier.fillMaxWidth()
     ) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(12.dp),
-            strokeWidth = 2.dp,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text,
-            style = MaterialTheme.typography.bodySmall,
-            fontStyle = FontStyle.Italic,
-            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-        )
-        Spacer(Modifier.width(4.dp))
-        Row {
-            listOf(dot1, dot2, dot3).forEach { a ->
+        Row(
+            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f),
+                modifier = Modifier.weight(1f)
+            )
+            Row {
+                listOf(dot1, dot2, dot3).forEach { a ->
+                    Text(
+                        "·",
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = a),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// 深度思考面板（默认折叠，可展开）
+// ============================================================
+
+/**
+ * 展示模型返回的深度思考内容（reasoning_content / reasoning / thinking）。
+ *
+ * 默认折叠，点标题栏展开。不持久化，仅实时展示。
+ */
+@Composable
+fun ReasoningPanel(text: String) {
+    var expanded by remember { mutableStateOf(false) }
+    Surface(
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(
+            0.5.dp,
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+        ),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded },
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    Icons.Default.Psychology,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    "·",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = a),
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
+                    "深度思考",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.weight(1f)
+                )
+                val rotation by animateFloatAsState(
+                    targetValue = if (expanded) 180f else 0f,
+                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
+                    label = "reasoningArrow"
+                )
+                Icon(
+                    Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "收起" else "展开",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(16.dp)
+                        .graphicsLayer { rotationZ = rotation }
+                )
+            }
+            if (expanded) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.9f)
                 )
             }
         }

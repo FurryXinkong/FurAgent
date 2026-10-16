@@ -263,6 +263,7 @@ suspend fun runAgentTurn(
     context: Context, settings: AppSettings,
     onHistoryChanged: (List<ChatMessage>) -> Unit,
     onThinking: (String) -> Unit,
+    onReasoning: (String) -> Unit,
     onStreamChunk: (String) -> Unit,
     onStreamCommit: () -> Unit,
     onFinish: () -> Unit
@@ -276,12 +277,15 @@ suspend fun runAgentTurn(
                         when (event.type) {
                             "thinking" -> onThinking(event.content)
 
+                            "reasoning" -> onReasoning(event.content)
+
                             "assistant_text" -> {
                                 onThinking("")
                                 currentHistory = currentHistory + ChatMessage(
                                     role = "assistant",
                                     content = event.content,
-                                    type = "text"
+                                    type = "text",
+                                    reasoning = event.reasoning
                                 )
                                 onHistoryChanged(currentHistory)
                                 onStreamCommit()
@@ -313,7 +317,8 @@ suspend fun runAgentTurn(
                         }
                     }
                 },
-                onStreamChunk = { chunk -> mainHandler.post { onStreamChunk(chunk) } }
+                onStreamChunk = { chunk -> mainHandler.post { onStreamChunk(chunk) } },
+                onReasoning = { r -> mainHandler.post { onReasoning(r) } }
             )
         }
     } catch (e: CancellationException) {
@@ -520,7 +525,8 @@ suspend fun runAgentLoop(
     profile: ModelProfile, history: List<ChatMessage>, maxTurns: Int,
     context: Context, settings: AppSettings,
     onEvent: (AgentEvent) -> Unit,
-    onStreamChunk: (String) -> Unit
+    onStreamChunk: (String) -> Unit,
+    onReasoning: (String) -> Unit = {}
 ): String {
     AgentLogger.log("SYS", "=== 开始 Agent 循环（${profile.name}） ===")
 
@@ -571,7 +577,6 @@ suspend fun runAgentLoop(
     if (settings.disableThinking && !profile.supportsDisableThinking) {
         AgentLogger.log("SYS", "当前模型 [${profile.name}] 不支持关闭深度思考，已跳过")
     }
-
     val toolFailureStreak = mutableMapOf<String, Int>()
     val maxLoops = settings.maxToolCallLoops.coerceAtLeast(1)
 
@@ -598,7 +603,12 @@ suspend fun runAgentLoop(
             put("temperature", profile.temperature)
             put("stream", true)
         }
-        if (shouldDisableThinking) net.xinkong.furagent.shared.util.applyDisableThinking(body, profile.baseUrl)
+        if (settings.enableThinking) {
+            // 主动开启思考（全局开关），优先级高于全局关闭开关
+            net.xinkong.furagent.shared.util.applyEnableThinking(body, profile.baseUrl)
+        } else if (shouldDisableThinking) {
+            net.xinkong.furagent.shared.util.applyDisableThinking(body, profile.baseUrl)
+        }
 
         val response: okhttp3.Response
         try {
@@ -632,6 +642,7 @@ suspend fun runAgentLoop(
         }
 
         val contentBuilder = StringBuilder()
+        val reasoningBuilder = StringBuilder()
         var toolCalls: MutableMap<Int, ToolCallAccumulator> = mutableMapOf()
 
         try {
@@ -642,6 +653,10 @@ suspend fun runAgentLoop(
                     onContent = { content ->
                         contentBuilder.append(content)
                         onStreamChunk(content)
+                    },
+                    onReasoning = { r ->
+                        reasoningBuilder.append(r)
+                        onEvent(AgentEvent("reasoning", r))
                     },
                     onParseError = { cls, data ->
                         AgentLogger.log(
@@ -690,13 +705,13 @@ suspend fun runAgentLoop(
         if (toolCalls.isEmpty()) {
             onEvent(AgentEvent("thinking", ""))
             val finalText = contentStr.ifBlank { "（AI 无回复）" }
-            onEvent(AgentEvent("assistant_text", finalText))
+            onEvent(AgentEvent("assistant_text", finalText, reasoning = reasoningBuilder.toString()))
             onEvent(AgentEvent("final", finalText))
             return finalText
         }
 
         if (contentStr.isNotBlank()) {
-            onEvent(AgentEvent("assistant_text", contentStr))
+            onEvent(AgentEvent("assistant_text", contentStr, reasoning = reasoningBuilder.toString()))
         }
 
         // 给每个 tool_call 算一个稳定的 id

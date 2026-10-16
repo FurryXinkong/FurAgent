@@ -29,7 +29,10 @@ import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoEmptyState
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
+import net.xinkong.furagent.ui.pocoFieldColors
 
 /**
  * env_store 变量管理页面。
@@ -135,12 +138,7 @@ fun EnvStorePage(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
                         minLines = 3,
                         shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                        )
+                        colors = pocoFieldColors()
                     )
                 }
             },
@@ -175,12 +173,7 @@ fun EnvStorePage(onBack: () -> Unit) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                        )
+                        colors = pocoFieldColors()
                     )
                     OutlinedTextField(
                         value = newValue,
@@ -189,12 +182,7 @@ fun EnvStorePage(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
                         minLines = 3,
                         shape = RoundedCornerShape(14.dp),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                        )
+                        colors = pocoFieldColors()
                     )
                 }
             },
@@ -269,43 +257,17 @@ fun EnvStorePage(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "环境变量",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "${entries.size} 个变量 · 供 AI 通过 env_store 读写",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            PocoPageTopBar(
+                title = "环境变量",
+                subtitle = "${entries.size} 个变量 · 供 AI 通过 env_store 读写",
+                onBack = onBack,
                 actions = {
                     if (entries.isNotEmpty()) {
                         TextButton(onClick = { showClearConfirm = true }) {
                             Text("清空", color = MaterialTheme.colorScheme.error)
                         }
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                }
             )
         },
         bottomBar = {
@@ -341,7 +303,22 @@ fun EnvStorePage(onBack: () -> Unit) {
             )
 
             if (entries.isEmpty()) {
-                EmptyEnvState(onAdd = { showAdd = true })
+                PocoEmptyState(
+                    icon = Icons.Default.Storage,
+                    title = "暂无变量",
+                    subtitle = "AI 可以通过 env_store 工具在不同对话轮次间传递数据。\n也可以在这里手动添加。",
+                    modifier = Modifier.fillMaxSize(),
+                    action = {
+                        Button(
+                            onClick = { showAdd = true },
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("添加变量")
+                        }
+                    }
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -376,51 +353,7 @@ fun EnvStorePage(onBack: () -> Unit) {
     }
 }
 
-// ============================================================
-// 空状态
-// ============================================================
-//
-// 【统一标准】图标 56dp、onSurfaceVariant 标题、次级说明。
-
-@Composable
-private fun EmptyEnvState(onAdd: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                Icons.Default.Storage,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "暂无变量",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "AI 可以通过 env_store 工具在不同对话轮次间传递数据。\n也可以在这里手动添加。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            // 【体验优化 B19】空状态里也加"添加变量"入口
-            Spacer(Modifier.height(20.dp))
-            Button(
-                onClick = onAdd,
-                shape = RoundedCornerShape(14.dp)
-            ) {
-                Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("添加变量")
-            }
-        }
-    }
-}
+// 【批次 20 UI 收口】EmptyEnvState 已合并到 PocoEmptyState（Glass.kt）。
 
 // ============================================================
 // 变量卡片

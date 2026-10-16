@@ -111,13 +111,7 @@ private fun TaskFloatItem(task: TaskRuntime.RunningTask) {
 
     val hasOutput = task.output.isNotBlank()
 
-    Surface(
-        color = CardColor(),
-        shape = RoundedCornerShape(Radius.MD),
-        border = BorderStroke(1.dp, BorderColor()),
-        shadowElevation = Shadow.LG,
-        modifier = Modifier.width(620.dp)
-    ) {
+    GlassFloatingCard(modifier = Modifier.width(620.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (task.running) {

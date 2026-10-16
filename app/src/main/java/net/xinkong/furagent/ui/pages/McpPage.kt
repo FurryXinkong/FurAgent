@@ -31,7 +31,10 @@ import net.xinkong.furagent.data.McpServerConfig
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoEmptyState
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
+import net.xinkong.furagent.ui.pocoFieldColors
 
 /**
  * MCP 服务器列表 —— 整屏页面。
@@ -113,32 +116,10 @@ fun McpPage(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "MCP 服务器",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "${configs.size} 个配置 · ${clientList.count { it.state.value is McpClient.State.Ready }} 个在线",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            PocoPageTopBar(
+                title = "MCP 服务器",
+                subtitle = "${configs.size} 个配置 · ${clientList.count { it.state.value is McpClient.State.Ready }} 个在线",
+                onBack = onBack,
                 actions = {
                     TextButton(onClick = {
                         McpManager.reload()
@@ -151,11 +132,7 @@ fun McpPage(
                             tint = MaterialTheme.colorScheme.primary
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                }
             )
         },
         containerColor = glassPageBg(),
@@ -173,7 +150,22 @@ fun McpPage(
             )
 
             if (configs.isEmpty()) {
-                EmptyMcpState(onAdd = { showAddDialog = true })
+                PocoEmptyState(
+                    icon = Icons.Default.Extension,
+                    title = "未配置 MCP 服务器",
+                    subtitle = "MCP 允许把外部工具（文件系统、数据库等）接入 FurAgent。\nAndroid 端支持 http（Streamable HTTP）与 sse（旧版 HTTP+SSE）。",
+                    modifier = Modifier.fillMaxSize(),
+                    action = {
+                        Button(
+                            onClick = { showAddDialog = true },
+                            shape = RoundedCornerShape(14.dp)
+                        ) {
+                            Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("添加服务器")
+                        }
+                    }
+                )
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
@@ -221,55 +213,7 @@ fun McpPage(
     }
 }
 
-// ============================================================
-// 空状态
-// ============================================================
-
-@Composable
-private fun EmptyMcpState(onAdd: () -> Unit) {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 40.dp)
-        ) {
-            Icon(
-                Icons.Default.Extension,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "未配置 MCP 服务器",
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "MCP 允许把外部工具（文件系统、数据库等）接入 FurAgent。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Android 端支持 http（Streamable HTTP）与 sse（旧版 HTTP+SSE）。",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            Spacer(Modifier.height(20.dp))
-            Button(onClick = onAdd, shape = RoundedCornerShape(14.dp)) {
-                Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text("添加服务器")
-            }
-        }
-    }
-}
+// 【批次 20 UI 收口】EmptyMcpState 已合并到 PocoEmptyState（Glass.kt）。
 
 // ============================================================
 // 服务器卡片（【F5】工具列表加 Switch）
@@ -544,12 +488,7 @@ private fun McpEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
 
                 Text(
@@ -569,12 +508,7 @@ private fun McpEditDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
                 OutlinedTextField(
                     value = headersText,
@@ -583,12 +517,7 @@ private fun McpEditDialog(
                     modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp),
                     minLines = 3,
                     shape = RoundedCornerShape(12.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
-                    )
+                    colors = pocoFieldColors()
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(

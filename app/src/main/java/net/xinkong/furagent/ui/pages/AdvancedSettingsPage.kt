@@ -103,32 +103,10 @@ fun AdvancedSettingsPage(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "高级设置",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            "安全、权限、提示词、工具与工作流",
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = { flushAndBack() }) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            PocoPageTopBar(
+                title = "高级设置",
+                subtitle = "安全、权限、提示词、工具与工作流",
+                onBack = { flushAndBack() },
                 actions = {
                     TextButton(onClick = { flushAndBack() }) {
                         Text(
@@ -137,11 +115,7 @@ fun AdvancedSettingsPage(
                             fontWeight = FontWeight.SemiBold
                         )
                     }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                }
             )
         },
         containerColor = glassPageBg(),

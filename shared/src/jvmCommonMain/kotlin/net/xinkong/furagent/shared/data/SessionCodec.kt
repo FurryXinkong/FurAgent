@@ -116,7 +116,8 @@ object SessionCodec {
                 toolCallId = m.optString("toolCallId", ""),
                 interrupted = m.optBoolean("interrupted", false),
                 imagePaths = imagePaths,
-                durationMs = m.optLong("durationMs", 0L)
+                durationMs = m.optLong("durationMs", 0L),
+                reasoning = m.optString("reasoning", "")
             )
         } catch (_: Exception) {
             null
@@ -143,6 +144,7 @@ object SessionCodec {
         put("toolCallId", m.toolCallId)
         put("interrupted", m.interrupted)
         if (m.durationMs > 0) put("durationMs", m.durationMs)
+        if (m.reasoning.isNotBlank()) put("reasoning", m.reasoning)
         if (m.imagePaths.isNotEmpty()) {
             put("imagePaths", JSONArray().apply {
                 m.imagePaths.forEach { p -> put(p) }
@@ -170,6 +172,7 @@ object SessionCodec {
         put("toolCallId", m.toolCallId)
         put("interrupted", m.interrupted)
         if (m.durationMs > 0) put("durationMs", m.durationMs)
+        if (m.reasoning.isNotBlank()) put("reasoning", m.reasoning)
         if (m.imagePaths.isNotEmpty()) {
             put("imagePaths", JSONArray().apply {
                 m.imagePaths.forEach { p -> put(p) }

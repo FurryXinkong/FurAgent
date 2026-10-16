@@ -28,7 +28,9 @@ data class AgentEvent(
     val type: String,
     val content: String,
     val toolName: String = "",
-    val callId: String = ""
+    val callId: String = "",
+    /** 深度思考内容，仅 type == "assistant_text" 时携带（用于落库）。 */
+    val reasoning: String = ""
 )
 
 data class PendingConfirm(val title: String, val message: String)
@@ -41,6 +43,11 @@ data class ModelProfile(
     val model: String,
     val isBuiltIn: Boolean = false,
     val supportsDisableThinking: Boolean = true,
+    /**
+     * 模型是否支持深度思考。
+     * 关闭时 ChatPage 输入框不显示「深度思考」开关按钮。
+     */
+    val supportsThinking: Boolean = true,
     /**
      * 是否支持图片输入（多模态）。
      * 关闭时：
@@ -64,7 +71,7 @@ data class ModelProfile(
 private val DEFAULT_PROFILES: List<ModelProfile> = listOf(
     ModelProfile(
         "builtin-deepseek", "DeepSeek", "",
-        "https://api.deepseek.com/chat/completions", "deepseek-chat",
+        "https://api.deepseek.com/chat/completions", "deepseek-flash",
         isBuiltIn = true
     ),
     ModelProfile(
@@ -95,6 +102,11 @@ data class AppSettings(
     val customSystemPrompt: String = "",
     val disabledTools: Set<String> = emptySet(),
     val disableThinking: Boolean = false,
+    /**
+     * 是否主动开启深度思考（全局开关，ChatPage 输入框切换）。
+     * 开启后按厂商加"启用思考"参数，优先级高于 disableThinking。
+     */
+    val enableThinking: Boolean = false,
     val autoSpeakReplies: Boolean = false,
     val maxToolCallLoops: Int = 20,
     val notificationMode: String = "off",

@@ -125,6 +125,20 @@ object DirectDeviceCodec {
         }
     }
 
+    /**
+     * 输入是否是"裸短码"（只有短码本身，没有 host）。
+     *
+     * 短码是从 token 派生的 6 位 HEX，本身不含 IP，无法定位对方设备，
+     * 因此裸短码不能直接配对。UI 应据此给出明确提示，引导用户填 `IP:短码`。
+     */
+    fun isBareShortCode(raw: String): Boolean {
+        val t = raw.trim()
+        if (t.isBlank()) return false
+        if (t.startsWith("http://") || t.startsWith("https://")) return false
+        if (t.contains(":")) return false
+        return isShortCodeString(t)
+    }
+
     private fun isShortCodeString(s: String): Boolean {
         if (s.length !in 4..8) return false
         return s.all { it.isLetterOrDigit() }
@@ -133,5 +147,15 @@ object DirectDeviceCodec {
     /** 生成连接串（用于本机显示给用户复制）。 */
     fun buildConnectionString(host: String, port: Int, token: String, name: String = ""): String {
         return if (name.isBlank()) "$host:$port:$token" else "$host:$port:$token:$name"
+    }
+
+    /**
+     * 生成"可复制的短码串"：`host:code`（省略默认端口）。
+     *
+     * 短码本身不含 IP，单独复制短码对方无法配对；带上本机 IP 后，
+     * 对方直接粘贴即可走 /pair 流程。
+     */
+    fun buildShortCodeString(host: String, code: String): String {
+        return "$host:$code"
     }
 }

@@ -291,13 +291,16 @@ fun GlassCard(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
     padding: PaddingValues = PaddingValues(16.dp),
+    /** 即使没有 onClick，也响应 hover（用于静态信息卡，如记忆列表项）。 */
+    hoverable: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val hovered by interaction.collectIsHoveredAsState()
+    val effectiveHover = hovered && (onClick != null || hoverable)
     val bg by animateColorAsState(
-        targetValue = if (hovered && onClick != null) CardHoverColor() else CardColor(),
+        targetValue = if (effectiveHover) CardHoverColor() else CardColor(),
         animationSpec = tween(140),
         label = "cardBg"
     )
@@ -334,24 +337,34 @@ fun GlassCard(
     }
 }
 
+// 【批次 18 死代码清理】桌面端 PocoCard（转发空壳）全项目零引用，已删除。
+
 /**
- * PocoCard —— 保留旧名，语义与 GlassCard 完全一致（默认无内边距）。
+ * 右上角浮层卡片的统一外壳。
  *
- * 旧代码用 `PocoCard { Column(Modifier.padding(16.dp)) { ... } }` 的写法保持不变即可。
- * 新代码请直接用 [GlassCard]。
+ * 用于 ToastHost / TaskFloatingBar / DownloadToast 这类右上角浮层：
+ *   - 底色 CardColor()
+ *   - 圆角 RoundedCornerShape(Radius.MD)
+ *   - 边框 1dp（默认 BorderColor，可自定义）
+ *   - 阴影 Shadow.LG
+ *
+ * 【为什么收口】三处曾各写一份 Surface(...) 参数，改一处要动三处。
  */
 @Composable
-fun PocoCard(
+fun GlassFloatingCard(
     modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
+    borderColor: Color = BorderColor(),
     content: @Composable ColumnScope.() -> Unit
 ) {
-    GlassCard(
-        modifier = modifier,
-        onClick = onClick,
-        padding = PaddingValues(0.dp),
-        content = content
-    )
+    Surface(
+        color = CardColor(),
+        shape = RoundedCornerShape(Radius.MD),
+        border = BorderStroke(1.dp, borderColor),
+        shadowElevation = Shadow.LG,
+        modifier = modifier
+    ) {
+        Column(content = content)
+    }
 }
 
 @Composable
@@ -630,67 +643,19 @@ fun GlassChip(
     }
 }
 
-@Composable
-fun QuickActionChip(text: String, icon: ImageVector? = null, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val bg by animateColorAsState(if (hovered) CardHoverColor() else CardColor(), tween(140), label = "qchipBg")
-    Row(
-        Modifier.clip(RoundedCornerShape(Radius.SM)).background(bg)
-            .border(1.dp, BorderColor(), RoundedCornerShape(Radius.SM))
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (icon != null) {
-            Icon(icon, null, tint = TextSecondary(), modifier = Modifier.size(14.dp))
-            Spacer(Modifier.width(6.dp))
-        }
-        Text(text, fontSize = 12.sp, color = TextPrimary())
-    }
-}
+// 【批次 18 死代码清理】QuickActionChip 全项目零引用，已删除。
 
 // ============================================================
 // 侧边栏项
 // ============================================================
 
-@Composable
-fun SidebarItem(
-    icon: ImageVector, label: String, selected: Boolean = false,
-    trailing: @Composable (() -> Unit)? = null, onClick: () -> Unit
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-    val bg by animateColorAsState(
-        when { selected -> SidebarItemActive(); hovered -> SidebarItemHover(); else -> Color.Transparent },
-        tween(120), label = "sidebarItemBg"
-    )
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(Radius.SM)).background(bg)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(icon, null, tint = if (selected) AccentColor() else TextSecondary(), modifier = Modifier.size(18.dp))
-        Spacer(Modifier.width(12.dp))
-        Text(label, fontSize = 13.sp, color = if (selected) AccentColor() else TextPrimary(),
-            fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-            maxLines = 1, modifier = Modifier.weight(1f))
-        if (trailing != null) trailing()
-    }
-}
+// 【批次 18 死代码清理】SidebarItem 全项目零引用（Sidebar.kt 用自己的 NavItem / SessionItem），已删除。
 
 // ============================================================
 // 头像
 // ============================================================
 
-@Composable
-fun AvatarDot(letter: String, size: Dp = 32.dp, background: Color = AccentColor(), foreground: Color = OnAccent()) {
-    Box(Modifier.size(size).clip(CircleShape).background(background), contentAlignment = Alignment.Center) {
-        Text(letter.take(1).uppercase(), fontSize = (size.value * 0.42f).sp,
-            fontWeight = FontWeight.Bold, color = foreground)
-    }
-}
+// 【批次 18 死代码清理】AvatarDot 全项目零引用，已删除。
 
 // ============================================================
 // 页面标题栏
@@ -1013,30 +978,7 @@ fun MarkdownText(
 // 附件 chip
 // ============================================================
 
-@Composable
-fun AttachmentChip(
-    label: String, isImage: Boolean, onClick: () -> Unit, onRemove: () -> Unit
-) {
-    Row(
-        Modifier.clip(RoundedCornerShape(Radius.SM)).background(CardStrongColor())
-            .border(1.dp, BorderColor(), RoundedCornerShape(Radius.SM))
-            .clickable(onClick = onClick)
-            .padding(start = 10.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            if (isImage) Icons.Default.Image
-            else Icons.AutoMirrored.Filled.InsertDriveFile,
-            null, tint = TextSecondary(), modifier = Modifier.size(14.dp)
-        )
-        Spacer(Modifier.width(6.dp))
-        Text(label, fontSize = 11.sp, color = TextPrimary(), maxLines = 1, modifier = Modifier.widthIn(max = 140.dp))
-        Spacer(Modifier.width(4.dp))
-        Box(Modifier.size(18.dp).clip(CircleShape).clickable(onClick = onRemove), contentAlignment = Alignment.Center) {
-            Icon(Icons.Default.Close, "移除", tint = TextMuted(), modifier = Modifier.size(12.dp))
-        }
-    }
-}
+// 【批次 18 死代码清理】AttachmentChip 全项目零引用（ChatPage.kt 用 AttachmentThumb），已删除。
 
 // ============================================================
 // 下载浮层 → 已抽到 DownloadToast.kt
