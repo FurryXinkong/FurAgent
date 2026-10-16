@@ -578,6 +578,15 @@ object BridgeServer {
     }
 
     private class ServerImpl(address: InetSocketAddress) : WebSocketServer(address) {
+        init {
+            // 【F10】关闭 Java-WebSocket 的协议级连接丢失检测（默认 60s）。
+            // 背景：服务端默认每 60s 发协议级 ping，若 60s 内未收到 pong 就强制
+            // 关闭 TCP，手机端表现为 code=1006 Connection reset，约 89s 掉线重连。
+            // 本项目已有应用层心跳（手机端每 10s 发 PING，服务端回 PONG），
+            // 两套机制并存会互相干扰，故关闭协议级检测，完全依赖应用层心跳。
+            connectionLostTimeout = 0
+        }
+
         override fun onStart() {
             DesktopLogger.info("Bridge", "已启动，监听 ${address.hostString}:${address.port}")
             _status.value = Status.RUNNING
