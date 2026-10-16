@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- 首选项里含 API Key 明文（混淆后），用户隐私，不上云 -->
+    <exclude domain="sharedpref" path="FurAgentPrefs.xml" />
+    <exclude domain="sharedpref" path="FurAgentEnv.xml" />
+
+    <!-- 会话内容、记忆、MCP 配置、已知设备、日志都属于用户隐私数据 -->
+    <exclude domain="file" path="sessions" />
+    <exclude domain="file" path="memory.json" />
+    <exclude domain="file" path="schedules.json" />
+    <exclude domain="file" path="workflows.json" />
+    <exclude domain="file" path="mcp.json" />
+    <exclude domain="file" path="known_pcs.json" />
+    <exclude domain="file" path="direct_devices.json" />
+    <exclude domain="file" path="imported_images" />
+    <exclude domain="file" path="logs" />
+</full-backup-content>

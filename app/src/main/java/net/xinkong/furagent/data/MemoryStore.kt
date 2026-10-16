@@ -1,0 +1,219 @@
+package net.xinkong.furagent.data
+
+import android.content.Context
+import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.shared.util.FileRecovery
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.File
+import java.util.*
+
+data class Memory(
+    val id: String,
+    val content: String,
+    val createdAt: Long,
+    /**
+     * 【F2 新增】是否注入 system prompt。
+     * 新建的记忆默认 true；用户可在记忆列表手动关闭某条。
+     * 反序列化时默认 true，保证旧数据不丢失。
+     */
+    val enabled: Boolean = true
+)
+
+object MemoryStore {
+    private const val FILE_NAME = "memory.json"
+    private const val MAX_ENTRIES = 200
+
+    private fun file(context: Context) = File(context.filesDir, FILE_NAME)
+
+    private fun atomicWrite(target: File, content: String) {
+        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
+        net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
+    }
+
+    /**
+     * 读取全部记忆。
+     *
+     * 【P0 已修】单条容错 + FileRecovery
+     * 【F2】反序列化 enabled，缺省 true
+     *
+     * 【缓存关键】按 createdAt 升序（旧 → 新）。
+     * 记忆会拼进 system prompt，顺序稳定才能保住前缀缓存。
+     */
+    fun list(context: Context): List<Memory> {
+        return try {
+            val f = file(context)
+            if (!f.exists()) return emptyList()
+            val arr = JSONArray(f.readText(Charsets.UTF_8))
+            val list = mutableListOf<Memory>()
+            var skipped = 0
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i)
+                if (o == null) {
+                    skipped++
+                    continue
+                }
+                try {
+                    val id = o.optString("id", "")
+                    val content = o.optString("content", "")
+                    if (id.isBlank() && content.isBlank()) {
+                        skipped++
+                        continue
+                    }
+                    list.add(
+                        Memory(
+                            id = id.ifBlank { UUID.randomUUID().toString() },
+                            content = content,
+                            createdAt = o.optLong("createdAt", 0L),
+                            enabled = o.optBoolean("enabled", true)
+                        )
+                    )
+                } catch (e: Exception) {
+                    skipped++
+                    AgentLogger.log(
+                        "Memory",
+                        "memory[$i] 解析失败，已跳过：${e.javaClass.simpleName}: ${e.message}"
+                    )
+                }
+            }
+            if (skipped > 0) {
+                AgentLogger.log("Memory", "已跳过 $skipped 条异常记忆，保留 ${list.size} 条")
+            }
+            list.sortedBy { it.createdAt }
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "Memory",
+                "读取记忆失败，已备份损坏文件：${e.javaClass.simpleName}: ${e.message}"
+            )
+            FileRecovery.backupCorrupted(file(context))
+            emptyList()
+        }
+    }
+
+    fun search(context: Context, query: String): List<Memory> {
+        val q = query.lowercase()
+        return list(context).filter { it.content.lowercase().contains(q) }
+    }
+
+    fun add(context: Context, content: String): Memory {
+        val current = list(context).toMutableList()
+        // 【缓存关键】重复内容不删除旧条目，避免已有记忆位置变化。
+        current.firstOrNull { it.content == content }?.let { return it }
+        val m = Memory(
+            id = UUID.randomUUID().toString(),
+            content = content,
+            createdAt = System.currentTimeMillis(),
+            enabled = true   // 【F2】新建默认开启
+        )
+        // 【缓存关键】追加到尾部（list() 已按 createdAt 升序）
+        current.add(m)
+        // 【缓存关键】超限时从头部删（删最旧的），尾部新增不受影响
+        val trimmed = if (current.size > MAX_ENTRIES) current.takeLast(MAX_ENTRIES) else current
+        save(context, trimmed)
+        return m
+    }
+
+    fun addAll(context: Context, contents: List<String>): Int {
+        if (contents.isEmpty()) return 0
+        val current = list(context).toMutableList()
+        val existing = current.map { it.content }.toHashSet()
+        var added = 0
+        for (c in contents) {
+            val trimmed = c.trim()
+            if (trimmed.isBlank() || trimmed in existing) continue
+            // 【缓存关键】追加到尾部
+            current.add(Memory(
+                id = UUID.randomUUID().toString(),
+                content = trimmed,
+                createdAt = System.currentTimeMillis(),
+                enabled = true   // 【F2】默认开启
+            ))
+            existing.add(trimmed)
+            added++
+        }
+        if (added > 0) {
+            val trimmed = if (current.size > MAX_ENTRIES) current.takeLast(MAX_ENTRIES) else current
+            save(context, trimmed)
+        }
+        return added
+    }
+
+    fun update(context: Context, id: String, newContent: String) {
+        val current = list(context).toMutableList()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx >= 0) {
+            current[idx] = current[idx].copy(content = newContent)
+            save(context, current)
+        }
+    }
+
+    /**
+     * 【F2 新增】切换单条记忆的启用状态。
+     * 关闭后该条不注入 system prompt，但仍留在列表可随时重开。
+     */
+    fun setEnabled(context: Context, id: String, enabled: Boolean) {
+        val current = list(context).toMutableList()
+        val idx = current.indexOfFirst { it.id == id }
+        if (idx >= 0) {
+            current[idx] = current[idx].copy(enabled = enabled)
+            save(context, current)
+        }
+    }
+
+    fun remove(context: Context, id: String) {
+        val current = list(context).toMutableList()
+        current.removeAll { it.id == id }
+        save(context, current)
+    }
+
+    fun clear(context: Context) {
+        try {
+            file(context).delete()
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "ERR",
+                "清空记忆失败：${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+    }
+
+    private fun save(context: Context, list: List<Memory>) {
+        try {
+            val arr = JSONArray()
+            list.forEach {
+                arr.put(JSONObject().apply {
+                    put("id", it.id)
+                    put("content", it.content)
+                    put("createdAt", it.createdAt)
+                    // 【F2】序列化 enabled
+                    put("enabled", it.enabled)
+                })
+            }
+            atomicWrite(file(context), arr.toString())
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "ERR",
+                "保存记忆失败（${list.size} 条）：${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+    }
+
+    /**
+     * 【F2】只注入 enabled=true 的记忆。
+     *
+     * 【缓存关键】取最近 maxEntries 条（list() 已按 createdAt 升序，故取尾部）。
+     * 尾部追加语义：新增记忆只影响末尾，前面已缓存的前缀不受影响。
+     */
+    fun toPromptString(context: Context, maxEntries: Int = 20): String {
+        val enabledList = list(context).filter { it.enabled }
+        if (enabledList.isEmpty()) return ""
+        val list = if (enabledList.size > maxEntries) {
+            enabledList.takeLast(maxEntries)
+        } else {
+            enabledList
+        }
+        val sb = StringBuilder("已知关于用户的信息：\n")
+        list.forEach { sb.append("- ${it.content}\n") }
+        return sb.toString()
+    }
+}

@@ -1,0 +1,50 @@
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Properties
+
+plugins {
+    id("com.android.application") version "9.4.1" apply false
+    id("com.android.kotlin.multiplatform.library") version "9.4.1" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.plugin.serialization") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.multiplatform") version "2.4.20" apply false
+    id("org.jetbrains.kotlin.jvm") version "2.4.20" apply false
+    id("org.jetbrains.compose") version "1.12.1" apply false
+}
+
+// ============================================================
+// 【版本号自动化】
+// versionName：构建时刻的 yyyyMMddHHmm（如 202610161751）。
+// versionCode：持久化计数器，每次打包（assemble/bundle/package）自动 +1。
+// 计数器存于根目录 version.properties（需入库，保证跨机器延续）。
+// ============================================================
+val buildTimestamp = Date()
+val buildVersionName: String = SimpleDateFormat("yyyyMMddHHmm").format(buildTimestamp)
+// 桌面端 Windows 安装包要求点分数字格式（x.y.z.w）
+val buildVersionNameDotted: String = SimpleDateFormat("yyyy.MM.dd.HHmm").format(buildTimestamp)
+
+val versionPropsFile = file("version.properties")
+val versionProps = Properties().apply {
+    if (versionPropsFile.exists()) versionPropsFile.inputStream().use { load(it) }
+}
+val currentVersionCode: Int = versionProps.getProperty("versionCode")?.toIntOrNull() ?: 1
+
+// 仅在真正打包时递增 versionCode，避免每次 sync / 跑任意 task 都 +1。
+gradle.taskGraph.whenReady {
+    val isPackaging = allTasks.any { t ->
+        val n = t.name
+        n.startsWith("assemble") || n.startsWith("bundle") || n.startsWith("package")
+    }
+    if (isPackaging) {
+        val next = currentVersionCode + 1
+        versionProps.setProperty("versionCode", next.toString())
+        versionPropsFile.outputStream().use {
+            versionProps.store(it, "FurAgent versionCode counter (auto-incremented on packaging)")
+        }
+        logger.lifecycle("[FurAgent] versionCode 递增：$currentVersionCode -> $next")
+    }
+}
+
+extra["buildVersionName"] = buildVersionName
+extra["buildVersionNameDotted"] = buildVersionNameDotted
+extra["buildVersionCode"] = currentVersionCode

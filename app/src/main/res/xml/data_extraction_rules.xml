@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="FurAgentPrefs.xml" />
+        <exclude domain="sharedpref" path="FurAgentEnv.xml" />
+        <exclude domain="file" path="sessions" />
+        <exclude domain="file" path="memory.json" />
+        <exclude domain="file" path="schedules.json" />
+        <exclude domain="file" path="workflows.json" />
+        <exclude domain="file" path="mcp.json" />
+        <exclude domain="file" path="known_pcs.json" />
+        <exclude domain="file" path="direct_devices.json" />
+        <exclude domain="file" path="imported_images" />
+        <exclude domain="file" path="logs" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="FurAgentPrefs.xml" />
+        <exclude domain="sharedpref" path="FurAgentEnv.xml" />
+        <exclude domain="file" path="sessions" />
+        <exclude domain="file" path="memory.json" />
+        <exclude domain="file" path="schedules.json" />
+        <exclude domain="file" path="workflows.json" />
+        <exclude domain="file" path="mcp.json" />
+        <exclude domain="file" path="known_pcs.json" />
+        <exclude domain="file" path="direct_devices.json" />
+        <exclude domain="file" path="imported_images" />
+        <exclude domain="file" path="logs" />
+    </device-transfer>
+</data-extraction-rules>

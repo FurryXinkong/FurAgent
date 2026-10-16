@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">FurAgent</string>
+    <string name="accessibility_service_description">FurAgent 屏幕控制</string>
+    <string name="accessibility_service_summary">让 AI 读取屏幕上的按钮、输入框、文本，并执行点击/输入/滚动等操作。开启后 AI 无需截图即可操作界面。</string>
+</resources>

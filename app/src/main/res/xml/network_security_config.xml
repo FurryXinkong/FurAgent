@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        默认：允许所有明文 HTTP。
+        这是为了支持本地/局域网部署的模型（Ollama、LM Studio、vLLM 等）。
+        本 App 只在用户自己设备上运行，不涉及第三方数据，可接受。
+
+        如果你只想允许特定地址，可以改成：
+        <base-config cleartextTrafficPermitted="false" />
+        然后在下面 domain-config 里逐个列。
+    -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 显式列出常用的内网地址（其实 base-config 全开后这个非必须） -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>

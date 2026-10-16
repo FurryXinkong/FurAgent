@@ -1,0 +1,175 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!--
+        Android 17（API 37）本地网络保护：
+        targetSdk >= 37 时，出站/入站 TCP 与 UDP 广播（桥接 8425、本机
+        HTTP 文件服务 8426、WOL）都需要该运行时权限，否则数据包被静默丢弃，
+        表现为「连接超时」。低版本会忽略该声明。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK"
+                     tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+                     tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+                     tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+                     android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                     android:maxSdkVersion="29"
+                     tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
+
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.BLUR_BEHIND" />
+
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
+    <uses-feature android:name="android.hardware.location.network" android:required="false" />
+
+    <queries>
+        <intent>
+            <action android:name="android.speech.RecognitionService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.TTS_SERVICE" />
+        </intent>
+    </queries>
+
+    <application
+            android:allowBackup="true"
+            android:dataExtractionRules="@xml/data_extraction_rules"
+            android:fullBackupContent="@xml/backup_rules"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:supportsRtl="true"
+            android:enableOnBackInvokedCallback="false"
+            android:networkSecurityConfig="@xml/network_security_config"
+            android:usesCleartextTraffic="true"
+            android:theme="@style/Theme.FurAgent"
+            tools:targetApi="30">
+
+        <activity
+                android:name=".MainActivity"
+                android:exported="true"
+                android:label="@string/app_name"
+                android:windowSoftInputMode="adjustResize"
+                android:theme="@style/Theme.FurAgent">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+                android:name=".FloatingChatActivity"
+                android:exported="false"
+                android:launchMode="singleTask"
+                android:excludeFromRecents="true"
+                android:taskAffinity=""
+                android:theme="@style/Theme.FurAgent.Translucent" />
+
+        <receiver
+                android:name=".TaskReceiver"
+                android:exported="false" />
+
+        <receiver
+                android:name=".BootReceiver"
+                android:exported="true"
+                android:enabled="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+                <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>
+
+        <service
+                android:name=".service.AgentService"
+                android:exported="false"
+                android:foregroundServiceType="dataSync" />
+
+        <!-- 定时任务执行服务：TaskReceiver 转发到此，避免 BroadcastReceiver 10 秒超时窗口 -->
+        <service
+                android:name=".service.TaskExecutionService"
+                android:exported="false"
+                android:foregroundServiceType="dataSync" />
+
+        <service
+                android:name=".service.FloatingService"
+                android:exported="false"
+                android:foregroundServiceType="specialUse">
+            <property
+                    android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                    android:value="floating_assistant" />
+        </service>
+
+        <!-- 媒体会话读取：让 MediaSessionManager.getActiveSessions() 有权限 -->
+        <service
+                android:name=".system.MediaSessionListenerService"
+                android:exported="true"
+                android:label="FurAgent 媒体监听"
+                android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- 屏幕控制无障碍服务：让 AI 直接读取 UI 树并操作元素 -->
+        <service
+                android:name=".system.ScreenAccessibilityService"
+                android:exported="true"
+                android:label="@string/accessibility_service_description"
+                android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                    android:name="android.accessibilityservice"
+                    android:resource="@xml/accessibility_service_config" />
+        </service>
+
+        <provider
+                android:name="androidx.core.content.FileProvider"
+                android:authorities="${applicationId}.fileprovider"
+                android:exported="false"
+                android:grantUriPermissions="true">
+            <meta-data
+                    android:name="android.support.FILE_PROVIDER_PATHS"
+                    android:resource="@xml/file_paths" />
+        </provider>
+
+        <provider
+                android:name="rikka.shizuku.ShizukuProvider"
+                android:authorities="${applicationId}.shizuku"
+                android:enabled="true"
+                android:exported="true"
+                android:multiprocess="false"
+                android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+
+    </application>
+
+</manifest>

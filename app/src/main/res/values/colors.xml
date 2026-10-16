@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+        项目所有颜色定义在 Compose 的 ui/theme/Color.kt。
+        此文件仅保留占位，避免 themes.xml 里 android:color/transparent 之外的引用丢失。
+    -->
+</resources>
