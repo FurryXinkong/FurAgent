@@ -2,6 +2,7 @@ package net.xinkong.furagent.shared.util
 
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import net.xinkong.furagent.shared.ThinkingLevel
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -21,9 +22,7 @@ import java.util.Locale
  * - 工具执行分发：两端 ToolRegistry / DesktopTools 接口不同，各自保留。
  */
 
-// ============================================================
 // 思考开关（按 baseUrl 识别厂商）
-// ============================================================
 
 /**
  * 按模型能力强制关闭思考。
@@ -52,39 +51,54 @@ fun applyDisableThinking(body: JSONObject, baseUrl: String) {
 }
 
 /**
- * 按模型能力主动开启思考。
+ * 按模型能力主动开启思考，并指定强度。
  *
  * 与 applyDisableThinking 对称：各厂商字段名不同，按 baseUrl 关键字分派。
- * 仅当 profile.enableThinking 为 true 时由调用方调用。
+ * 仅当 level != OFF 时由调用方调用。
  *
- * 注意：开启思考与关闭思考互斥，调用方应保证不会同时加两套参数。
+ * 【强度降级】
+ * 各厂商支持程度不同，不支持的档位降级到最接近的可用值：
+ *  - DeepSeek：low / high / max 全支持
+ *  - OpenAI：low / medium / high（无 max，MAX 降为 high）
+ *  - 通义/智谱/Moonshot/Ollama：只有开关，无强度（忽略 level）
+ *
+ * @param level 思考强度，OFF 时不应调用本函数
  */
-fun applyEnableThinking(body: JSONObject, baseUrl: String) {
+fun applyEnableThinking(body: JSONObject, baseUrl: String, level: ThinkingLevel = ThinkingLevel.HIGH) {
     val url = baseUrl.lowercase(Locale.ROOT)
+    // 统一映射到各厂商的 effort 取值
+    val effort = when (level) {
+        ThinkingLevel.OFF -> "none"
+        ThinkingLevel.LOW -> "low"
+        ThinkingLevel.HIGH -> "high"
+        ThinkingLevel.MAX -> "max"
+    }
     try {
         when {
             url.contains("deepseek") -> {
                 body.put("thinking", JSONObject().put("type", "enabled"))
-                body.put("reasoning_effort", "high")
+                body.put("reasoning_effort", effort)
             }
             url.contains("dashscope") -> body.put("enable_thinking", true)
             url.contains("moonshot") -> body.put("thinking", JSONObject().put("type", "enabled"))
             url.contains("bigmodel") || url.contains("z.ai") ->
                 body.put("thinking", JSONObject().put("type", "enabled"))
-            url.contains("openai") -> body.put("reasoning_effort", "medium")
+            url.contains("openai") -> {
+                // OpenAI 无 max，降为 high
+                val openaiEffort = if (level == ThinkingLevel.MAX) "high" else effort
+                body.put("reasoning_effort", openaiEffort)
+            }
             url.contains("localhost") || url.contains("11434") -> body.put("think", true)
             else -> {
                 body.put("thinking", JSONObject().put("type", "enabled"))
                 body.put("enable_thinking", true)
-                body.put("reasoning_effort", "medium")
+                body.put("reasoning_effort", effort)
             }
         }
     } catch (_: Exception) { }
 }
 
-// ============================================================
 // tool_search 结果解析
-// ============================================================
 
 /**
  * 从 tool_search 返回文本里解析出工具名列表。
@@ -112,9 +126,7 @@ fun parseToolNamesFromSearchResult(text: String): List<String> {
     }
 }
 
-// ============================================================
 // 失败重试签名
-// ============================================================
 
 /**
  * 工具调用签名，用于"同一工具同一参数连续失败 N 次"计数。
@@ -137,9 +149,7 @@ fun toolSignature(name: String, args: JSONObject): String {
     return sb.toString()
 }
 
-// ============================================================
 // Token 估算
-// ============================================================
 
 /** 估算 messages 数组的 prompt token 数（含图片按 PER_IMAGE_TOKENS 计）。 */
 fun estimateMessagesTokens(messages: JSONArray): Int {
@@ -184,9 +194,7 @@ fun estimateCompletionTokens(
     return TokenEstimator.estimate(sb.toString())
 }
 
-// ============================================================
 // 流式 tool_call 累加器
-// ============================================================
 
 /**
  * SSE 流式响应里，一个 tool_call 会分多个 chunk 到达。
@@ -198,9 +206,7 @@ class ToolCallAccumulator {
     val arguments = StringBuilder()
 }
 
-// ============================================================
 // SSE 解析
-// ============================================================
 
 /**
  * 解析 OpenAI 兼容的 SSE 流。
@@ -240,14 +246,23 @@ suspend fun parseSseStream(
         if (choices.length() == 0) continue
         val delta = choices.optJSONObject(0)?.optJSONObject("delta") ?: continue
 
-        val content = delta.optString("content", "")
+        // 【坑】org.json 的 optString(key, default) 在字段存在但值为 JSON null 时，
+        // 返回的是字符串 "null" 而不是 default（内部是 object.toString()）。
+        // DeepSeek 官方 API 的流式 chunk 会显式返回 content: null / reasoning_content: null，
+        // 直接 optString 会把 "null" 拼进正文和思考面板，表现为满屏 nullnullnull。
+        // 火山引擎等兼容层直接省略字段，所以不会触发。
+        // 修法：先 isNull() 判断，再取字符串。
+        val content = if (delta.isNull("content")) "" else delta.optString("content", "")
         if (content.isNotEmpty()) onContent(content)
 
         // 【深度思考】兼容三种字段名：reasoning_content（DeepSeek 系）/ reasoning（部分中转）/ thinking。
         // 只用于实时展示，不持久化、不回传。
-        val reasoning = delta.optString("reasoning_content", "")
-            .ifEmpty { delta.optString("reasoning", "") }
-            .ifEmpty { delta.optString("thinking", "") }
+        val reasoning = when {
+            !delta.isNull("reasoning_content") -> delta.optString("reasoning_content", "")
+            !delta.isNull("reasoning") -> delta.optString("reasoning", "")
+            !delta.isNull("thinking") -> delta.optString("thinking", "")
+            else -> ""
+        }
         if (reasoning.isNotEmpty()) onReasoning(reasoning)
 
         delta.optJSONArray("tool_calls")?.let { tcs ->
@@ -255,10 +270,10 @@ suspend fun parseSseStream(
                 val tc = tcs.optJSONObject(i) ?: continue
                 val idx = tc.optInt("index", 0)
                 val acc = toolCalls.getOrPut(idx) { ToolCallAccumulator() }
-                tc.optString("id", "").takeIf { it.isNotEmpty() }?.let { acc.id = it }
+                tc.optString("id", "").takeIf { it.isNotEmpty() && it != "null" }?.let { acc.id = it }
                 tc.optJSONObject("function")?.let { fn ->
-                    fn.optString("name", "").takeIf { it.isNotEmpty() }?.let { acc.name = it }
-                    fn.optString("arguments", "").takeIf { it.isNotEmpty() }?.let { acc.arguments.append(it) }
+                    fn.optString("name", "").takeIf { it.isNotEmpty() && it != "null" }?.let { acc.name = it }
+                    fn.optString("arguments", "").takeIf { it.isNotEmpty() && it != "null" }?.let { acc.arguments.append(it) }
                 }
             }
         }
@@ -266,9 +281,7 @@ suspend fun parseSseStream(
     return toolCalls
 }
 
-// ============================================================
 // 历史截断起点
-// ============================================================
 
 /**
  * 计算历史截断的起始下标（按"完整轮次"截断，绝不从一轮中间切开）。
@@ -319,4 +332,117 @@ private fun alignToTurnBoundary(userIndices: List<Int>, startIdx: Int, size: Int
     userIndices.lastOrNull { it < startIdx }?.let { return it }
     userIndices.firstOrNull { it > startIdx }?.let { return it }
     return 0
+}
+
+// Token 预算：工具过程降级
+
+/** 工具过程预算裁剪的结果。 */
+data class ToolBudgetResult<T>(
+    /** 应当保留（发给模型）的消息 */
+    val kept: List<T>,
+    /** 被裁掉的工具条目数量（工具调用 + 工具结果） */
+    val droppedToolEntries: Int,
+    /** 裁剪前估算 token */
+    val tokensBefore: Int,
+    /** 裁剪后估算 token */
+    val tokensAfter: Int
+) {
+    val trimmed: Boolean get() = droppedToolEntries > 0
+}
+
+/**
+ * 按 token 预算裁剪历史里的「工具过程」。
+ *
+ * 【为什么需要】
+ * 只按轮次数截断时，用户消息很少、工具结果很大的会话会失控：
+ * 一个轮次里连着读十个大文件，光工具输出就能吃掉几万 token，
+ * 而 maxTurns 完全拦不住。结果是“没聊几句就把上下文塞满了”。
+ *
+ * 【规则】
+ * 估算整段历史的 token。若超出 [budgetTokens]，则**从最旧的一段工具过程开始丢**，
+ * 直到落回预算内或工具过程丢完：
+ *   - 用户消息（human）和助手文字回复**不丢**：它们决定“之前聊了什么、改了什么”，
+ *     是保留上下文意义的核心，代价也小。
+ *   - 工具调用与工具结果（tool_call / tool_result / system_note）按「批次」整批丢，
+ *     避免留下有 tool_call 无 result 的残缺配对（那会让模型以为工具失败）。
+ *   - 「批次」= 连续的一段工具条目。并行工具的 call 和错序到达的 result
+ *     自然会被归到同一批（它们之间没有人类/助手消息隔着）。
+ *   - 从旧到新丢，越新的工具过程越可能是当前正在推进的任务，必须留着。
+ *
+ * 被丢掉的位置会插入一条极短的提示，告诉模型“这里发生过 N 次工具调用，
+ * 细节为节省上下文已省略”，而不是留一个莫名其妙的空洞。
+ *
+ * @param entryTokens 逐条估算每条消息的 token（由调用方提供，因为两端消息模型不同）
+ * @param isToolEntry 判断是否属于“可裁的工具过程”
+ * @param isTurnStart   判断是否是人类消息（用于不跨越它去丢东西）
+ * @param makeElidedNote 生成“已省略 N 次工具调用”的占位消息
+ */
+fun <T> trimToolProcessByBudget(
+    history: List<T>,
+    budgetTokens: Int,
+    entryTokens: (T) -> Int,
+    isToolEntry: (T) -> Boolean,
+    makeElidedNote: (droppedCount: Int) -> T
+): ToolBudgetResult<T> {
+    val perEntry = history.map(entryTokens)
+    var total = perEntry.sum()
+    val tokensBefore = total
+
+    if (budgetTokens <= 0 || total <= budgetTokens) {
+        return ToolBudgetResult(history, 0, tokensBefore, total)
+    }
+
+    // 1) 把工具条目切成批次：连续的工具条目算一批
+    data class Batch(val from: Int, val to: Int, val tokens: Int)
+    val batches = mutableListOf<Batch>()
+    var i = 0
+    while (i < history.size) {
+        if (!isToolEntry(history[i])) {
+            i++
+            continue
+        }
+        val from = i
+        var sum = 0
+        while (i < history.size && isToolEntry(history[i])) {
+            sum += perEntry[i]
+            i++
+        }
+        batches.add(Batch(from, i - 1, sum))
+    }
+
+    // 2) 从最旧的批次开始丢，直到回落到预算内
+    val dropped = BooleanArray(history.size)
+    var droppedToolEntries = 0
+    var droppedCount = 0
+    for (b in batches) {
+        if (total <= budgetTokens) break
+        // 整批丢。丢完工具过程还不够低于预算时，剩下的只能靠轮次截断，这里不越权。
+        for (k in b.from..b.to) {
+            dropped[k] = true
+            droppedToolEntries++
+        }
+        droppedCount++
+        total -= b.tokens
+    }
+
+    if (droppedToolEntries == 0) {
+        return ToolBudgetResult(history, 0, tokensBefore, total)
+    }
+
+    // 3) 重建：被丢的连续区间合并成一条「已省略」提示
+    val kept = mutableListOf<T>()
+    i = 0
+    while (i < history.size) {
+        if (!dropped[i]) {
+            kept.add(history[i])
+            i++
+            continue
+        }
+        var j = i
+        while (j < history.size && dropped[j]) j++
+        kept.add(makeElidedNote(j - i))
+        i = j
+    }
+
+    return ToolBudgetResult(kept, droppedToolEntries, tokensBefore, total)
 }

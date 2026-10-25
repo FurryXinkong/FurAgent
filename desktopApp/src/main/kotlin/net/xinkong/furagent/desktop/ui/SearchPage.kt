@@ -9,9 +9,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -34,7 +31,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import net.xinkong.furagent.desktop.data.DesktopSessionStore
 import net.xinkong.furagent.desktop.ui.theme.Radius
-import java.text.SimpleDateFormat
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.util.DateFormats
 import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -269,7 +267,7 @@ private fun SearchResultRow(
         else -> Color.Transparent
     }
 
-    val timeFmt = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+    val timeFmt = DateFormats.shortDateTimeFormatter()
     val roleLabel = when {
         hit.messageType == "title" -> "标题"
         hit.messageRole == "user" -> "用户"
@@ -381,23 +379,25 @@ private fun searchAll(query: String, maxResults: Int): List<SearchHit> {
     val out = mutableListOf<SearchHit>()
 
     // 【A7 修复】不再用解构赋值（依赖字段顺序，脆弱）。改成显式字段访问。
-    //
+
     // 【B11 新增】先匹配会话标题：命中即加一条 type=title 的结果，
     // 让用户可以直接点击跳到该会话。messageId 为空，跳转时落到会话第一条。
-    val metas = DesktopSessionStore.list()
-    for (meta in metas) {
-        val titleLower = meta.title.lowercase(Locale.ROOT)
+    // 子代理会话不进搜索结果：它们是 AI 派生的内部会话，
+    // 在「历史对话」里出现只会干扰用户找自己的对话。
+    val metas = DesktopSessionStore.list().filter { it.parentId == null }
+    for ((id, title, _, updatedAt) in metas) {
+        val titleLower = title.lowercase(Locale.ROOT)
         val idx = titleLower.indexOf(q)
         if (idx >= 0) {
             out.add(
                 SearchHit(
-                    sessionId = meta.id,
-                    sessionTitle = meta.title,
+                    sessionId = id,
+                    sessionTitle = title,
                     messageId = "",
-                    messageTimestamp = meta.updatedAt,
+                    messageTimestamp = updatedAt,
                     messageRole = "title",
                     messageType = "title",
-                    content = "【会话标题】${meta.title}",
+                    content = "【会话标题】$title",
                     matchStart = idx,
                     matchEnd = idx + query.length
                 )
@@ -407,22 +407,22 @@ private fun searchAll(query: String, maxResults: Int): List<SearchHit> {
     }
 
     // 匹配消息正文
-    for (meta in metas) {
-        val session = DesktopSessionStore.load(meta.id) ?: continue
-        for (msg in session.messages) {
-            if (msg.type == "system_note") continue
-            if (msg.content.isBlank()) continue
-            val idx = msg.content.lowercase(Locale.ROOT).indexOf(q)
+    for ((id) in metas) {
+        val session = DesktopSessionStore.load(id) ?: continue
+        for ((id1, role, content, type, timestamp) in session.messages) {
+            if (type == "system_note") continue
+            if (content.isBlank()) continue
+            val idx = content.lowercase(Locale.ROOT).indexOf(q)
             if (idx >= 0) {
                 out.add(
                     SearchHit(
                         sessionId = session.id,
                         sessionTitle = session.title,
-                        messageId = msg.id,
-                        messageTimestamp = msg.timestamp,
-                        messageRole = msg.role,
-                        messageType = msg.type,
-                        content = msg.content,
+                        messageId = id1,
+                        messageTimestamp = timestamp,
+                        messageRole = role,
+                        messageType = type,
+                        content = content,
                         matchStart = idx,
                         matchEnd = idx + query.length
                     )

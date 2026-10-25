@@ -5,7 +5,6 @@ import java.util.Locale
 /**
  * 路径别名展开（双端共用）。
  *
- * 【2026-10-15 抽公共】原来这段逻辑在两处各写一份：
  *   - AndroidToolHost.expandAlias（支持 "别名/子路径"）
  *   - ToolRegistry.normalizeAlias（只支持全等匹配，不支持子路径）
  *   - DesktopToolHost.expandAlias

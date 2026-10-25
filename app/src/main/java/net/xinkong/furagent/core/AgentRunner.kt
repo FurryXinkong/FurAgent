@@ -36,6 +36,10 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 object AgentRunner {
 
+    private val RE_STRIP_URL = Regex("""https?://\S+""")
+    private val RE_STRIP_PATH = Regex("""/\S+""")
+    private val RE_STRIP_MARKDOWN = Regex("""[*_`#>\[\]()!]+""")
+
     data class Snapshot(
         val sessionId: String = "",
         val history: List<ChatMessage> = emptyList(),
@@ -44,7 +48,17 @@ object AgentRunner {
         val streaming: String = "",
         val isRunning: Boolean = false,
         val currentToolName: String = "",
-        val startedAt: Long = 0L
+        val startedAt: Long = 0L,
+        /**
+         * 【错误状态】API 错误信息（如「HTTP 429 · 用量配额已用尽」）。
+         *
+         * 与 thinking 分开存的原因：
+         *   - thinking 在 onFinish 时会被清空（任务结束就不该再转圈）
+         *   - error 需要保留到用户下次发消息，否则错误一闪而过看不到
+         *
+         * 渲染成状态小气泡（与「重试中」同款），不是 AI 聊天气泡。
+         */
+        val error: String = ""
     )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -55,6 +69,15 @@ object AgentRunner {
     @Volatile
     private var appContext: Context? = null
 
+    /**
+     * 任务代际（给协程回调用）。
+     *
+     * 【P2-19 复核结论：不是冗余，不需要合并】
+     * 与 AgentSession.generation 是两套独立机制：
+     *  - 本字段：cancel() 时 +1，isCurrent() 判断旧任务回调是否该丢弃
+     *  - AgentSession.generation：cancel() 时同步 +1，阻塞 IO 引擎用 isCancelled(gen) 感知取消
+     * 两者职责不同，缺一不可。详见 AgentSession.generation 的注释。
+     */
     @Volatile
     private var taskToken: Long = 0L
 
@@ -96,6 +119,11 @@ object AgentRunner {
         }
     }
 
+    /** 用户主动处理了错误（手动关闭气泡 / 换模型）时清掉错误状态，无需等到下次发消息。 */
+    fun clearError() {
+        _snapshot.value = _snapshot.value.copy(error = "")
+    }
+
     fun start(
         context: Context,
         sessionId: String,
@@ -104,7 +132,9 @@ object AgentRunner {
         maxTurns: Int,
         prefs: SharedPreferences,
         settings: AppSettings,
-        onFinish: (finalHistory: List<ChatMessage>) -> Unit = {}
+        onFinish: (finalHistory: List<ChatMessage>) -> Unit = {},
+        /** 【P0-3】会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
+        sessionPrompt: String = ""
     ): Boolean {
         if (currentJob?.isActive == true) {
             AgentLogger.log("SYS", "已有 Agent 任务在运行，忽略本次启动")
@@ -117,11 +147,17 @@ object AgentRunner {
         val myToken = ++taskToken
         // 同步 AgentSession 代际：让阻塞式 IO（下载等）能感知本次任务
         AgentSession.beginTask()
+        // 记录主任务会话：子会话完成后「子代理完成」通知回流的目标
+        net.xinkong.furagent.tools.ToolRegistry.CurrentTaskSession.id = sessionId
 
+        // 【错误消失】新一轮任务开始，把上一次的 API 错误（如 HTTP 429）清掉。
+        // Snapshot(...) 重建时 error 默认就是空，但旧代码在运行中会 copy() 保留旧值，
+        // 这里显式保证一下。
         _snapshot.value = Snapshot(
             sessionId = sessionId,
             history = initialHistory,
             isRunning = true,
+            error = "",
             startedAt = System.currentTimeMillis()
         )
 
@@ -130,6 +166,12 @@ object AgentRunner {
         currentJob = scope.launch {
             fun isCurrent(): Boolean = myToken == taskToken
 
+            // 【取消代际】与 taskToken 同步：cancel() 里 taskToken++ 的同时
+            // AgentSession.cancelAll() 也会 generation++，两者一致。
+            // 传给 runAgentTurn 后，工具执行前会比对代际，
+            // 避免“UI 已停止但工具还在跑”。
+            val cancelGen = AgentSession.currentGeneration()
+
             try {
                 runAgentTurn(
                     profile = profile,
@@ -137,6 +179,8 @@ object AgentRunner {
                     maxTurns = maxTurns,
                     context = ctx,
                     settings = settings,
+                    cancelGen = cancelGen,
+                    sessionPrompt = sessionPrompt,
                     onHistoryChanged = { newHistory ->
                         if (!isCurrent()) return@runAgentTurn
                         val oldSize = _snapshot.value.history.size
@@ -152,6 +196,12 @@ object AgentRunner {
                     onThinking = { text ->
                         if (!isCurrent()) return@runAgentTurn
                         _snapshot.value = _snapshot.value.copy(thinking = text)
+                    },
+                    onError = { err ->
+                        if (!isCurrent()) return@runAgentTurn
+                        // 错误走独立字段：不清 thinking（thinking 由 onFinish 清），
+                        // 也不进 history（不进 AI 聊天气泡）
+                        _snapshot.value = _snapshot.value.copy(error = err)
                     },
                     onReasoning = { r ->
                         if (!isCurrent()) return@runAgentTurn
@@ -258,7 +308,7 @@ object AgentRunner {
             isRunning = false, currentToolName = "", thinking = "", streaming = ""
         )
 
-        // 【修复 18】三段清理独立 try，任一失败不阻断后续
+        // 三段清理独立 try，任一失败不阻断后续
         try {
             SpeechHelper.stop()
         } catch (e: Exception) {
@@ -303,11 +353,8 @@ object AgentRunner {
         if (text.startsWith("流式解析失败")) return
         if (text.startsWith("发生异常")) return
 
-        val clean = text
-            .replace(Regex("""https?://\S+"""), "")
-            .replace(Regex("""/\S+"""), "")
-            .replace(Regex("""[*_`#>\[\]()!]+"""), "")
-            .trim()
+        // 【P1-抽 shared】统一走 shared/util/SpeechCleaner，与桌面端完全同源
+        val clean = net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
         if (clean.isBlank()) return
 
         scope.launch {

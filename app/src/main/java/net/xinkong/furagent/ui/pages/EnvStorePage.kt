@@ -8,9 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,6 +31,7 @@ import net.xinkong.furagent.ui.PocoEmptyState
 import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
 import net.xinkong.furagent.ui.pocoFieldColors
+import net.xinkong.furagent.ui.theme.AppRadius
 
 /**
  * env_store 变量管理页面。
@@ -120,7 +119,7 @@ fun EnvStorePage(onBack: () -> Unit) {
     editingKey?.let { key ->
         AlertDialog(
             onDismissRequest = { editingKey = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("编辑变量") },
             text = {
@@ -137,7 +136,7 @@ fun EnvStorePage(onBack: () -> Unit) {
                         label = { Text("值") },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
                         minLines = 3,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(AppRadius.MD_MINUS),
                         colors = pocoFieldColors()
                     )
                 }
@@ -160,7 +159,7 @@ fun EnvStorePage(onBack: () -> Unit) {
     if (showAdd) {
         AlertDialog(
             onDismissRequest = { showAdd = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("添加变量") },
             text = {
@@ -172,7 +171,7 @@ fun EnvStorePage(onBack: () -> Unit) {
                         placeholder = { Text("例如：user_name") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(AppRadius.MD_MINUS),
                         colors = pocoFieldColors()
                     )
                     OutlinedTextField(
@@ -181,7 +180,7 @@ fun EnvStorePage(onBack: () -> Unit) {
                         label = { Text("值") },
                         modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp),
                         minLines = 3,
-                        shape = RoundedCornerShape(14.dp),
+                        shape = RoundedCornerShape(AppRadius.MD_MINUS),
                         colors = pocoFieldColors()
                     )
                 }
@@ -215,7 +214,7 @@ fun EnvStorePage(onBack: () -> Unit) {
     pendingDeleteKey?.let { key ->
         AlertDialog(
             onDismissRequest = { pendingDeleteKey = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("删除变量") },
             text = { Text("确定删除「$key」？此操作不可恢复。") },
@@ -237,7 +236,7 @@ fun EnvStorePage(onBack: () -> Unit) {
     if (showClearConfirm) {
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("清空全部变量") },
             text = { Text("将删除 ${entries.size} 个变量，此操作不可恢复。") },
@@ -279,7 +278,7 @@ fun EnvStorePage(onBack: () -> Unit) {
             ) {
                 Button(
                     onClick = { showAdd = true },
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(AppRadius.MD_MINUS),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
@@ -311,7 +310,7 @@ fun EnvStorePage(onBack: () -> Unit) {
                     action = {
                         Button(
                             onClick = { showAdd = true },
-                            shape = RoundedCornerShape(14.dp)
+                            shape = RoundedCornerShape(AppRadius.MD_MINUS)
                         ) {
                             Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -353,12 +352,9 @@ fun EnvStorePage(onBack: () -> Unit) {
     }
 }
 
-// 【批次 20 UI 收口】EmptyEnvState 已合并到 PocoEmptyState（Glass.kt）。
 
-// ============================================================
 // 变量卡片
-// ============================================================
-//
+
 // 【UI 统一】用 PocoCard 承载。
 
 @Composable

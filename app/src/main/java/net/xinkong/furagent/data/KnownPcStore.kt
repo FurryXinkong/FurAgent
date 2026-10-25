@@ -36,17 +36,17 @@ data class KnownPc(
 
 object KnownPcStore {
 
+    private val RE_NON_HEX = Regex("[^0-9A-Fa-f]")
+
     private const val FILE_NAME = "known_pcs.json"
 
     private fun file(context: Context): File = File(context.filesDir, FILE_NAME)
 
-    // ============================================================
     // MAC 规范化 / 格式化
-    // ============================================================
 
     /** "AA:BB:CC:DD:EE:FF" / "aa-bb-cc-dd-ee-ff" / "AABBCCDDEEFF" → "AABBCCDDEEFF" */
     fun normalizeMac(raw: String): String =
-        raw.replace(Regex("[^0-9A-Fa-f]"), "").uppercase(Locale.ROOT)
+        raw.replace(RE_NON_HEX, "").uppercase(Locale.ROOT)
 
     /** "AABBCCDDEEFF" → "AA:BB:CC:DD:EE:FF" */
     fun formatMac(normalized: String): String {
@@ -55,9 +55,7 @@ object KnownPcStore {
         return s.chunked(2).joinToString(":")
     }
 
-    // ============================================================
     // 读写
-    // ============================================================
 
     /**
      * 【修复 P0】
@@ -198,7 +196,6 @@ object KnownPcStore {
                     put("lastSeenAt", p.lastSeenAt)
                 })
             }
-            // 【冗余清理 Batch 12b】内联 atomicWrite 收口到 shared/util/JsonFile
             net.xinkong.furagent.shared.util.JsonFile.atomicWrite(file(context), arr.toString(2))
         } catch (e: Exception) {
             AgentLogger.log(

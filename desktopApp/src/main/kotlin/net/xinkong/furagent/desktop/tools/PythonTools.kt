@@ -26,8 +26,9 @@ object PythonTools {
             name = "python",
             displayName = "Python",
             description = "执行 Python 3，可运行任意 Python 3 代码。op=run_code 执行一段 Python 源码（code，可选 args/timeout/work_dir/stdin）；op=run_file 执行已有 .py 文件（path，可选 args/timeout/work_dir/stdin）；op=info 查询 Python 版本与已安装包；op=install 通过 pip 安装包（package，可选 upgrade）。执行代码/文件/pip 安装前会弹确认。" +
-                    "\n\n【注意】如果用户要求「做个脚本 / 加个功能 / 以后都用这个流程」，不要用 python 工具直接跑一段代码了事，也不要往 ~/.furagent/scripts/ 扔裸 .py。" +
-                    "自定义脚本有固定规范（每个脚本一个子目录，内含 skill.json + 入口 .py），必须先用 tool_search(\"自定义脚本\") 或 tool_load(\"skill\") 拿到 skill 工具的完整规范再创建。",
+                    "\n\n【注意】如果用户要求「做个脚本 / 加个功能 / 以后都用这个流程」，不要用 python 工具直接跑一段代码了事。" +
+                    "持久化自定义脚本请用 skill 工具（tool_search(\"自定义脚本\") / tool_load(\"skill\")）创建：一个脚本就是一个 ~/.furagent/scripts/xxx.py，" +
+                    "元数据写在该文件头部的模块级变量里（NAME / DESCRIPTION / PARAMS / TIMEOUT），由 skill 工具自动生成；不要手写缺元数据的裸 .py。",
             paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["run_code","run_file","info","install"]},"code":{"type":"string"},"timeout":{"type":"integer"},"work_dir":{"type":"string"},"stdin":{"type":"string"},"path":{"type":"string"},"args":{"type":"string"},"package":{"type":"string"},"upgrade":{"type":"boolean"}},"required":["op"]}"""
         )
     )
@@ -37,9 +38,7 @@ object PythonTools {
     fun displayName(name: String): String =
         TOOLS.firstOrNull { it.name == name }?.displayName ?: name
 
-    // ============================================================
     // Python 探测
-    // ============================================================
 
     @Volatile private var cachedPython: String? = null
     @Volatile private var pythonMissExpireAt: Long = 0L
@@ -150,15 +149,13 @@ object PythonTools {
 
     private fun notInstalledMsg(): String = "Python 3 未安装或不在 PATH 中"
 
-    // ============================================================
     // 分发
-    // ============================================================
 
     suspend fun execute(name: String, args: JSONObject): ToolResult? {
         if (name != "python") return null
         val op = args.optString("op", "").lowercase()
 
-        // 【安全删除】拦截 Python 代码里的删除操作。
+        // 拦截 Python 代码里的删除操作。
         // AI 不得以任何方式直接删除文件，包括通过 python 绕过 delete_file。
         if (op == "run_code" || op == "run_file") {
             val src = if (op == "run_code") args.optString("code", "")
@@ -183,21 +180,23 @@ object PythonTools {
      *
      * 返回 null 表示安全；非 null 是拒绝文案。
      */
+
+    private val DESTRUCTIVE_PYTHON_PATTERNS = listOf(
+        Regex("""shutil\.rmtree"""),
+        Regex("""os\.remove"""),
+        Regex("""os\.unlink"""),
+        Regex("""os\.rmdir"""),
+        Regex("""os\.removedirs"""),
+        Regex("""pathlib.*\.unlink"""),
+        Regex("""pathlib.*\.rmdir"""),
+        Regex("""\.unlink\("""),
+        Regex("""subprocess.*(rm|del|rmdir|rd)"""),
+        Regex("""os\.system\s*\(\s*['"]\s*(rm|del|rmdir|rd)""")
+    )
+
     private fun detectDestructivePython(code: String): String? {
         if (code.isBlank()) return null
-        val patterns = listOf(
-            Regex("""shutil\.rmtree"""),
-            Regex("""os\.remove"""),
-            Regex("""os\.unlink"""),
-            Regex("""os\.rmdir"""),
-            Regex("""os\.removedirs"""),
-            Regex("""pathlib.*\.unlink"""),
-            Regex("""pathlib.*\.rmdir"""),
-            Regex("""\.unlink\("""),
-            Regex("""subprocess.*\b(rm|del|rmdir|rd)\b"""),
-            Regex("""os\.system\s*\(\s*['\"]\s*(rm|del|rmdir|rd)\b""")
-        )
-        val hit = patterns.firstOrNull { it.containsMatchIn(code) } ?: return null
+        val hit = DESTRUCTIVE_PYTHON_PATTERNS.firstOrNull { it.containsMatchIn(code) } ?: return null
         return "已拦截：Python 代码包含删除操作（${hit.pattern}）。\n" +
                 "AI 不得直接删除文件。如需删除，请改用 delete_file 工具，" +
                 "文件会被移入回收站，由用户决定何时清空。"
@@ -210,7 +209,7 @@ object PythonTools {
         val timeoutSec = args.optInt("timeout", 120).coerceIn(1, 1800)
         val workDirRaw = args.optString("work_dir", "").trim()
         val stdin = args.optString("stdin", "")
-        // 【修复】run_code 之前不支持 args，sys.argv 永远是空的。
+        // run_code 之前不支持 args，sys.argv 永远是空的。
         // 现在与 run_file 一致，支持传参（带引号解析）。
         val extraArgs = args.optString("args", "").trim()
 
@@ -229,7 +228,7 @@ object PythonTools {
         return withContext(Dispatchers.IO) {
             try {
                 val tempDir = net.xinkong.furagent.desktop.data.DesktopPaths.tempDir()
-                // 【修复】脚本名加自增序号，避免同一毫秒并发撞名。
+                // 脚本名加自增序号，避免同一毫秒并发撞名。
                 val scriptFile = File(
                     tempDir,
                     "run_${System.currentTimeMillis()}_${tempSeq.incrementAndGet()}.py"
@@ -531,7 +530,6 @@ object PythonTools {
      * 解析命令行参数字符串，支持单/双引号包裹。
      * 与 FfmpegTools.parseCommandLine 同语义。
      */
-    // 【2026-10-15 去重】实现已抽到 shared CommandLine
     private fun parseArgsLine(cmd: String): List<String> =
         net.xinkong.furagent.shared.util.CommandLine.parse(cmd)
 

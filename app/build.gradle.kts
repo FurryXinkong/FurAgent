@@ -3,6 +3,10 @@ import java.util.*
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    // compose resources：消费 shared 的 Res.font.* 共享字体
+    id("org.jetbrains.compose")
+    // 【自定义脚本】Chaquopy：把 CPython 打进 APK，安卓端本地跑 Python 脚本
+    id("com.chaquo.python")
 }
 
 // 【25.75 修复】签名配置不再硬编码。
@@ -41,7 +45,7 @@ android {
         }
 
         buildConfigField("int", "DEFAULT_BRIDGE_PORT", "8425")
-        buildConfigField("String", "DEFAULT_PC_RECEIVE_DIR", "\"/sdcard/FurAgent/received\"")
+        buildConfigField("String", "DEFAULT_PC_RECEIVE_DIR", "\"/sdcard/FurAgent/downloads\"")
         buildConfigField("int", "LOG_KEEP_DAYS", "7")
         buildConfigField("long", "LOG_MAX_FILE_SIZE", "10485760L")
     }
@@ -97,6 +101,19 @@ android {
     }
 }
 
+// 【自定义脚本】Chaquopy：内嵌 CPython 3.12（与构建机 Python 版本一致，
+// 避免构建时找不到对应版本导致 .pyc 预编译失败；脚本语法与桌面端兼容）
+chaquopy {
+    defaultConfig {
+        version = "3.12"
+        // 只带标准库，不装第三方包（体积小、启动快）。
+        // 需要第三方包时在 pip { install("xxx") } 里加。
+        pip {
+            // 默认不装任何包
+        }
+    }
+}
+
 dependencies {
     implementation(project(":shared"))
 
@@ -113,9 +130,10 @@ dependencies {
     implementation("dev.rikka.shizuku:provider:13.1.5")
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("org.jsoup:jsoup:1.23.2")
-    implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.9")
+    // compose resources：shared 的 Res.font.* 消费方依赖
+    implementation(compose.components.resources)
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

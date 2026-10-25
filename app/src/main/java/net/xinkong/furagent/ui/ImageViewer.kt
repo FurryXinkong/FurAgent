@@ -10,8 +10,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -84,8 +83,10 @@ fun ImageViewerDialog(path: String, onDismiss: () -> Unit) {
                     )
                 }
                 else -> {
+                    val bmp = state.getOrNull()
+                    if (bmp != null) {
                     Image(
-                        bitmap = state.getOrNull()!!.asImageBitmap(),
+                        bitmap = bmp.asImageBitmap(),
                         contentDescription = null,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier
@@ -98,6 +99,7 @@ fun ImageViewerDialog(path: String, onDismiss: () -> Unit) {
                                 translationY = offsetY
                             }
                     )
+                    }
                 }
             }
 

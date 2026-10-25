@@ -1,5 +1,6 @@
 package net.xinkong.furagent.data
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -14,9 +15,10 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 
-// 【冗余清理 Batch 13】Session / SessionMeta 的 typealias 已集中到 Models.kt。
 
 object SessionStore {
+
+    private val RE_ILLEGAL_FN = Regex("""[\\/:*?"<>|]""")
     private const val DIR_NAME = "sessions"
     private const val INDEX_FILE = "index.json"
 
@@ -50,34 +52,28 @@ object SessionStore {
         val settingsRestored: Boolean get() = restoredSettings != null
     }
 
-    // ============================================================
     // 索引内存缓存
-    // ============================================================
     private val indexLock = Any()
 
     @Volatile private var cachedIndex: LinkedHashMap<String, JSONObject>? = null
 
     @Volatile private var cachedIndexMtime: Long = -1L
 
-    // ============================================================
     // 索引写盘节流（500ms）
-    // ============================================================
     @Volatile private var lastIndexWriteAt: Long = 0L
     @Volatile private var indexDirty: Boolean = false
     private val indexWritePending = AtomicBoolean(false)
     private val indexWriteHandler = Handler(Looper.getMainLooper())
     private const val INDEX_WRITE_THROTTLE_MS = 500L
 
-    // ============================================================
     // 【新增】会话文件写盘节流（500ms）
-    //
+
     // 每一轮 onHistoryChanged 都会调 SessionStore.save()，长会话每次写
     // 整个 session.json（几百条消息 = 上百 KB），浪费 IO 且可能卡顿。
     // 加节流：500ms 内只写一次，把最新内容缓存起来最后写。
-    //
+
     // 与 index 不同的是：会话内容不能丢——必须在进程退出前 flush。
     // 所以额外提供 flushPending() 供 MainActivity.onPause 或 critical section 调用。
-    // ============================================================
     @Volatile private var lastSessionWriteAt: Long = 0L
     private val pendingSessionSaves = java.util.concurrent.ConcurrentHashMap<String, Session>()
     private val sessionWritePending = AtomicBoolean(false)
@@ -94,7 +90,6 @@ object SessionStore {
     private fun indexFile(context: Context) = File(sessionsDir(context), INDEX_FILE)
 
     private fun atomicWrite(target: File, content: String) {
-        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
 
@@ -227,7 +222,8 @@ object SessionStore {
                             title = o.optString("title", "新会话"),
                             createdAt = o.optLong("createdAt"),
                             updatedAt = o.optLong("updatedAt"),
-                            messageCount = o.optInt("messageCount", 0)
+                            messageCount = o.optInt("messageCount", 0),
+                            parentId = o.optString("parentId", "").takeIf { it.isNotBlank() }
                         )
                     )
                 } catch (e: Exception) {
@@ -260,7 +256,7 @@ object SessionStore {
                     skipped++
                     continue
                 }
-                // 【2026-10-15 去重】反序列化逻辑抽到 parseChatMessageFromJson
+                // 反序列化逻辑抽到 parseChatMessageFromJson
                 val msg = parseChatMessageFromJson(m, null)
                 if (msg != null) {
                     msgs.add(msg)
@@ -279,6 +275,9 @@ object SessionStore {
                 title = o.optString("title", "新会话"),
                 createdAt = o.optLong("createdAt", System.currentTimeMillis()),
                 updatedAt = o.optLong("updatedAt", System.currentTimeMillis()),
+                parentId = o.optString("parentId", "").takeIf { it.isNotBlank() },
+                // 【P1-1】会话专用提示词：此前从未被反序列化，导致用户设置后重启丢失
+                systemPrompt = if (o.has("systemPrompt")) o.optString("systemPrompt", "") else null,
                 messages = msgs
             )
         } catch (e: Exception) {
@@ -346,16 +345,32 @@ object SessionStore {
         if (toWrite.isEmpty()) return
 
         val appContext = context.applicationContext
+        // parentId 兜底：索引为准（upsertIndexEntry 已在 save 时合并），persist 重造对象不带 parentId
+        val indexParents = synchronized(indexLock) {
+            runCatching {
+                loadIndexIntoMemory(appContext)
+                    .mapValues { (_, v) -> v.optString("parentId", "") }
+            }.getOrNull().orEmpty()
+        }
         for ((_, session) in toWrite) {
+            val parentId = session.parentId ?: indexParents[session.id]?.takeIf { it.isNotBlank() }
             try {
+                // 【P1-1】systemPrompt=null 表示未携带（persist 重造对象不带它）：
+                // 保留磁盘原值，避免被抹掉。""= 用户显式清空，正常写入。
+                val systemPrompt = session.systemPrompt ?: runCatching {
+                    val f = sessionFile(appContext, session.id)
+                    if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optString("systemPrompt", "")
+                    else ""
+                }.getOrDefault("")
                 val o = JSONObject().apply {
                     put("id", session.id)
                     put("title", session.title)
                     put("createdAt", session.createdAt)
                     put("updatedAt", session.updatedAt)
+                    if (parentId != null) put("parentId", parentId)
+                    put("systemPrompt", systemPrompt)
                     put("messages", JSONArray().apply {
                         session.messages.forEach { m ->
-                            // 【冗余清理 Batch 11b】消息序列化抽到 shared/data/SessionCodec
                             put(net.xinkong.furagent.shared.data.SessionCodec.messageToJson(m))
                         }
                     })
@@ -375,12 +390,16 @@ object SessionStore {
         synchronized(indexLock) {
             try {
                 val map = loadIndexIntoMemory(context)
+                // parentId 兜底：调用方未带时保留旧索引值（persist/重命名会重造 Session 对象）
+                val parentId = session.parentId
+                    ?: map[session.id]?.optString("parentId", "")?.takeIf { it.isNotBlank() }
                 map[session.id] = JSONObject().apply {
                     put("id", session.id)
                     put("title", session.title)
                     put("createdAt", session.createdAt)
                     put("updatedAt", session.updatedAt)
                     put("messageCount", session.messages.size)
+                    if (parentId != null) put("parentId", parentId)
                 }
                 flushIndex(context, map)
             } catch (e: Exception) {
@@ -393,6 +412,12 @@ object SessionStore {
     }
 
     fun delete(context: Context, id: String) {
+        // 级联：母会话删除时，名下子会话（parentId == id）一并删除
+        try {
+            for (c in list(context)) {
+                if (c.parentId == id) delete(context, c.id)
+            }
+        } catch (_: Exception) { }
         try {
             // 从待写队列里也移除
             pendingSessionSaves.remove(id)
@@ -435,7 +460,6 @@ object SessionStore {
     /**
      * 从 JSON 反序列化一条 ChatMessage。
      *
-     * 【2026-10-15 抽公共】原来 load / importSingleSession / importAll 三处
      * 各有一份几乎逐字的反序列化逻辑（各约 40 行）。现统一到这里。
      *
      * @param importedImagesDir 非 null 时会尝试解码 imageData 里的 base64 图片，
@@ -506,7 +530,7 @@ object SessionStore {
                         skipped++
                         continue
                     }
-                    // 【2026-10-15 去重】反序列化逻辑抽到 parseChatMessageFromJson
+                    // 反序列化逻辑抽到 parseChatMessageFromJson
                     val msg = parseChatMessageFromJson(m, importedImagesDir)
                     if (msg != null) {
                         msgs.add(msg)
@@ -568,7 +592,6 @@ object SessionStore {
     fun importMarkdown(context: Context, file: File): ImportSingleResult {
         return try {
             val text = file.readText(Charsets.UTF_8)
-            // 【冗余清理 Batch 11c】文本解析抽到 shared/data/SessionCodec
             val parsed = net.xinkong.furagent.shared.data.SessionCodec.parseMarkdownSession(
                 text = text,
                 fallbackTitle = file.nameWithoutExtension
@@ -622,6 +645,7 @@ object SessionStore {
                             put("createdAt", o.optLong("createdAt"))
                             put("updatedAt", o.optLong("updatedAt"))
                             put("messageCount", o.optJSONArray("messages")?.length() ?: 0)
+                            put("parentId", o.optString("parentId", ""))
                         }
                     } catch (e: Exception) {
                         AgentLogger.log(
@@ -648,10 +672,9 @@ object SessionStore {
         return try {
             val exportDir = File(SDCARD_PATH, "FurAgent/exports")
             if (!exportDir.exists()) exportDir.mkdirs()
-            val safeTitle = session.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-            val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
+            val safeTitle = session.title.replace(RE_ILLEGAL_FN, "_")
+            val ts = DateFormats.formatFileTs()
             val file = File(exportDir, "${safeTitle}_$ts.md")
-            // 【冗余清理 Batch 11b】Markdown 骨架抽到 shared/data/SessionCodec
             val content = net.xinkong.furagent.shared.data.SessionCodec.sessionToMarkdown(
                 session = session,
                 hideToolMessages = hideToolMessages,
@@ -670,13 +693,12 @@ object SessionStore {
         }
     }
 
-    // 【冗余清理 Batch 11b】tryEmbedImageAsDataUrl 已挪到 shared/data/SessionCodec。
 
     fun exportAll(context: Context, prefs: android.content.SharedPreferences): File? {
         return try {
             val exportDir = File(SDCARD_PATH, "FurAgent/backup")
             if (!exportDir.exists()) exportDir.mkdirs()
-            val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val ts = DateFormats.formatFileTsNoMs()
             val file = File(exportDir, "backup_$ts.json")
 
             val root = JSONObject()
@@ -691,7 +713,6 @@ object SessionStore {
                     put("updatedAt", s.updatedAt)
                     put("messages", JSONArray().apply {
                         s.messages.forEach { m ->
-                            // 【冗余清理 Batch 11b】带图片的消息序列化抽到 shared/data/SessionCodec
                             put(net.xinkong.furagent.shared.data.SessionCodec.messageToJsonWithImages(
                                 m = m,
                                 maxImageBytes = MAX_EXPORT_IMAGE_BYTES,
@@ -713,8 +734,13 @@ object SessionStore {
                 put("requireConfirmWrite", prefs.getBoolean("confirm_write", true))
                 put("requireConfirmDelete", prefs.getBoolean("confirm_delete", true))
                 put("requireConfirmShell", prefs.getBoolean("confirm_shell", true))
-                put("receiveDir", prefs.getString("pc_receive_dir", "/sdcard/FurAgent/received")
-                    ?: "/sdcard/FurAgent/received")
+                put("requireConfirmPython", prefs.getBoolean("confirm_python", true))
+                put("showTokenBar", prefs.getBoolean("show_token_bar", false))
+                put("showModifiedFiles", prefs.getBoolean("show_modified_files", false))
+                put("enableNewSessionSuggest", prefs.getBoolean("enable_new_session_suggest", false))
+                put("fileBackupEnabled", prefs.getBoolean("file_backup_enabled", true))
+                put("receiveDir", prefs.getString("pc_receive_dir", "/sdcard/FurAgent/downloads")
+                    ?: "/sdcard/FurAgent/downloads")
                 put("themeMode", prefs.getString("theme_mode", "system") ?: "system")
                 put("imageCompress", prefs.getBoolean("image_compress", true))
                 put("imageCompressQuality", prefs.getInt("image_compress_quality", 70))
@@ -731,7 +757,6 @@ object SessionStore {
                     val s = prefs.getString("blocked_paths", "/data|/system|/vendor|/proc|/sys") ?: ""
                     s.split("|").map { it.trim() }.filter { it.isNotBlank() }.forEach { put(it) }
                 })
-                put("disableThinking", prefs.getBoolean("disable_thinking", false))
                 put("enableMemory", prefs.getBoolean("enable_memory", true))
                 put("notificationMode", prefs.getString("notification_mode", "off") ?: "off")
                 put("notifyTools", JSONArray().apply {
@@ -742,6 +767,8 @@ object SessionStore {
                 put("pcBridgeHost", prefs.getString("pc_bridge_host", "") ?: "")
                 put("pcBridgePort", prefs.getInt("pc_bridge_port", 8425))
                 put("floatingWindowEnabled", prefs.getBoolean("floating_window_enabled", true))
+                put("imageProfileId", prefs.getString("image_profile_id", "") ?: "")
+                put("enableThinking", prefs.getBoolean("enable_thinking", false))
             })
 
             val memArr = JSONArray()
@@ -838,7 +865,7 @@ object SessionStore {
                     o.optJSONArray("messages")?.let { mArr ->
                         for (j in 0 until mArr.length()) {
                             val m = mArr.optJSONObject(j) ?: continue
-                            // 【2026-10-15 去重】反序列化逻辑抽到 parseChatMessageFromJson
+                            // 反序列化逻辑抽到 parseChatMessageFromJson
                             val msg = parseChatMessageFromJson(m, importedImagesDir)
                             if (msg != null) msgs.add(msg)
                         }
@@ -890,8 +917,12 @@ object SessionStore {
                     putBoolean("confirm_write", s.optBoolean("requireConfirmWrite", true))
                     putBoolean("confirm_delete", s.optBoolean("requireConfirmDelete", true))
                     putBoolean("confirm_shell", s.optBoolean("requireConfirmShell", true))
-                    putBoolean("confirm_skill", s.optBoolean("requireConfirmSkill", true))
-                    putString("pc_receive_dir", s.optString("receiveDir", "/sdcard/FurAgent/received"))
+                    putBoolean("confirm_python", s.optBoolean("requireConfirmPython", true))
+                    putBoolean("show_token_bar", s.optBoolean("showTokenBar", false))
+                    putBoolean("show_modified_files", s.optBoolean("showModifiedFiles", false))
+                    putBoolean("enable_new_session_suggest", s.optBoolean("enableNewSessionSuggest", false))
+                    putBoolean("file_backup_enabled", s.optBoolean("fileBackupEnabled", true))
+                    putString("pc_receive_dir", s.optString("receiveDir", "/sdcard/FurAgent/downloads"))
                     putString("theme_mode", s.optString("themeMode", "system"))
                     putBoolean("image_compress", s.optBoolean("imageCompress", true))
                     putInt("image_compress_quality", s.optInt("imageCompressQuality", 70).coerceIn(30, 100))
@@ -920,7 +951,6 @@ object SessionStore {
                         }
                         putString("blocked_paths", l.joinToString("|"))
                     }
-                    putBoolean("disable_thinking", s.optBoolean("disableThinking", false))
                     putBoolean("enable_memory", s.optBoolean("enableMemory", true))
                     putString("notification_mode", s.optString("notificationMode", "off"))
                     s.optJSONArray("notifyTools")?.let { arr ->
@@ -935,8 +965,10 @@ object SessionStore {
                     putString("pc_bridge_host", s.optString("pcBridgeHost", ""))
                     putInt("pc_bridge_port", s.optInt("pcBridgePort", 8425).coerceIn(1, 65535))
                     putBoolean("floating_window_enabled", s.optBoolean("floatingWindowEnabled", true))
+                    putString("image_profile_id", s.optString("imageProfileId", ""))
+                    putBoolean("enable_thinking", s.optBoolean("enableThinking", false))
                 }
-                // 【修复】反读一次，得到 deobfuscate 后的 AppSettings，
+                // 反读一次，得到 deobfuscate 后的 AppSettings，
                 // 保证 API Key、路径等字段就是内存里可用的最新值，
                 // 调用方拿到后直接用即可，不需要自己再 SettingsStore.load。
                 restoredSettings = SettingsStore.load(prefs)

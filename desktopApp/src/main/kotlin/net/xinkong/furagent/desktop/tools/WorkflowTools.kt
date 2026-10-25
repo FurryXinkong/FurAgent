@@ -12,6 +12,10 @@ import kotlin.time.Duration.Companion.milliseconds
 
 object WorkflowTools {
 
+    private val RE_RANGE = Regex("""^(\d+)\.\.(\d+)$""")
+    private val RE_LENGTH = Regex("^length(>=|<=|==|=|>|<)(\\d+)$")
+    private val RE_NUM_OP = Regex("^(>=|<=|==|=|>|<)(-?\\d+(?:\\.\\d+)?)$")
+
     private const val MAX_RECURSION_DEPTH = 10
 
     data class ToolDef(
@@ -54,9 +58,7 @@ object WorkflowTools {
         }
     }
 
-    // ============================================================
     // create
-    // ============================================================
 
     private fun doCreate(args: JSONObject): ToolResult {
         val name = args.optString("name", "").trim()
@@ -111,9 +113,7 @@ object WorkflowTools {
         return list
     }
 
-    // ============================================================
     // delete / list
-    // ============================================================
 
     private fun doDelete(args: JSONObject): ToolResult {
         val name = args.optString("name", "").trim()
@@ -136,9 +136,7 @@ object WorkflowTools {
         return ToolResult.ok(sb.toString())
     }
 
-    // ============================================================
     // run
-    // ============================================================
 
     private suspend fun doRun(
         args: JSONObject,

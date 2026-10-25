@@ -3,9 +3,15 @@ package net.xinkong.furagent.tools
 import android.content.Context
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.ConfirmationBroker
+import net.xinkong.furagent.core.runAgentTurn
 import net.xinkong.furagent.data.AppSettings
+import net.xinkong.furagent.data.HistoryStore
+import net.xinkong.furagent.data.ChatMessage
+import net.xinkong.furagent.data.Session
+import net.xinkong.furagent.data.SessionStore
 import net.xinkong.furagent.data.currentProfile
 import net.xinkong.furagent.shared.tools.*
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -52,9 +58,9 @@ private const val RAW_PRIVATE_TOOLS_JSON = """
   {"type":"function","function":{"name":"app","description":"应用管理。op=list 列出已安装应用（可 keyword 过滤）；op=open 打开应用（需要 package_name，不确定时先 list）；op=open_url 用浏览器打开网址；op=running 列出当前运行中的应用（需要 Shizuku 权限）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["list","open","open_url","running"]},"keyword":{"type":"string"},"limit":{"type":"integer"},"package_name":{"type":"string"},"app_name":{"type":"string"},"url":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"device","description":"设备信息与通知。op=status 读取设备状态（电量/存储/内存/网络）；op=info 读取详细设备信息（机型/Android 版本/ABI/屏幕等，需要详细机型信息时用它）；op=clipboard_read 读取剪贴板；op=clipboard_write 写入剪贴板（需要 text）；op=notify 发送系统通知（需要 title 和 content）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["status","info","clipboard_read","clipboard_write","notify"]},"text":{"type":"string"},"title":{"type":"string"},"content":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"calendar","description":"日历日程。op=add 打开系统新建日程页面（title + start_time，可选 end_time，用户需手动确认保存）；op=read 读取指定时间段日程（可选 start_time / end_time / limit）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["add","read"]},"title":{"type":"string"},"start_time":{"type":"string"},"end_time":{"type":"string"},"limit":{"type":"integer"}},"required":["op"]}}},
-  {"type":"function","function":{"name":"schedule","description":"定时任务（秒级轮询 / cron / 条件触发）。op=create 创建任务（action 支持 open_app / run_cron / send_notification / run_workflow，可带 repeat_mode / interval_seconds / cron_expression / conditions）；op=list 列出所有任务；op=cancel 按 task_id 或 keyword 取消。所有时间/周期/条件触发需求优先使用。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["create","list","cancel"]},"action":{"type":"string"},"description":{"type":"string"},"package_name":{"type":"string"},"app_name":{"type":"string"},"command":{"type":"string"},"notification_title":{"type":"string"},"notification_content":{"type":"string"},"workflow_name":{"type":"string"},"trigger_time":{"type":"string"},"repeat_mode":{"type":"string"},"interval_seconds":{"type":"integer"},"cron_expression":{"type":"string"},"repeat_days":{"type":"string"},"conditions":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"operator":{"type":"string"},"value":{"type":"string"},"value2":{"type":"string"}}}},"condition_mode":{"type":"string"},"skip_if_not_met":{"type":"boolean"},"task_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}}},
+  {"type":"function","function":{"name":"schedule","description":"定时任务（秒级轮询 / cron / 条件触发）。op=create 创建任务（action 支持 open_app / run_command / notify / run_workflow / run_tool / run_agent，可带 repeat_mode / interval_seconds / cron_expression / conditions；run_agent 让 AI 定时主动说话，需要 prompt，可带 session_id 写回会话；run_tool 需要 tool_name）；op=list 列出所有任务；op=cancel 按 task_id 或 keyword 取消。所有时间/周期/条件触发需求优先使用。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["create","list","cancel"]},"action":{"type":"string"},"description":{"type":"string"},"package_name":{"type":"string"},"app_name":{"type":"string"},"command":{"type":"string"},"tool_name":{"type":"string"},"tool_args":{"type":"string"},"prompt":{"type":"string"},"session_id":{"type":"string"},"notification_title":{"type":"string"},"notification_content":{"type":"string"},"workflow_name":{"type":"string"},"trigger_time":{"type":"string"},"delay_seconds":{"type":"integer"},"repeat_mode":{"type":"string"},"interval_seconds":{"type":"integer"},"cron_expression":{"type":"string"},"repeat_days":{"type":"string"},"conditions":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"operator":{"type":"string"},"value":{"type":"string"},"value2":{"type":"string"}}}},"condition_mode":{"type":"string"},"skip_if_not_met":{"type":"boolean"},"task_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"workflow","description":"工作流管理。op=create 创建或更新工作流（需要 name 和 steps_json）；op=delete 按名称删除；op=list 列出所有工作流；op=run 执行指定工作流（需要 name，可选 params）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["create","delete","list","run"]},"name":{"type":"string"},"description":{"type":"string"},"params":{"type":"object"},"steps_json":{"type":"string"}},"required":["op"]}}},
-  {"type":"function","function":{"name":"memory","description":"长期记忆。op=save 保存一条记忆（需要 content）；op=recall 按 query 检索已保存的记忆（query 为空则列出全部）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["save","recall"]},"content":{"type":"string"},"query":{"type":"string"}},"required":["op"]}}},
+  {"type":"function","function":{"name":"memory","description":"长期记忆管理。op=save 保存一条记忆（需要 content）；op=recall 按 query 检索（query 为空则列出全部）；op=list 列出所有记忆（带 ID）；op=delete 按 memory_id 或 keyword 删除。当用户透露姓名、职业、偏好、习惯、忌讳或明确纠正你的事实时主动保存，不要等用户说「记住」。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["save","recall","list","delete"]},"content":{"type":"string"},"query":{"type":"string"},"memory_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"web","description":"联网工具。op=search 搜索（最多 8 条结果，可 page 翻页；可选 engine=bing/baidu/360 指定搜索源，不填按 360→百度→必应 顺序自动回退）；op=fetch 抓取指定 URL 的网页正文（可 max_length 控制长度，默认 8000）。用户提供 URL 且要求总结或查看内容时，直接用 fetch 抓正文，不要只依赖搜索摘要。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"page":{"type":"integer"},"engine":{"type":"string"},"url":{"type":"string"},"max_length":{"type":"integer"}},"required":["op"]}}},
   {"type":"function","function":{"name":"file_op","description":"文件操作（写操作，需确认）。op=create 创建新文件（path + content）；op=delete 删除文件（path）；op=rename 重命名或移动（old_path + new_path）；op=copy 复制（source + dest）；op=edit 覆盖已存在文件（path + content）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["create","delete","rename","copy","edit"]},"path":{"type":"string"},"content":{"type":"string"},"old_path":{"type":"string"},"new_path":{"type":"string"},"source":{"type":"string"},"dest":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"zip","description":"压缩与解压。op=zip 把目录压缩为 zip（source_dir + output_zip）；op=unzip 解压 zip（zip_path + target_dir）。需确认。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["zip","unzip"]},"source_dir":{"type":"string"},"output_zip":{"type":"string"},"zip_path":{"type":"string"},"target_dir":{"type":"string"}},"required":["op"]}}},
@@ -148,9 +154,7 @@ object ToolRegistry {
         merged
     }
 
-    // ============================================================
-    // 【P0】分层工具系统
-    // ============================================================
+    // 分层工具系统
 
     /**
      * 把当前所有可用工具（common + private + mcp）转成 CatalogTool 列表。
@@ -189,11 +193,42 @@ object ToolRegistry {
             )
         }
 
+        // 【自定义脚本】pytool 常驻 + 每个脚本 pytool_<name> 动态工具
+        out.add(
+            CatalogTool(
+                name = "pytool",
+                displayName = "自定义脚本",
+                description = net.xinkong.furagent.shared.skill.SkillTools.TOOLS.first().description,
+                paramsSchema = net.xinkong.furagent.shared.skill.SkillTools.TOOLS.first().paramsSchema
+            )
+        )
+        // 【临时执行 Python】与桌面端 python 工具对齐
+        out.add(
+            CatalogTool(
+                name = "python",
+                displayName = "执行 Python 代码",
+                description = "临时执行一段 Python 代码（不落盘）。适合一次性计算、验证逻辑、处理数据。" +
+                        "用 print() 输出结果；最后一行若是 {\"ok\":true,\"result\":\"...\"} 会优先取 result。" +
+                        "Chaquopy 内嵌 CPython 3.12，只有标准库。",
+                paramsSchema = """{"type":"object","properties":{"code":{"type":"string"},"args":{"type":"object"},"work_dir":{"type":"string"},"timeout":{"type":"integer"}},"required":["code"]}"""
+            )
+        )
+        net.xinkong.furagent.shared.skill.SkillTools.dynamicTools().forEach { st ->
+            out.add(
+                CatalogTool(
+                    name = st.name,
+                    displayName = st.displayName,
+                    description = st.description,
+                    paramsSchema = st.paramsSchema
+                )
+            )
+        }
+
         return out
     }
 
     /**
-     * 【P0】构建 tool_search 工具的 schema。
+     * 构建 tool_search 工具的 schema。
      *
      * description 里内嵌"工具目录"，让 AI 一眼看到有哪些工具可以用，
      * 不用额外请求。
@@ -319,6 +354,71 @@ object ToolRegistry {
             }
         }
 
+        // 【自定义脚本】pytool 常驻 + 每个脚本 pytool_<name> 始终加入，
+        // 让 AI 一眼看到有哪些脚本可用（与桌面端一致）。
+        if ("pytool" !in disabled) {
+            val pt = net.xinkong.furagent.shared.skill.SkillTools.TOOLS.first()
+            merged.put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", pt.name)
+                    put("description", pt.description)
+                    put("parameters", JSONObject(pt.paramsSchema))
+                })
+            })
+        }
+        // 【临时执行 Python】与桌面端 python 工具对齐：
+        // 不落盘，直接跑一段代码。适合“帮我算一下”“验证这段逻辑”。
+        if ("python" !in disabled) {
+            merged.put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", "python")
+                    put(
+                        "description",
+                        "临时执行一段 Python 代码（不落盘，用完即弃）。" +
+                                "适合一次性计算、验证逻辑、处理数据。" +
+                                "\n\n【与 pytool 的区别】pytool 执行 scripts/ 下的持久化脚本；" +
+                                "python 直接跑你传入的代码字符串，不会在磁盘上留文件。" +
+                                "\n\n【输出】用 print() 输出结果，会原样返回给用户。" +
+                                "若最后一行是 JSON {\"ok\":true,\"result\":\"...\"}，会优先取 result 字段。" +
+                                "\n\n【环境】Chaquopy 内嵌 CPython 3.12，只有标准库，无第三方包。" +
+                                "\n\n【注意】不要写死循环；不要用 input() 交互。"
+                    )
+                    put(
+                        "parameters",
+                        JSONObject(
+                            """{"type":"object","properties":{"code":{"type":"string","description":"要执行的 Python 源码"},"args":{"type":"object","description":"可选，会以一行 JSON 写入 stdin，代码里用 sys.stdin.readline() 读"},"work_dir":{"type":"string","description":"可选，工作目录（open() 相对路径的基准）"},"timeout":{"type":"integer","description":"超时秒数，默认 60"}},"required":["code"]}"""
+                        )
+                    )
+                })
+            })
+        }
+        // 【修改历史】与桌面端同能力（list / diff / restore，restore 带确认弹窗）
+        if ("history" !in disabled) {
+            HistoryTools.TOOLS.forEach { ht ->
+                merged.put(JSONObject().apply {
+                    put("type", "function")
+                    put("function", JSONObject().apply {
+                        put("name", ht.name)
+                        put("description", ht.description)
+                        put("parameters", JSONObject(ht.paramsSchema))
+                    })
+                })
+            }
+        }
+        net.xinkong.furagent.shared.skill.SkillTools.dynamicTools().forEach { st ->
+            if (st.name in disabled) return@forEach
+            merged.put(JSONObject().apply {
+                put("type", "function")
+                put("function", JSONObject().apply {
+                    put("name", st.name)
+                    put("description", st.description)
+                    put("parameters", JSONObject(st.paramsSchema))
+                })
+            })
+        }
+
         // Layer 2 入口：元工具（始终发送）
         merged.put(buildToolSearchSpec(settings))
         merged.put(buildToolLoadSpec())
@@ -378,13 +478,17 @@ object ToolRegistry {
         return null
     }
 
-    // ============================================================
     // displayName / allToolNames / findToolNameByDisplay
-    // ============================================================
 
     fun displayName(name: String): String {
         CommonToolSchemas.DISPLAY_NAMES[name]?.let { return it }
         PRIVATE_TOOL_DISPLAY_NAMES[name]?.let { return it }
+        if (name == "pytool") return "自定义脚本"
+        if (name == "python") return "执行 Python 代码"
+        if (name == "history") return "修改历史"
+        if (net.xinkong.furagent.shared.skill.SkillTools.isDynamicTool(name)) {
+            return "脚本：${name.removePrefix(net.xinkong.furagent.shared.skill.SkillStore.TOOL_PREFIX)}"
+        }
         if (name.startsWith("mcp__")) {
             refreshMcpCacheIfNeeded()
             cachedMcpForward[name]?.let { return it }
@@ -420,9 +524,7 @@ object ToolRegistry {
         return null
     }
 
-    // ============================================================
     // 日志参数清理
-    // ============================================================
 
     private fun sanitizeArgsForLog(name: String, args: JSONObject): String {
         return try {
@@ -455,14 +557,13 @@ object ToolRegistry {
         }
     }
 
-    // ============================================================
     // write_file 确认
-    // ============================================================
 
     private suspend fun confirmThenWrite(
         args: JSONObject,
         host: AndroidToolHost,
-        settings: AppSettings
+        settings: AppSettings,
+        context: Context
     ): String {
         val pathStr = args.optString("path", "").trim()
         if (pathStr.isBlank()) return "失败：未提供 path"
@@ -488,14 +589,433 @@ object ToolRegistry {
             if (!approved) return "用户已拒绝写入操作，文件未改动"
         }
 
+        // 写前备份：覆盖已有文件时把原内容存进备份目录（设置里可关），
+        // 「修改历史 + 一键回档」的数据来源。备份失败不阻断写入。
+        if (settings.fileBackupEnabled) {
+            val f = java.io.File(resolved)
+            if (f.exists()) {
+                val backupDir = BackupHelper.backupDirFor(host.trashDir())
+                if (backupDir != null) {
+                    val oldBytes = try { f.readBytes() } catch (_: Exception) { null }
+                    if (oldBytes != null) {
+                        HistoryStore.getInstance(context).recordEdit(
+                            backupDir, resolved, if (append) "append" else "write",
+                            oldBytes, null, if (append) "append" else "write",
+                            sessionId = CurrentTaskSession.id
+                        )
+                    }
+                }
+            }
+        }
+
         val r = CommonTools.execute("write_file", args, host)
             ?: return "失败：内部错误，CommonTools 未处理 write_file"
         return if (r.success) r.output else "失败：${r.output}"
     }
 
-    // ============================================================
     // 工具执行
-    // ============================================================
+
+    // 子会话执行进度（聊天页顶部功能区实时展示；按 subId 区分并行子会话，避免互踩）
+    object SubSessionProgress {
+        data class Entry(
+            val title: String = "",
+            val steps: Int = 0,
+            val lastTool: String = "",
+            /** 当前阶段：思考中 / 推理中 / 生成中 */
+            val phase: String = "",
+            /** 最新一行内容，让用户看到它在干什么 */
+            val snippet: String = "",
+            val startedAt: Long = 0L
+        )
+
+        data class State(
+            val running: Boolean = false,
+            val activeCount: Int = 0,
+            val title: String = "",
+            val steps: Int = 0,
+            val lastTool: String = "",
+            val phase: String = "",
+            val snippet: String = ""
+        )
+
+        /** 子会话完成事件：回流主对话注入「子代理完成」通知 */
+        data class Completed(
+            val originId: String,
+            val subId: String,
+            val title: String,
+            val msgCount: Int,
+            val summary: String
+        )
+
+        private val entries = LinkedHashMap<String, Entry>()
+        private val _state = kotlinx.coroutines.flow.MutableStateFlow(State())
+        val state: kotlinx.coroutines.flow.StateFlow<State> = _state
+        private val _events =
+            kotlinx.coroutines.flow.MutableSharedFlow<Completed>(extraBufferCapacity = 32)
+        val events: kotlinx.coroutines.flow.SharedFlow<Completed> = _events
+
+        private fun refresh() {
+            val newest = entries.values.lastOrNull()
+            _state.value = State(
+                running = entries.isNotEmpty(),
+                activeCount = entries.size,
+                title = newest?.title ?: "",
+                steps = newest?.steps ?: 0,
+                lastTool = newest?.lastTool ?: "",
+                phase = newest?.phase ?: "",
+                snippet = newest?.snippet ?: ""
+            )
+        }
+
+        /** 【可见性】子代理正在干什么 —— 阶段 + 最新一行内容 */
+        @Synchronized fun updatePhase(id: String, phase: String, snippet: String) {
+            val e = entries[id] ?: return
+            if (e.phase == phase && e.snippet == snippet) return
+            entries[id] = e.copy(phase = phase, snippet = snippet)
+            refresh()
+        }
+
+        @Synchronized fun start(id: String, t: String) {
+            entries[id] = Entry(title = t, startedAt = System.currentTimeMillis())
+            refresh()
+        }
+
+        @Synchronized fun update(id: String, steps: Int, lastTool: String) {
+            val e = entries[id] ?: return
+            entries[id] = e.copy(steps = steps, lastTool = lastTool)
+            refresh()
+        }
+
+        @Synchronized fun finish(id: String) {
+            entries.remove(id)
+            refresh()
+        }
+
+        @Synchronized fun snapshot(): Map<String, Entry> = LinkedHashMap(entries)
+
+        @Synchronized fun emitCompleted(c: Completed) {
+            _events.tryEmit(c)
+        }
+    }
+
+    // 当前主任务会话 id：子会话完成后回流通知的目标（AgentRunner 启动任务时写入）
+    object CurrentTaskSession {
+        @Volatile var id: String = ""
+    }
+
+    // 并行子会话计数（原子操作，杜绝同毫秒并发绕过检查）
+    private val subSessionActive = java.util.concurrent.atomic.AtomicInteger(0)
+    // 【P1-10】从 shared 统一常量，双端一致
+    private const val MAX_PARALLEL_SUB = net.xinkong.furagent.shared.data.SubSessionLimits.MAX_PARALLEL_SUB
+
+    /**
+     * 【子会话硬上限】子代理最多跑多少轮。
+     * 不继承用户把主会话调到的高轮数，否则几个并行子代理能烧掉整月额度。
+     * 【P1-10】从 shared 统一常量，双端一致。
+     */
+    private const val SUB_MAX_LOOPS = net.xinkong.furagent.shared.data.SubSessionLimits.SUB_MAX_LOOPS
+
+    /**
+     * 【截断补总结】子会话被强制截断后，让它自己回头总结一次。
+     *
+     * 只跑 1 轮：再多就是又一次全量上下文请求，
+     * 子代理这时候还在回忆上一轮的工具输出，烧钱而不产出。
+     *
+     * 什么时候不补：已经有一段正常的 assistant 文字，
+     * 说明它自己已经总结过了，再问一次是浪费。
+     */
+    private suspend fun summarizeIfTruncated(
+        history: List<ChatMessage>,
+        profile: net.xinkong.furagent.data.ModelProfile,
+        context: Context,
+        settings: AppSettings,
+    ): List<ChatMessage> {
+        val lastText = history.lastOrNull { it.type == "text" && it.role == "assistant" }
+            ?.content?.trim().orEmpty()
+        val truncated = lastText.isBlank() ||
+                lastText.contains("已达到最大工具调用轮数")
+        if (!truncated) return history
+
+        val nudge = ChatMessage(
+            role = "user",
+            content = "【系统指令】本次任务已被强制中断（轮数上限 / 任务被停止）。\n" +
+                    "请立即用简洁的文字回答整理，不要再调用任何工具：\n" +
+                    "1) 你已经完成了什么（具体改了哪些文件 / 得到了什么结论）\n" +
+                    "2) 当前状态与卡点\n" +
+                    "3) 下一步建议。\n" +
+                    "回答直接给结论，不要客套。",
+            timestamp = System.currentTimeMillis()
+        )
+
+        var out = history
+        return try {
+            AgentLogger.log("TOOL", "子会话被截断，补一轮总结（msgs=${history.size}）")
+            runAgentTurn(
+                profile = profile,
+                history = history + nudge,
+                maxTurns = 1,
+                context = context,
+                settings = settings,
+                onHistoryChanged = { h -> out = h },
+                onThinking = {},
+                onReasoning = {},
+                onStreamChunk = {},
+                onStreamCommit = {},
+                onFinish = {}
+            )
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {}
+            out
+        } catch (_: Throwable) {
+            history
+        }
+    }
+
+    /** 子会话收尾摘要：必须能看出它干了什么、停在哪。 */
+    private fun buildSubSummary(h: List<ChatMessage>, hitLimit: Boolean): String {
+        val toolCalls = h.filter { it.type == "tool_call" }
+        val lastText = h.lastOrNull { it.type == "text" && it.role == "assistant" }
+            ?.content?.trim().orEmpty()
+        val errs = h.count { it.type == "tool_result" && it.content.startsWith("失败") }
+        val sb = StringBuilder()
+        if (hitLimit) {
+            sb.append("【未完成】子会话达到轮数上限（$SUB_MAX_LOOPS）被截断，下面是已经做到的部分。\n")
+        }
+        sb.append("工具调用 ${toolCalls.size} 次")
+        if (errs > 0) sb.append("，失败 $errs 次")
+        val tools = toolCalls.mapNotNull {
+            it.content.lineSequence().firstOrNull()?.trim()?.takeIf { n -> n.isNotBlank() }
+        }.distinct().take(8)
+        if (tools.isNotEmpty()) sb.append("：").append(tools.joinToString("、"))
+        sb.append("\n")
+        if (lastText.isNotBlank()) {
+            sb.append(lastText.take(600))
+        } else {
+            sb.append("（子会话没有文本回答——只调了工具，点入子会话看完整过程）")
+        }
+        return sb.toString()
+    }
+
+    /**
+     * 【AI 主动终止】正在执行的子会话 Job 表（subId → Job）。
+     * sub_session(op=stop) 据此 cancel 对应协程。
+     * 子会话结束时自行移除，避免泄漏。
+     */
+    private val subSessionJobs =
+        java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    // 子会话后台执行作用域（独立于主任务，互不阻塞、互不误杀）
+    // 【P0-5】打上 CoroutineName 标记：ConfirmationBroker 据此识别"子代理"请求，
+    // 在弹窗标题前加"子代理 ·"前缀，用户能知道是谁在请求。
+    private val subSessionScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO +
+                kotlinx.coroutines.CoroutineName(
+                    net.xinkong.furagent.core.ConfirmationBroker.SUBSESSION_COROUTINE_NAME
+                )
+    )
+
+    /**
+     * 子代理：派生一个不携带历史的独立子会话执行 task，跑完存盘并返回结果摘要。
+     * tool_result 首行约定 "SUB_SESSION:{subId}"，聊天页据此渲染子会话卡片。
+     */
+    private suspend fun runSubSession(
+        args: JSONObject, context: Context, settings: AppSettings
+    ): String {
+        val task = args.optString("task", "").trim()
+        if (task.isBlank()) return "失败：run_sub_session 需要 task 参数"
+        val title = args.optString("title", "").trim().ifBlank { task.take(30) }
+        val profile = settings.currentProfile()
+            ?: return "失败：未配置模型，无法启动子会话"
+
+        // 并行槽位：原子检查+占位，杜绝同毫秒并发绕过检查
+        if (subSessionActive.incrementAndGet() > MAX_PARALLEL_SUB) {
+            subSessionActive.decrementAndGet()
+            return "失败：并行子会话已达上限（$MAX_PARALLEL_SUB 个），请等待完成后再派发"
+        }
+
+        // ID：毫秒时间戳 + 4 位随机 hex，并发派发不撞
+        val rndHex = java.lang.String.format(
+            "%04x",
+            java.util.concurrent.ThreadLocalRandom.current().nextInt(65536)
+        )
+        val subId = "sub_${System.currentTimeMillis()}_$rndHex"
+        val now = System.currentTimeMillis()
+        // 母会话快照：归属 + 完成通知回流目标（全局值可能在执行期被其他任务改写，入口即快照）
+        val parentSessionId = CurrentTaskSession.id.ifBlank { null }
+        // 全新上下文：只有这条 task，不带父会话历史
+        val initial = listOf(
+            ChatMessage(role = "user", content = task, type = "text", timestamp = now)
+        )
+
+        // 启动即存盘：子会话立刻出现在「子代理」列表，可随时点入
+        try {
+            SessionStore.save(
+                context,
+                Session(
+                    id = subId,
+                    title = "↳ $title",
+                    createdAt = now,
+                    updatedAt = now,
+                    parentId = parentSessionId,
+                    messages = initial
+                )
+            )
+        } catch (e: Exception) {
+            AgentLogger.log("ERR", "子会话初始存盘失败：${e.message}")
+        }
+
+        // 后台异步执行：主对话立即返回、互不阻塞；完成后覆盖保存全量过程
+        SubSessionProgress.start(subId, title)
+        val job = subSessionScope.launch {
+            var subHistory: List<ChatMessage> = initial
+            // 【硬上限】不继承用户的高轮数设置
+            val subLoops = minOf(settings.maxToolCallLoops, SUB_MAX_LOOPS)
+            val streamBuf = StringBuilder()
+            try {
+                runAgentTurn(
+                    profile = profile,
+                    history = initial,
+                    maxTurns = subLoops,
+                    context = context,
+                    settings = settings,
+                    onHistoryChanged = { h ->
+                        subHistory = h
+                        SubSessionProgress.update(
+                            subId,
+                            h.count { m -> m.type == "tool_call" },
+                            h.lastOrNull { m -> m.type == "tool_call" }
+                                ?.content?.lineSequence()?.firstOrNull() ?: ""
+                        )
+                    },
+                    onThinking = { t ->
+                        SubSessionProgress.updatePhase(subId, "思考中", t.take(120))
+                    },
+                    onReasoning = { r ->
+                        val line = r.takeLast(400).replace("\n", " ").trim()
+                        if (line.isNotBlank()) {
+                            SubSessionProgress.updatePhase(subId, "推理中", line.takeLast(120))
+                        }
+                    },
+                    onStreamChunk = { c ->
+                        streamBuf.append(c)
+                        SubSessionProgress.updatePhase(
+                            subId, "生成中",
+                            streamBuf.toString().takeLast(400).replace("\n", " ").trim().takeLast(120)
+                        )
+                    },
+                    onStreamCommit = { streamBuf.setLength(0) },
+                    onFinish = {}
+                )
+                // 回调经 mainHandler.post 派发，排空主线程队列确保 subHistory 已最新
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {}
+                // 【截断补总结】跑到轮数上限也得给个交代，
+                // 不能只剩一句「已达到最大工具调用轮数」
+                subHistory = summarizeIfTruncated(subHistory, profile, context, settings)
+            } catch (e: Exception) {
+                AgentLogger.log("ERR", "子会话执行异常：${e.message}")
+                // 异常 / 被主 AI 主动中断（CancellationException）：
+                // 同样要求它把现有结果总结完再存盘。
+                // NonCancellable：父任务可能已经被 cancel，不加这个请求会立刻被打断。
+                try {
+                    subHistory = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        summarizeIfTruncated(subHistory, profile, context, settings)
+                    }
+                } catch (_: Throwable) { }
+            } finally {
+                try {
+                    SessionStore.save(
+                        context,
+                        Session(
+                            id = subId,
+                            title = "↳ $title",
+                            createdAt = now,
+                            updatedAt = System.currentTimeMillis(),
+                            parentId = parentSessionId,
+                            messages = subHistory
+                        )
+                    )
+                } catch (e: Exception) {
+                    AgentLogger.log("ERR", "子会话完成存盘失败：${e.message}")
+                }
+                SubSessionProgress.finish(subId)
+                subSessionActive.decrementAndGet()
+                subSessionJobs.remove(subId)
+                // 完成事件回流：主对话收到「子代理完成」通知
+                SubSessionProgress.emitCompleted(
+                    SubSessionProgress.Completed(
+                        originId = parentSessionId ?: "",
+                        subId = subId,
+                        title = title,
+                        msgCount = subHistory.size,
+                        summary = buildSubSummary(
+                            subHistory,
+                            hitLimit = subHistory.lastOrNull { it.type == "text" }
+                                ?.content?.contains("已达到最大工具调用轮数") == true
+                        )
+                    )
+                )
+                AgentLogger.log("TOOL", "子会话完成 subId=$subId msgs=${subHistory.size}")
+            }
+        }
+        subSessionJobs[subId] = job
+
+        AgentLogger.log("TOOL", "子会话已后台启动 subId=$subId")
+        return "SUB_SESSION:$subId\n标题：↳ $title\n消息数：1\n" +
+                "状态：已在后台启动（可并行最多 $MAX_PARALLEL_SUB 个），主对话继续执行，互不阻塞。\n" +
+                "完成后系统会自动在主对话注入「子代理完成」通知；也可用 sub_session 工具查询：" +
+                "op=status 看进度、op=result 配套 id 取结果。\n\n子会话结果摘要：\n" +
+                "（后台执行中——完成后完整过程写入该子会话。）"
+    }
+
+    /** sub_session 工具：查询子会话运行状态 / 列表 / 结果（op=status|list|result） */
+    private suspend fun querySubSession(args: JSONObject, context: Context): String {
+        val op = args.optString("op", "status").trim().ifBlank { "status" }
+        val id = args.optString("id", "").trim()
+        return when (op) {
+            "status" -> {
+                val snap = SubSessionProgress.snapshot()
+                if (snap.isEmpty()) {
+                    "当前没有正在执行的子会话。"
+                } else {
+                    snap.entries.joinToString("\n") { (sid, e) ->
+                        "$sid | ${e.title} | 已 ${e.steps} 步" +
+                                if (e.lastTool.isNotEmpty()) " | 当前：${e.lastTool}" else ""
+                    }
+                }
+            }
+            "list" -> {
+                val list = SessionStore.list(context).filter { it.title.startsWith("↳") }
+                if (list.isEmpty()) {
+                    "暂无子会话记录。"
+                } else {
+                    list.joinToString("\n") {
+                        val cnt = SessionStore.load(context, it.id)?.messages?.size ?: 0
+                        "${it.id} | ${it.title} | $cnt 条消息"
+                    }
+                }
+            }
+            "result" -> {
+                if (id.isBlank()) return "失败：op=result 需要 id 参数"
+                val s = SessionStore.load(context, id)
+                    ?: return "失败：找不到子会话 $id（可用 op=list 查看可用 id）"
+                val finalText = s.messages.lastOrNull {
+                    it.type == "text" && it.role == "assistant"
+                }?.content ?: "（子会话未产生文本结果）"
+                "子会话 $id「${s.title}」共 ${s.messages.size} 条消息。\n最终结果：\n" + finalText.take(1500)
+            }
+            "stop" -> {
+                if (id.isBlank()) return "失败：op=stop 需要 id 参数"
+                val job = subSessionJobs[id]
+                    ?: return "失败：子会话 $id 不在运行中（可能已完成，可用 op=list 查看）"
+                job.cancel()
+                subSessionJobs.remove(id)
+                SubSessionProgress.finish(id)
+                subSessionActive.decrementAndGet()
+                AgentLogger.log("TOOL", "AI 主动终止子会话 subId=$id")
+                "已终止子会话 $id。"
+            }
+            else -> "失败：op 取值为 status / list / result / stop"
+        }
+    }
 
     suspend fun execute(
         name: String, args: JSONObject, context: Context, settings: AppSettings
@@ -513,7 +1033,7 @@ object ToolRegistry {
             }
         }
 
-        // 【P0】元工具拦截（必须在其他分发之前）
+        // 元工具拦截（必须在其他分发之前）
         if (name == "tool_search") {
             val query = args.optString("query", "").trim()
             if (query.isBlank()) return "失败：tool_search 需要 query 参数"
@@ -527,6 +1047,19 @@ object ToolRegistry {
             AgentLogger.log("TOOL", "tool_load name=$toolName")
             return loadToolForAgent(toolName, settings)
         }
+        if (name == "run_sub_session") {
+            return runSubSession(args, context, settings)
+        }
+        if (name == "sub_session") {
+            return querySubSession(args, context)
+        }
+        if (name == "history") {
+            return HistoryTools.execute(
+                args,
+                context,
+                BackupHelper.backupDirFor(getHost(context, settings).trashDir())
+            )
+        }
 
         AgentLogger.log("TOOL", "调用工具 $name\n参数:\n${sanitizeArgsForLog(name, args)}")
 
@@ -539,11 +1072,90 @@ object ToolRegistry {
                     mcpResult.output.startsWith("失败") -> mcpResult.output
                     else -> "失败：${mcpResult.output}"
                 }
+            } else if (name == "python") {
+                // 【临时执行 Python】与桌面端 python 工具对齐。
+                // 受 requireConfirmPython 控制（与 pytool run 同一个开关）。
+                val code = args.optString("code", "")
+                if (code.isBlank()) return "失败：python 需要 code 参数"
+                val timeout = args.optInt("timeout", 60).coerceIn(1, 600)
+                val workDir = args.optString("work_dir", "").trim()
+                val stdinArgs = args.optJSONObject("args") ?: JSONObject()
+
+                if (settings.requireConfirmPython) {
+                    val preview = if (code.length > 800) code.take(800) + "\n...(已截断)" else code
+                    val approved = ConfirmationBroker.request(
+                        "执行 Python 代码确认",
+                        "AI 请求执行以下 Python 代码：\n\n$preview\n\n" +
+                                "超时：$timeout 秒" +
+                                if (workDir.isNotBlank()) "\n工作目录：$workDir" else ""
+                    )
+                    if (!approved) return "用户已拒绝执行 Python 代码"
+                }
+
+                val r = net.xinkong.furagent.shared.skill.SkillStore.execCode(
+                    code, stdinArgs, workDir, timeout
+                )
+                if (r.success) r.output else "失败：${r.output}"
+            } else if (name == "pytool" || net.xinkong.furagent.shared.skill.SkillTools.isDynamicTool(name)) {
+                val op = args.optString("op", "").lowercase()
+                val isDynamic = net.xinkong.furagent.shared.skill.SkillTools.isDynamicTool(name)
+                val isRun = isDynamic || (name == "pytool" && op == "run")
+                val isWriteOp = name == "pytool" && (op == "create" || op == "delete")
+
+                if (settings.requireConfirmPython) {
+                    // 1) 脚本文件管理
+                    if (isWriteOp) {
+                        val targetName = args.optString("name", "").trim()
+                        val action = if (op == "create") "创建" else "删除"
+                        val approved = ConfirmationBroker.request(
+                            "${action}脚本确认",
+                            "AI 请求${action}脚本：$targetName\n\n" +
+                                    "目录：${net.xinkong.furagent.shared.skill.SkillStore.scriptsDir().absolutePath}"
+                        )
+                        if (!approved) return "用户已拒绝${action}脚本"
+                    }
+
+                    // 2) 执行脚本
+                    if (isRun) {
+                        val scriptName = if (isDynamic) {
+                            name.removePrefix(net.xinkong.furagent.shared.skill.SkillStore.TOOL_PREFIX)
+                        } else {
+                            args.optString("name", "").trim()
+                        }
+                        val scriptArgs = if (isDynamic) {
+                            args
+                        } else {
+                            args.optJSONObject("args") ?: JSONObject()
+                        }
+                        val meta = net.xinkong.furagent.shared.skill.SkillStore.find(scriptName)
+                        if (meta != null) {
+                            val cfg = net.xinkong.furagent.shared.skill.SkillStore.loadConfig(scriptName)
+                            val timeout = net.xinkong.furagent.shared.skill.SkillStore.effectiveTimeout(meta, cfg)
+                            val argsPreview = if (scriptArgs.length() == 0) "(无)" else scriptArgs.toString(2)
+                            val approved = ConfirmationBroker.request(
+                                "执行 Python 脚本确认",
+                                "AI 请求运行脚本：\n${meta.name}\n\n" +
+                                        "文件：${meta.file.absolutePath}\n" +
+                                        "参数：\n$argsPreview\n\n" +
+                                        "超时：$timeout 秒"
+                            )
+                            if (!approved) return "用户已拒绝运行脚本"
+                        }
+                    }
+                }
+                val skillResult = net.xinkong.furagent.shared.skill.SkillTools.execute(name, args)
+                if (skillResult != null) {
+                    if (skillResult.success) skillResult.output
+                    else if (skillResult.output.startsWith("失败")) skillResult.output
+                    else "失败：${skillResult.output}"
+                } else {
+                    "未知工具：$name"
+                }
             } else {
                 val host = getHost(context, settings)
 
                 if (name == "write_file") {
-                    confirmThenWrite(args, host, settings)
+                    confirmThenWrite(args, host, settings, context)
                 } else {
                     val commonResult = CommonTools.execute(name, args, host)
 
@@ -576,6 +1188,5 @@ object ToolRegistry {
     }
 }
 
-// 【2026-10-15 去重】实现已抽到 shared PathAlias，且修复"别名/子路径"不被展开的问题
 internal fun normalizeAlias(path: String): String =
     net.xinkong.furagent.shared.util.PathAlias.expandAndroid(path, SDCARD_PATH)

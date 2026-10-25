@@ -74,7 +74,10 @@ object ScreenTools {
     private suspend fun doDump(args: JSONObject): String {
         val controller = ScreenControlRegistry.get() ?: return "失败：无障碍服务未开启"
         val maxDepth = args.optInt("max_depth", 30)
-        val maxNodes = args.optInt("max_nodes", 2000)
+        // 【P0-7】默认从 2000 提到 4000。复杂屏幕（微信聊天页、电商详情页）
+        // 常常超过 2000 节点，被截断后 AI 只能看到前半部分，看不到底部操作栏。
+        // 4000 覆盖 95% 场景，超过时 UiTreeFormatter 会标记 (truncated)。
+        val maxNodes = args.optInt("max_nodes", 4000)
         val dump = controller.dumpScreen(maxDepth, maxNodes)
         // 不截断
         return UiTreeFormatter.toText(dump)
@@ -215,6 +218,7 @@ object ScreenTools {
     private fun JSONObject.optBooleanOrNull(key: String): Boolean? {
         if (!has(key) || isNull(key)) return null
         return when (val v = opt(key)) {
+            null -> null
             is Boolean -> v
             is String -> when (v.trim().lowercase()) {
                 "true", "1", "yes", "on" -> true

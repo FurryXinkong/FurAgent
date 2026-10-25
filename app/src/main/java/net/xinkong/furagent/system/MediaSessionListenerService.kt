@@ -3,7 +3,9 @@ package net.xinkong.furagent.system
 import android.app.Notification
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import net.xinkong.furagent.bridge.PcBridgeClient
 import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.data.NotificationSyncSettings
 import java.util.concurrent.ConcurrentLinkedDeque
 
 /**
@@ -138,6 +140,35 @@ class MediaSessionListenerService : NotificationListenerService() {
         cache.addFirst(entry)
         while (cache.size > MAX_CACHED) {
             cache.pollLast()
+        }
+
+        // 通知同步：开关打开且已连接电脑时，实时转发
+        forwardToPc(entry)
+    }
+
+    /**
+     * 把通知转发给电脑。
+     *
+     * 只在开关打开 + 已连接时发送；任何异常都吞掉，
+     * 不能因为转发失败影响通知缓存这个主职责。
+     */
+    private fun forwardToPc(entry: NotifEntry) {
+        try {
+            if (!NotificationSyncSettings.isPhoneToPcEnabled()) return
+            if (!PcBridgeClient.isConnected()) return
+            PcBridgeClient.sendNotification(
+                appName = entry.appName,
+                packageName = entry.packageName,
+                title = entry.title,
+                text = entry.text,
+                postTime = entry.timestamp,
+                notifKey = entry.key
+            )
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "NOTIFY",
+                "转发通知到电脑失败：${e.javaClass.simpleName}: ${e.message}"
+            )
         }
     }
 }

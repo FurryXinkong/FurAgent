@@ -1,6 +1,7 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
+import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -18,10 +19,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -44,23 +42,23 @@ import net.xinkong.furagent.data.*
 import net.xinkong.furagent.shared.util.DirectDevice
 import net.xinkong.furagent.shared.util.DirectDeviceCodec
 import net.xinkong.furagent.shared.util.DirectTransfer
+import net.xinkong.furagent.shared.util.FileNaming
+import net.xinkong.furagent.shared.util.formatFileSize
 import net.xinkong.furagent.system.LocalNetworkPermission
 import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoPageTopBar
+import net.xinkong.furagent.ui.SuccessColor
+import net.xinkong.furagent.ui.WarningColor
 import net.xinkong.furagent.ui.glassPageBg
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
+import net.xinkong.furagent.ui.pocoSwitchColors
 import org.json.JSONObject
 import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import java.net.URLEncoder
 import java.util.*
-import java.util.concurrent.TimeUnit
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -91,58 +89,12 @@ fun PcHubPage(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(
-                            "电脑互联",
-                            fontWeight = FontWeight.Black,
-                            fontSize = 20.sp,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            val dotColor = when (status) {
-                                PcBridgeClient.Status.CONNECTED -> Color(0xFF34C759)
-                                PcBridgeClient.Status.CONNECTING -> Color(0xFFF59E0B)
-                                PcBridgeClient.Status.DISCONNECTED -> MaterialTheme.colorScheme.error
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(dotColor)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                buildString {
-                                    append(
-                                        when (status) {
-                                            PcBridgeClient.Status.CONNECTED ->
-                                                "已连接：${deviceName.ifBlank { "电脑" }}"
-                                            PcBridgeClient.Status.CONNECTING -> "连接中…"
-                                            PcBridgeClient.Status.DISCONNECTED -> "未连接"
-                                        }
-                                    )
-                                    if (pcMac.isNotBlank()) append(" · $pcMac")
-                                },
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回",
-                            tint = MaterialTheme.colorScheme.onBackground
-                        )
-                    }
-                },
+            // 【复用收口】标题骨架/返回键/actions 走公共 PocoPageTopBar，
+            // 状态圆点副标题走 subtitleContent 插槽
+            PocoPageTopBar(
+                title = "电脑互联",
+                subtitle = "",
+                onBack = onBack,
                 actions = {
                     IconButton(onClick = { showConfigDialog = true }) {
                         Icon(
@@ -152,10 +104,39 @@ fun PcHubPage(
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground
-                )
+                subtitleContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        val dotColor = when (status) {
+                            PcBridgeClient.Status.CONNECTED -> SuccessColor()
+                            PcBridgeClient.Status.CONNECTING -> WarningColor()
+                            PcBridgeClient.Status.DISCONNECTED -> MaterialTheme.colorScheme.error
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(dotColor)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            buildString {
+                                append(
+                                    when (status) {
+                                        PcBridgeClient.Status.CONNECTED ->
+                                            "已连接：${deviceName.ifBlank { "电脑" }}"
+                                        PcBridgeClient.Status.CONNECTING -> "连接中…"
+                                        PcBridgeClient.Status.DISCONNECTED -> "未连接"
+                                    }
+                                )
+                                if (pcMac.isNotBlank()) append(" · $pcMac")
+                            },
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
             )
         },
         containerColor = glassPageBg(),
@@ -248,9 +229,7 @@ fun PcHubPage(
     }
 }
 
-// ============================================================
 // 连接配置对话框
-// ============================================================
 
 @Composable
 private fun PcConnectionDialog(
@@ -266,7 +245,7 @@ private fun PcConnectionDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(AppRadius.DIALOG),
         containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("配置电脑连接") },
         text = {
@@ -308,7 +287,7 @@ private fun PcConnectionDialog(
                     placeholder = { Text("192.168.1.100") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -325,7 +304,7 @@ private fun PcConnectionDialog(
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -338,10 +317,10 @@ private fun PcConnectionDialog(
                     value = receiveDir,
                     onValueChange = { receiveDir = it },
                     label = { Text("接收目录") },
-                    placeholder = { Text("/sdcard/FurAgent/received") },
+                    placeholder = { Text("/sdcard/FurAgent/downloads") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -373,7 +352,7 @@ private fun PcConnectionDialog(
                             pcBridgeEnabled = enabled,
                             pcBridgeHost = host.trim(),
                             pcBridgePort = port ?: 8425,
-                            pcReceiveDir = receiveDir.trim().ifBlank { "/sdcard/FurAgent/received" }
+                            pcReceiveDir = receiveDir.trim().ifBlank { "/sdcard/FurAgent/downloads" }
                         )
                         onSave(newSettings)
                     }
@@ -396,9 +375,7 @@ private fun PcConnectionDialog(
     )
 }
 
-// ============================================================
 // Tab 按钮
-// ============================================================
 
 @Composable
 private fun RowScope.HubTab(
@@ -409,21 +386,22 @@ private fun RowScope.HubTab(
 ) {
     val selected = index == current
     val bg by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        targetValue = if (selected)
+            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+        else androidx.compose.ui.graphics.Color.Transparent,
         animationSpec = tween(140),
         label = "hubTabBg"
     )
     val fg by animateColorAsState(
-        targetValue = if (selected) MaterialTheme.colorScheme.onPrimary
-        else MaterialTheme.colorScheme.onSurface,
+        targetValue = if (selected) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = tween(140),
         label = "hubTabFg"
     )
     Box(
         Modifier
             .weight(1f)
-            .clip(RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(AppRadius.SM))
             .background(bg)
             .clickable(onClick = onClick)
             .padding(vertical = 10.dp),
@@ -438,650 +416,10 @@ private fun RowScope.HubTab(
     }
 }
 
-// ============================================================
-// Tab 1：文件传输
-// ============================================================
 
-@Composable
-private fun PcFileTransferTab(
-    modifier: Modifier = Modifier,
-    connected: Boolean,
-    onConfigure: () -> Unit,
-    onInfo: (String) -> Unit
-) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
+// Tab 1：文件传输 → 已拆到 PcFileTransferTab.kt
 
-    val httpPort by PcBridgeClient.httpPort.collectAsState()
-    val httpToken by PcBridgeClient.httpToken.collectAsState()
-    val httpReady = connected && httpPort > 0 && httpToken.isNotBlank()
-
-    // ============ 发送到电脑 ============
-    var sendLocalPath by remember { mutableStateOf("") }
-    var sendLocalName by remember { mutableStateOf("") }
-    var sendStatus by remember { mutableStateOf("") }
-    var sendOk by remember { mutableStateOf(false) }
-    var sending by remember { mutableStateOf(false) }
-    var sendProgress by remember { mutableFloatStateOf(0f) }
-
-    val picker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            try {
-                val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                val dst = File(context.cacheDir, name)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output) }
-                    }
-                }
-                if (dst.exists() && dst.length() > 0) {
-                    sendLocalPath = dst.absolutePath
-                    sendLocalName = name
-                    sendStatus = ""
-                } else {
-                    sendStatus = "读取文件失败"
-                    sendOk = false
-                }
-            } catch (e: Exception) {
-                sendStatus = "读取失败：${e.message}"
-                sendOk = false
-            }
-        }
-    }
-
-    fun doSend() {
-        if (sending || !httpReady) return
-        val file = File(sendLocalPath)
-        if (!file.exists() || !file.isFile) {
-            sendStatus = "文件不存在"
-            sendOk = false
-            return
-        }
-        sending = true
-        sendStatus = "正在上传…"
-        sendOk = true
-        sendProgress = 0f
-
-        scope.launch {
-            val result = uploadFileViaHttp(
-                file = file,
-                onProgress = { read, total ->
-                    sendProgress = if (total > 0) read.toFloat() / total else 0f
-                }
-            )
-            sending = false
-            sendOk = result.first
-            sendStatus = result.second
-        }
-    }
-
-    // ============ 【F6】转发给另一台设备（通过电脑中转 relay） ============
-    var relayFile by remember { mutableStateOf<File?>(null) }
-    var relayFileSize by remember { mutableLongStateOf(0L) }
-    var relayTargets by remember { mutableStateOf<List<PcBridgeClient.PeerInfo>?>(null) }
-    var relayTargetLoading by remember { mutableStateOf(false) }
-    var relayTargetError by remember { mutableStateOf<String?>(null) }
-    var relaySelectedTarget by remember { mutableStateOf<PcBridgeClient.PeerInfo?>(null) }
-    var relaySending by remember { mutableStateOf(false) }
-    var showRelayDialog by remember { mutableStateOf(false) }
-    var lastRelayId by remember { mutableStateOf<String?>(null) }
-    var lastRelayStatus by remember { mutableStateOf<String?>(null) }
-
-    val relayPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        scope.launch {
-            try {
-                val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                val dst = File(context.cacheDir, name)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output) }
-                    }
-                }
-                if (!dst.exists() || dst.length() == 0L) {
-                    onInfo("读取文件失败")
-                    return@launch
-                }
-                relayFile = dst
-                relayFileSize = dst.length()
-                relaySelectedTarget = null
-                relayTargets = null
-                relayTargetError = null
-                showRelayDialog = true
-
-                // 自动拉取在线设备
-                relayTargetLoading = true
-                val localName = PcBridgeClient.getLocalDeviceName()
-                val peers = withContext(Dispatchers.IO) { PcBridgeClient.listPeers() }
-                // 过滤掉自己
-                relayTargets = peers.filter { it.deviceName != localName }
-                relayTargetLoading = false
-                if (relayTargets.isNullOrEmpty()) {
-                    relayTargetError = "当前没有其他在线设备（只有本机和电脑）"
-                }
-            } catch (e: Exception) {
-                relayTargetLoading = false
-                relayTargetError = "拉取设备列表失败：${e.message}"
-                onInfo("读取失败：${e.message}")
-            }
-        }
-    }
-
-    fun doRelay() {
-        val file = relayFile ?: return
-        val target = relaySelectedTarget ?: return
-        if (relaySending) return
-        relaySending = true
-        scope.launch {
-            try {
-                val relayId = withContext(Dispatchers.IO) {
-                    PcBridgeClient.sendRelayFile(target.id, file)
-                }
-                relaySending = false
-                lastRelayId = relayId
-                lastRelayStatus = "已发起中转（等待对方回执…）"
-                onInfo("已发起中转，relayId=$relayId")
-                showRelayDialog = false
-                // 清理临时文件
-                try { file.delete() } catch (_: Exception) { }
-                relayFile = null
-            } catch (e: Exception) {
-                relaySending = false
-                onInfo("发起中转失败：${e.message}")
-            }
-        }
-    }
-
-    LazyColumn(
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        if (!connected) {
-            item {
-                PocoCard {
-                    Column(
-                        modifier = Modifier.padding(20.dp).fillMaxWidth(),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Icon(
-                            Icons.Default.Computer,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(56.dp)
-                        )
-                        Text(
-                            "还没连接电脑",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            "1. 在电脑上打开 FurAgent Desktop\n" +
-                                    "2. 查看电脑端显示的 IP 和端口\n" +
-                                    "3. 点下方按钮填到手机里",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            lineHeight = 18.sp
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Button(
-                            onClick = onConfigure,
-                            shape = RoundedCornerShape(14.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Settings, null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("配置电脑连接")
-                        }
-                    }
-                }
-            }
-        }
-
-        // ============ 发送到电脑 ============
-        item {
-            PocoCard {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        "发送到电脑",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        if (httpReady) "HTTP 通道已就绪" else "HTTP 通道未就绪（请先连接）",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    OutlinedButton(
-                        onClick = { picker.launch("*/*") },
-                        enabled = !sending,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            if (sendLocalName.isBlank()) "选择文件"
-                            else "已选：$sendLocalName",
-                            maxLines = 1
-                        )
-                    }
-
-                    if (sendLocalPath.isNotBlank()) {
-                        val size = File(sendLocalPath).length()
-                        Text(
-                            "大小：${formatFileSize(size)}",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    if (sending) {
-                        LinearProgressIndicator(
-                            progress = { sendProgress },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    }
-
-                    Button(
-                        onClick = { doSend() },
-                        enabled = !sending && httpReady && sendLocalPath.isNotBlank(),
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        if (sending) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text(if (sending) "上传中…" else "发送")
-                    }
-
-                    if (sendStatus.isNotBlank()) {
-                        Text(
-                            sendStatus,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace,
-                            color = if (sendOk) Color(0xFF34C759) else MaterialTheme.colorScheme.error
-                        )
-                    }
-                }
-            }
-        }
-
-        // ============ 【F6】转发给另一台设备（relay） ============
-        item {
-            PocoCard {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text(
-                        "转发给另一台设备",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        "选一个本地文件，通过电脑中转给另一台手机 / 电脑。" +
-                                "适用于两台设备互相不在线、但都能连到同一台电脑的场景。" +
-                                "文件走 HTTP 通道，大文件也支持。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        lineHeight = 17.sp
-                    )
-
-                    Button(
-                        onClick = {
-                            if (!connected) {
-                                onInfo("请先连接电脑")
-                                return@Button
-                            }
-                            relayPicker.launch("*/*")
-                        },
-                        enabled = connected && !relaySending,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Send, null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("选择文件并转发")
-                    }
-
-                    // 上一次 relay 的结果
-                    lastRelayId?.let { id ->
-                        Spacer(Modifier.height(2.dp))
-                        HorizontalDivider(
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                Icons.Default.Info, null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "relayId：$id",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1
-                                )
-                                lastRelayStatus?.let {
-                                    Text(
-                                        it,
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            TextButton(onClick = {
-                                val status = PcBridgeClient.getRelayStatus(id)
-                                lastRelayStatus = if (status == null) {
-                                    "尚未收到回执（对方可能还在接收）"
-                                } else {
-                                    if (status.first) "已完成：${status.second}"
-                                    else "失败：${status.second}"
-                                }
-                            }) { Text("查询状态", fontSize = 12.sp) }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            PocoCard {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Text(
-                        "提示",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Medium,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        "· 从电脑下载文件：到「浏览文件」标签页，单击文件名即可下载。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        "· 与另一台手机 / 电脑直传文件（不经电脑中转）：到「直连传输」标签页。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-
-        item { Spacer(Modifier.height(24.dp)) }
-    }
-
-    // ============================================================
-    // 【F6】relay 目标选择对话框
-    // ============================================================
-    if (showRelayDialog) {
-        val file = relayFile
-        AlertDialog(
-            onDismissRequest = { if (!relaySending) showRelayDialog = false },
-            shape = RoundedCornerShape(28.dp),
-            title = { Text("转发给另一台设备") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (file != null) {
-                        Column {
-                            Text(
-                                "文件：${file.name}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 2
-                            )
-                            Text(
-                                "大小：${formatFileSize(relayFileSize)}",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    HorizontalDivider(
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
-
-                    when {
-                        relayTargetLoading -> {
-                            Row(
-                                Modifier.fillMaxWidth().padding(vertical = 12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(14.dp),
-                                    strokeWidth = 2.dp,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    "正在拉取设备列表…",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        relayTargetError != null -> {
-                            Text(
-                                relayTargetError!!,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                        }
-
-                        relayTargets.isNullOrEmpty() -> {
-                            Text(
-                                "没有其他在线设备",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        else -> {
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(max = 320.dp)
-                                    .verticalScroll(rememberScrollState()),
-                                verticalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Text(
-                                    "选择目标设备：",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(Modifier.height(2.dp))
-                                relayTargets!!.forEach { peer ->
-                                    val selected = relaySelectedTarget?.id == peer.id
-                                    val bg by animateColorAsState(
-                                        targetValue = if (selected) {
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
-                                        } else if (false) {
-                                            // hover 未做
-                                            Color.Transparent
-                                        } else Color.Transparent,
-                                        animationSpec = tween(140),
-                                        label = "relayTargetBg"
-                                    )
-                                    val border = if (selected) {
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                                    } else {
-                                        MaterialTheme.colorScheme.outlineVariant
-                                    }
-
-                                    Surface(
-                                        color = bg,
-                                        shape = RoundedCornerShape(12.dp),
-                                        border = BorderStroke(1.dp, border),
-                                        onClick = { relaySelectedTarget = peer },
-                                        modifier = Modifier.fillMaxWidth()
-                                    ) {
-                                        Row(
-                                            Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 12.dp, vertical = 10.dp),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Icon(
-                                                if (peer.endpoint == "phone") Icons.Default.Smartphone
-                                                else Icons.Default.Computer,
-                                                contentDescription = null,
-                                                tint = if (selected) {
-                                                    MaterialTheme.colorScheme.primary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                                },
-                                                modifier = Modifier.size(20.dp)
-                                            )
-                                            Spacer(Modifier.width(10.dp))
-                                            Column(Modifier.weight(1f)) {
-                                                Text(
-                                                    peer.deviceName.ifBlank { "未知设备" },
-                                                    style = MaterialTheme.typography.bodyMedium,
-                                                    fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 1
-                                                )
-                                                Text(
-                                                    buildString {
-                                                        if (peer.endpoint.isNotBlank()) {
-                                                            append(if (peer.endpoint == "phone") "手机" else "电脑")
-                                                        }
-                                                        if (peer.mac.isNotBlank()) {
-                                                            append(" · ")
-                                                            append(peer.mac)
-                                                        } else if (peer.remote.isNotBlank()) {
-                                                            append(" · ")
-                                                            append(peer.remote.trimStart('/'))
-                                                        }
-                                                    },
-                                                    style = MaterialTheme.typography.labelSmall,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    maxLines = 1
-                                                )
-                                            }
-                                            if (selected) {
-                                                Icon(
-                                                    Icons.Default.CheckCircle,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.primary,
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (relaySending) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "正在上传到电脑…",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !relaySending && relaySelectedTarget != null,
-                    onClick = { doRelay() }
-                ) {
-                    Text(
-                        if (relaySending) "转发中…" else "转发",
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(
-                        enabled = !relaySending,
-                        onClick = {
-                            relayFile?.let { f ->
-                                try { f.delete() } catch (_: Exception) { }
-                            }
-                            relayFile = null
-                            showRelayDialog = false
-                        }
-                    ) { Text("取消") }
-                    if (relayTargets != null) {
-                        TextButton(
-                            enabled = !relayTargetLoading && !relaySending,
-                            onClick = {
-                                scope.launch {
-                                    relayTargetLoading = true
-                                    relayTargetError = null
-                                    try {
-                                        val localName = PcBridgeClient.getLocalDeviceName()
-                                        val peers = withContext(Dispatchers.IO) {
-                                            PcBridgeClient.listPeers()
-                                        }
-                                        relayTargets = peers.filter { it.deviceName != localName }
-                                        if (relayTargets.isNullOrEmpty()) {
-                                            relayTargetError = "当前没有其他在线设备"
-                                        }
-                                    } catch (e: Exception) {
-                                        relayTargetError = "刷新失败：${e.message}"
-                                    }
-                                    relayTargetLoading = false
-                                }
-                            }
-                        ) { Text("刷新") }
-                    }
-                }
-            }
-        )
-    }
-}
-
-// ============================================================
 // Tab 2：浏览文件
-// ============================================================
 
 @Composable
 private fun PcBrowserTab(
@@ -1124,7 +462,7 @@ private fun PcBrowserTab(
             return
         }
         downloadingPath = remotePath
-        scope.launch {
+        scope.launch(Dispatchers.IO) {
             val args = JSONObject().apply {
                 put("path", remotePath)
                 put("mode", "base64")
@@ -1139,7 +477,7 @@ private fun PcBrowserTab(
                 val bytes = android.util.Base64.decode(result.trim(), android.util.Base64.DEFAULT)
                 val prefs = context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE)
                 val settings = SettingsStore.load(prefs)
-                val target = resolveReceiveFile(
+                val target = FileNaming.resolveReceiveFile(
                     settings.pcReceiveDir, fileName
                 )
                 target.writeBytes(bytes)
@@ -1172,7 +510,7 @@ private fun PcBrowserTab(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(AppRadius.SM),
             textStyle = androidx.compose.ui.text.TextStyle(
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
@@ -1231,7 +569,7 @@ private fun PcBrowserTab(
                             val downloading = downloadingPath == entry.path
                             Surface(
                                 color = Color.Transparent,
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(AppRadius.SM_PLUS),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable {
@@ -1296,9 +634,7 @@ private fun PcBrowserTab(
     }
 }
 
-// ============================================================
 // 空状态（本地私有）
-// ============================================================
 
 @Composable
 private fun EmptyPcBrowserState(title: String, subtitle: String) {
@@ -1329,9 +665,7 @@ private fun EmptyPcBrowserState(title: String, subtitle: String) {
     }
 }
 
-// ============================================================
 // 文件条目数据类（文件私有）
-// ============================================================
 
 private data class PcEntry(
     val name: String,
@@ -1369,9 +703,7 @@ private fun joinPcPath(dir: String, name: String): String {
     return if (dir.endsWith("/") || dir.endsWith("\\")) "$dir$name" else "$dir$sep$name"
 }
 
-// ============================================================
 // Tab 3：已知设备 + WOL
-// ============================================================
 
 @Composable
 private fun PcDevicesTab(
@@ -1476,6 +808,7 @@ private fun PcDevicesTab(
                         onDelete = { pendingDelete = pc }
                     )
                 }
+                item { NotificationSyncCard(context) }
                 item { Spacer(Modifier.height(24.dp)) }
             }
         }
@@ -1498,7 +831,7 @@ private fun PcDevicesTab(
 
         AlertDialog(
             onDismissRequest = { showAddDialog = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("手动添加电脑") },
             text = {
@@ -1510,7 +843,7 @@ private fun PcDevicesTab(
                         placeholder = { Text("AA:BB:CC:DD:EE:FF") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1524,7 +857,7 @@ private fun PcDevicesTab(
                         label = { Text("名称（可选）") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1539,7 +872,7 @@ private fun PcDevicesTab(
                         placeholder = { Text("192.168.1.100") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -1584,7 +917,7 @@ private fun PcDevicesTab(
     pendingDelete?.let { pc ->
         AlertDialog(
             onDismissRequest = { pendingDelete = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             title = { Text("删除设备") },
             text = {
                 Text(
@@ -1605,6 +938,45 @@ private fun PcDevicesTab(
                 TextButton(onClick = { pendingDelete = null }) { Text("取消") }
             }
         )
+    }
+}
+
+@Composable
+private fun NotificationSyncCard(context: Context) {
+    val enabled by NotificationSyncSettings.phoneToPc.collectAsState()
+    val connected by PcBridgeClient.status.collectAsState()
+    val isConnected = connected == PcBridgeClient.Status.CONNECTED
+
+    PocoCard {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "发送手机通知",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    when {
+                        !isConnected -> "未连接电脑，开启后需连接才能同步"
+                        enabled -> "已开启，手机收到消息会同步到电脑"
+                        else -> "开启后，手机收到消息时在电脑上弹出通知"
+                    },
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Switch(
+                checked = enabled,
+                onCheckedChange = { NotificationSyncSettings.setPhoneToPc(context, it) },
+                colors = pocoSwitchColors()
+            )
+        }
     }
 }
 
@@ -1632,7 +1004,7 @@ private fun PcDeviceCard(
             ) {
                 Icon(
                     Icons.Default.Computer, null,
-                    tint = if (online) Color(0xFF34C759)
+                    tint = if (online) SuccessColor()
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(20.dp)
                 )
@@ -1651,14 +1023,14 @@ private fun PcDeviceCard(
                     if (online) {
                         Spacer(Modifier.width(6.dp))
                         Box(
-                            Modifier.clip(RoundedCornerShape(4.dp))
-                                .background(Color(0x2034C759))
+                            Modifier.clip(RoundedCornerShape(AppRadius.MICRO))
+                                .background(SuccessColor().copy(alpha = 0x20 / 255f))
                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
                             Text(
                                 "在线",
                                 fontSize = 9.sp,
-                                color = Color(0xFF34C759),
+                                color = SuccessColor(),
                                 fontWeight = FontWeight.Medium
                             )
                         }
@@ -1696,7 +1068,7 @@ private fun PcDeviceCard(
             } else if (!online) {
                 FilledTonalButton(
                     onClick = onWake,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(AppRadius.SM_PLUS),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
                 ) {
                     Icon(Icons.Default.PowerSettingsNew, null, modifier = Modifier.size(14.dp))
@@ -1716,9 +1088,7 @@ private fun PcDeviceCard(
     }
 }
 
-// ============================================================
 // Tab 4：直连传输
-// ============================================================
 
 @Composable
 private fun DirectTransferTab(
@@ -1735,7 +1105,7 @@ private fun DirectTransferTab(
     var pendingUploadDevice by remember { mutableStateOf<DirectDevice?>(null) }
     var pendingDownloadDevice by remember { mutableStateOf<DirectDevice?>(null) }
     var pingStatus by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
-    // 【B4】刷新 token 确认弹窗
+    // 刷新 token 确认弹窗
     var showRefreshTokenConfirm by remember { mutableStateOf(false) }
 
     val localIp = remember { getLocalIpForDirect() }
@@ -1786,9 +1156,7 @@ private fun DirectTransferTab(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // ============================================================
         // 本机信息卡：连接串 + 短码
-        // ============================================================
         item {
             PocoCard {
                 Column(
@@ -1809,11 +1177,20 @@ private fun DirectTransferTab(
                     )
 
                     if (localIp == null || localPort <= 0 || localToken.isBlank()) {
-                        Text(
-                            "⚠ 本机 HTTP 服务未就绪，无法生成连接信息。",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Default.Warning,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                "本机 HTTP 服务未就绪，无法生成连接信息。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     } else {
                         Spacer(Modifier.height(4.dp))
 
@@ -1860,7 +1237,7 @@ private fun DirectTransferTab(
                                         onInfo("复制失败：${e.message}")
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(AppRadius.SM)
                             ) { Text("复制短码") }
                         }
 
@@ -1878,7 +1255,7 @@ private fun DirectTransferTab(
                         )
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(AppRadius.SM_PLUS),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Text(
@@ -1903,12 +1280,12 @@ private fun DirectTransferTab(
                                         onInfo("复制失败：${e.message}")
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp)
+                                shape = RoundedCornerShape(AppRadius.SM)
                             ) { Text("复制连接串") }
 
                             OutlinedButton(
                                 onClick = { showRefreshTokenConfirm = true },
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(AppRadius.SM),
                                 colors = ButtonDefaults.outlinedButtonColors(
                                     contentColor = MaterialTheme.colorScheme.error
                                 ),
@@ -1996,9 +1373,7 @@ private fun DirectTransferTab(
         item { Spacer(Modifier.height(24.dp)) }
     }
 
-    // ============================================================
     // 添加设备对话框（支持短码）
-    // ============================================================
     if (showAddDialog) {
         var input by remember { mutableStateOf("") }
         var nameInput by remember { mutableStateOf("") }
@@ -2008,7 +1383,7 @@ private fun DirectTransferTab(
 
         AlertDialog(
             onDismissRequest = { if (!pairing) showAddDialog = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             title = { Text("添加直连设备") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2027,7 +1402,7 @@ private fun DirectTransferTab(
                         singleLine = false,
                         minLines = 2,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         isError = errMsg != null,
                         supportingText = errMsg?.let { { Text(it) } },
                         colors = OutlinedTextFieldDefaults.colors(
@@ -2044,7 +1419,7 @@ private fun DirectTransferTab(
                         placeholder = { Text("客厅的手机") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -2142,14 +1517,12 @@ private fun DirectTransferTab(
         )
     }
 
-    // ============================================================
     // 下载对话框（不变）
-    // ============================================================
     pendingDownloadDevice?.let { device ->
         var remoteName by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { pendingDownloadDevice = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             title = { Text("从 ${device.name} 下载") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -2165,7 +1538,7 @@ private fun DirectTransferTab(
                         placeholder = { Text("report.pdf") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                             unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -2183,9 +1556,9 @@ private fun DirectTransferTab(
                     scope.launch {
                         try {
                             val settings = SettingsStore.load(prefs)
-                            val target = resolveReceiveFile(
+                            val target = FileNaming.resolveReceiveFile(
                                 settings.pcReceiveDir,
-                                extractFileName(name)
+                                FileNaming.extractFileName(name)
                             )
                             val (ok, msg) = DirectTransfer.download(device, name, target)
                             onInfo(msg)
@@ -2205,14 +1578,12 @@ private fun DirectTransferTab(
         )
     }
 
-    // ============================================================
     // 删除确认（不变）
-    // ============================================================
     pendingDeleteId?.let { id ->
         val device = devices.firstOrNull { it.id == id }
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             title = { Text("删除直连设备") },
             text = { Text("确定从本机移除「${device?.name ?: id}」？只影响本机记录。") },
             confirmButton = {
@@ -2228,13 +1599,11 @@ private fun DirectTransferTab(
         )
     }
 
-    // ============================================================
     // 刷新 token 确认
-    // ============================================================
     if (showRefreshTokenConfirm) {
         AlertDialog(
             onDismissRequest = { showRefreshTokenConfirm = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             title = { Text("刷新 token？") },
             text = {
                 Text(
@@ -2300,7 +1669,7 @@ private fun DirectDeviceCard(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 val statusColor = when (pingOk) {
-                    true -> Color(0xFF34C759)
+                    true -> SuccessColor()
                     false -> MaterialTheme.colorScheme.error
                     null -> MaterialTheme.colorScheme.onSurfaceVariant
                 }
@@ -2335,7 +1704,7 @@ private fun DirectDeviceCard(
                 TextButton(onClick = onPing) { Text("检测") }
                 Button(
                     onClick = onUpload,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(AppRadius.SM_PLUS),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     Icon(Icons.Default.Upload, null, modifier = Modifier.size(14.dp))
@@ -2344,7 +1713,7 @@ private fun DirectDeviceCard(
                 }
                 OutlinedButton(
                     onClick = onDownload,
-                    shape = RoundedCornerShape(10.dp),
+                    shape = RoundedCornerShape(AppRadius.SM_PLUS),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     Icon(Icons.Default.Download, null, modifier = Modifier.size(14.dp))
@@ -2356,9 +1725,7 @@ private fun DirectDeviceCard(
     }
 }
 
-// ============================================================
 // 底层辅助
-// ============================================================
 
 private fun getLocalIpForDirect(): String? {
     return try {
@@ -2371,56 +1738,21 @@ private fun getLocalIpForDirect(): String? {
     } catch (_: Exception) { null }
 }
 
-private val httpTransferClient: OkHttpClient by lazy {
-    OkHttpClient.Builder()
-        .connectTimeout(15, TimeUnit.SECONDS)
-        .readTimeout(0, TimeUnit.SECONDS)
-        .writeTimeout(0, TimeUnit.SECONDS)
-        .build()
-}
-
-private suspend fun uploadFileViaHttp(
+internal suspend fun uploadFileViaHttp(
     file: File,
     onProgress: (Long, Long) -> Unit
-): Pair<Boolean, String> = withContext(Dispatchers.IO) {
-    try {
-        val baseUrl = PcBridgeClient.getBaseUrl()
-        val token = PcBridgeClient.getHttpToken()
-        if (baseUrl.isBlank() || token.isBlank()) {
-            return@withContext false to "HTTP 通道未就绪"
-        }
-
-        val url = "$baseUrl/upload?token=${URLEncoder.encode(token, "UTF-8")}" +
-                "&path=${URLEncoder.encode(file.name, "UTF-8")}"
-
-        val body = file.asRequestBody("application/octet-stream".toMediaType())
-        val request = Request.Builder().url(url).post(body).build()
-
-        httpTransferClient.newCall(request).execute().use { resp ->
-            val text = resp.body?.string() ?: ""
-            if (resp.isSuccessful) {
-                true to "已上传：${file.name}（${formatFileSize(file.length())}）"
-            } else {
-                false to "HTTP ${resp.code}：$text"
-            }
-        }
-    } catch (e: Exception) {
-        false to "上传失败：${e.message}"
-    }
+): Pair<Boolean, String> {
+    // 上传逻辑统一走 PcBridgeClient.uploadFileToPc。
+    // onProgress 保留参数位（当前实现不回调进度，传 0/0 占位）。
+    onProgress(0L, 0L)
+    return PcBridgeClient.uploadFileToPc(file)
 }
 
-private fun queryFileName(context: Context, uri: android.net.Uri): String? {
+internal fun queryFileName(context: Context, uri: android.net.Uri): String? {
     return try {
         context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
             val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
             if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
         }
     } catch (_: Exception) { null }
-}
-
-private fun formatFileSize(bytes: Long): String = when {
-    bytes < 1024 -> "${bytes}B"
-    bytes < 1024 * 1024 -> String.format(Locale.US, "%.1fKB", bytes / 1024.0)
-    bytes < 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1fMB", bytes / 1024.0 / 1024.0)
-    else -> String.format(Locale.US, "%.2fGB", bytes / 1024.0 / 1024.0 / 1024.0)
 }

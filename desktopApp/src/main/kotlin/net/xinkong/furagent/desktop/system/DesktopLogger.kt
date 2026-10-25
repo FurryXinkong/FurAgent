@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import net.xinkong.furagent.desktop.data.DesktopPaths
+import net.xinkong.furagent.shared.util.DateFormats
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -26,6 +27,8 @@ import kotlin.time.Duration.Companion.milliseconds
  * 【完整性】单条 content 上限 1_000_000 字符（约 1MB），与 Android 端对齐。
  */
 object DesktopLogger {
+
+    private val RE_ILLEGAL_FN = Regex("""[\\/:*?"<>|]""")
 
     data class Entry(
         val timestamp: Long,
@@ -63,8 +66,8 @@ object DesktopLogger {
         Thread(r, "DesktopLogger-writer").apply { isDaemon = true }
     }
 
-    private val fileSdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-    private val dateSdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    private val fileSdf = DateFormats.fullMsFormatter()
+    private val dateSdf = DateFormats.dateFormatter()
 
     @Volatile private var started = false
 
@@ -97,7 +100,7 @@ object DesktopLogger {
             val baseName = dateSdf.format(Date(now))
             var target = File(dir, "$baseName.log")
             if (target.exists() && target.length() > MAX_FILE_SIZE) {
-                val ts = SimpleDateFormat("HHmmss", Locale.getDefault()).format(Date(now))
+                val ts = DateFormats.formatHourTs(now)
                 target.renameTo(File(dir, "${baseName}_$ts.log"))
                 target = File(dir, "$baseName.log")
             }
@@ -155,7 +158,7 @@ object DesktopLogger {
 
     /** 单条日志的纯文本行（不带换行）。时间格式：yyyy-MM-dd HH:mm:ss.SSS。 */
     fun formatLine(e: Entry): String {
-        val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+        val fmt = DateFormats.fullMsFormatter()
         return "${fmt.format(Date(e.timestamp))} [${e.level}] [${e.tag}] ${e.message}"
     }
 
@@ -176,8 +179,8 @@ object DesktopLogger {
             if (entries.isEmpty()) return null
             val dir = DesktopPaths.exportsDir()
             if (!dir.exists()) dir.mkdirs()
-            val safeLabel = label.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-            val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
+            val safeLabel = label.replace(RE_ILLEGAL_FN, "_")
+            val ts = DateFormats.formatFileTs()
             val file = File(dir, "${safeLabel}_$ts.md")
             file.writeText(buildMarkdown(label, entries), Charsets.UTF_8)
             file
@@ -192,7 +195,7 @@ object DesktopLogger {
         val sb = StringBuilder()
         sb.append("# 日志 · $label\n\n")
         sb.append("导出时间：")
-            .append(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+            .append(DateFormats.formatDateTime())
             .append("\n\n")
         sb.append("共 ${entries.size} 条\n\n---\n\n")
         sb.append("```log\n")
@@ -238,9 +241,7 @@ object DesktopLogger {
         val level = line.substring(open1 + 1, close1)
         val tag = line.substring(open2 + 1, close2)
         val msg = line.substring(close2 + 2)
-        val ts = try {
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).parse(tsStr)?.time
-        } catch (_: Exception) { null } ?: return null
+        val ts = DateFormats.parseFullMs(tsStr) ?: return null
         return Entry(ts, level, tag, msg)
     }
 

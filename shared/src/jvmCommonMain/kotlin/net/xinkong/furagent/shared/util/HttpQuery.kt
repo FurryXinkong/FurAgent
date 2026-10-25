@@ -5,7 +5,6 @@ import java.net.URLDecoder
 /**
  * HTTP query string 解析（双端共用）。
  *
- * 【2026-10-15 抽公共】原来 AndroidHttpFileServer / HttpFileServer 各有一份
  * 几乎逐字相同的 parseQuery 实现（共 2 处）。现统一到这里。
  *
  * 规则：

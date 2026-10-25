@@ -7,7 +7,6 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
-// 【冗余清理 Batch 13】Workflow / WorkflowStep 的 typealias 已集中到 Models.kt。
 
 object WorkflowStore {
     private const val FILE_NAME = "workflows.json"
@@ -101,7 +100,6 @@ object WorkflowStore {
                     put("steps", stepsToJson(w.steps))
                 })
             }
-            // 【冗余清理 Batch 12b】内联 atomicWrite 收口到 shared/util/JsonFile
             net.xinkong.furagent.shared.util.JsonFile.atomicWrite(file(context), arr.toString())
         } catch (e: Exception) {
             AgentLogger.log(

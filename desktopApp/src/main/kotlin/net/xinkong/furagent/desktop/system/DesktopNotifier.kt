@@ -47,7 +47,7 @@ object DesktopNotifier {
                     return
                 }
                 val tray = SystemTray.getSystemTray()
-                val image = buildPlaceholderIcon()
+                val image = net.xinkong.furagent.desktop.ui.AppIcon.awtImage()
                 val icon = TrayIcon(image, "FurAgent").apply {
                     isImageAutoSize = true
                 }
@@ -63,30 +63,6 @@ object DesktopNotifier {
                 available = false
             }
         }
-    }
-
-    /**
-     * 生成一个 16x16 的蓝色方块作为托盘图标。
-     * 避免依赖图片资源文件。
-     */
-    private fun buildPlaceholderIcon(): BufferedImage {
-        val size = 16
-        val img = BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB)
-        val g = img.createGraphics()
-        try {
-            g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
-            g.color = Color(0xFF5A9BFF.toInt())
-            g.fillRoundRect(1, 1, size - 2, size - 2, 6, 6)
-            g.color = Color.WHITE
-            g.font = Font("SansSerif", Font.BOLD, 10)
-            val fm = g.fontMetrics
-            val text = "F"
-            val tw = fm.stringWidth(text)
-            g.drawString(text, (size - tw) / 2, size - (size - fm.ascent) / 2)
-        } finally {
-            g.dispose()
-        }
-        return img
     }
 
     /**

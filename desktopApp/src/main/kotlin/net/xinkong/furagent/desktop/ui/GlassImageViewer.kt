@@ -16,9 +16,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.RestartAlt
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -187,19 +185,23 @@ fun ImageViewerDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (scale != 1f || offset != Offset.Zero) {
+                    HoverTip("重置缩放与位置") {
+                        IconActionButton(
+                            icon = Icons.Default.RestartAlt,
+                            onClick = { scale = 1f; offset = Offset.Zero },
+                            tint = Color.White,
+                            size = 40.dp
+                        )
+                    }
+                }
+                HoverTip("关闭") {
                     IconActionButton(
-                        icon = Icons.Default.RestartAlt,
-                        onClick = { scale = 1f; offset = Offset.Zero },
+                        icon = Icons.Default.Close,
+                        onClick = onDismiss,
                         tint = Color.White,
                         size = 40.dp
                     )
                 }
-                IconActionButton(
-                    icon = Icons.Default.Close,
-                    onClick = onDismiss,
-                    tint = Color.White,
-                    size = 40.dp
-                )
             }
 
             Column(

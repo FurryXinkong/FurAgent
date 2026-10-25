@@ -1,6 +1,7 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
+import net.xinkong.furagent.ui.theme.AppRadius
 
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
@@ -9,9 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,6 +31,8 @@ import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
 import net.xinkong.furagent.ui.PocoEmptyState
+import net.xinkong.furagent.ui.SuccessColor
+import net.xinkong.furagent.ui.WarningColor
 import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
 import net.xinkong.furagent.ui.pocoFieldColors
@@ -39,7 +40,7 @@ import net.xinkong.furagent.ui.pocoFieldColors
 /**
  * MCP 服务器列表 —— 整屏页面。
  *
- * 【F5】每个 server 展开后，工具列表每项加 Switch。
+ * 每个 server 展开后，工具列表每项加 Switch。
  * 关闭单个工具会把工具全名（`mcp__<id8>__<toolName>`）加入 `disabledTools`，
  * AI 的 tools 数组会在 build 时被过滤掉该工具。
  *
@@ -96,7 +97,7 @@ fun McpPage(
         val cfg = configs.firstOrNull { it.id == id }
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("删除 MCP 服务器") },
             text = { Text("确定删除「${cfg?.name ?: id}」？") },
@@ -158,7 +159,7 @@ fun McpPage(
                     action = {
                         Button(
                             onClick = { showAddDialog = true },
-                            shape = RoundedCornerShape(14.dp)
+                            shape = RoundedCornerShape(AppRadius.MD_MINUS)
                         ) {
                             Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -173,8 +174,9 @@ fun McpPage(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(configs, key = { it.id }) { cfg ->
-                        val client = clientList.firstOrNull { it.id == cfg.id }
-                        McpServerCard(
+                        Box(Modifier.animateItem()) {
+                            val client = clientList.firstOrNull { it.id == cfg.id }
+                            McpServerCard(
                             config = cfg,
                             client = client,
                             disabledTools = disabledTools,
@@ -205,6 +207,7 @@ fun McpPage(
                                 refreshKey++
                             }
                         )
+                        }
                     }
                     item { Spacer(Modifier.height(16.dp)) }
                 }
@@ -213,11 +216,8 @@ fun McpPage(
     }
 }
 
-// 【批次 20 UI 收口】EmptyMcpState 已合并到 PocoEmptyState（Glass.kt）。
 
-// ============================================================
-// 服务器卡片（【F5】工具列表加 Switch）
-// ============================================================
+// 服务器卡片
 
 @Composable
 private fun McpServerCard(
@@ -242,8 +242,8 @@ private fun McpServerCard(
 
     val (stateText, stateColor) = when {
         !config.enabled -> "已禁用" to MaterialTheme.colorScheme.onSurfaceVariant
-        state is McpClient.State.Ready -> "在线 · ${tools.size} 个工具" to Color(0xFF34C759)
-        state is McpClient.State.Connecting -> "连接中…" to Color(0xFFF59E0B)
+        state is McpClient.State.Ready -> "在线 · ${tools.size} 个工具" to SuccessColor()
+        state is McpClient.State.Connecting -> "连接中…" to WarningColor()
         state is McpClient.State.Error -> "错误：${state.msg}" to MaterialTheme.colorScheme.error
         client == null -> "未启动" to MaterialTheme.colorScheme.onSurfaceVariant
         else -> "未连接" to MaterialTheme.colorScheme.onSurfaceVariant
@@ -279,7 +279,7 @@ private fun McpServerCard(
                         Spacer(Modifier.width(6.dp))
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceVariant,
-                            shape = RoundedCornerShape(4.dp)
+                            shape = RoundedCornerShape(AppRadius.MICRO)
                         ) {
                             Text(
                                 config.transport,
@@ -348,7 +348,7 @@ private fun McpServerCard(
                     Spacer(Modifier.weight(1f))
                     OutlinedButton(
                         onClick = onReconnect,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(AppRadius.SM_PLUS),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                     ) {
                         Icon(Icons.Default.Refresh, null, modifier = Modifier.size(14.dp))
@@ -357,7 +357,7 @@ private fun McpServerCard(
                     }
                     OutlinedButton(
                         onClick = onEdit,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(AppRadius.SM_PLUS),
                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
                     ) {
                         Icon(Icons.Default.Edit, null, modifier = Modifier.size(14.dp))
@@ -366,7 +366,7 @@ private fun McpServerCard(
                     }
                     OutlinedButton(
                         onClick = onDelete,
-                        shape = RoundedCornerShape(10.dp),
+                        shape = RoundedCornerShape(AppRadius.SM_PLUS),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = MaterialTheme.colorScheme.error
                         ),
@@ -383,7 +383,7 @@ private fun McpServerCard(
                     )
                     Spacer(Modifier.height(6.dp))
 
-                    // 【F5】单工具启用/禁用开关
+                    // 单工具启用/禁用开关
                     Text(
                         "工具（关闭后 AI 无法调用）",
                         fontSize = 11.sp,
@@ -451,9 +451,7 @@ private fun McpServerCard(
     }
 }
 
-// ============================================================
 // 编辑对话框（不变）
-// ============================================================
 
 @Composable
 private fun McpEditDialog(
@@ -476,7 +474,7 @@ private fun McpEditDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(AppRadius.DIALOG),
         containerColor = MaterialTheme.colorScheme.surface,
         title = { Text(if (initial == null) "添加 MCP 服务器" else "编辑 MCP 服务器") },
         text = {
@@ -487,7 +485,7 @@ private fun McpEditDialog(
                     label = { Text("名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = pocoFieldColors()
                 )
 
@@ -507,7 +505,7 @@ private fun McpEditDialog(
                     label = { Text("URL") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = pocoFieldColors()
                 )
                 OutlinedTextField(
@@ -516,7 +514,7 @@ private fun McpEditDialog(
                     label = { Text("Headers（每行 Key: Value）") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 88.dp),
                     minLines = 3,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = pocoFieldColors()
                 )
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -588,7 +586,7 @@ private fun TransportTab(
     Surface(
         onClick = { onSelect(value) },
         modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(AppRadius.SM_PLUS),
         color = if (selected) MaterialTheme.colorScheme.primary
         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
     ) {

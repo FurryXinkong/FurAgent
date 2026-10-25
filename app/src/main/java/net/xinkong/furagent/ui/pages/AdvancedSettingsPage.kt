@@ -1,6 +1,7 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
+import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -10,8 +11,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -25,6 +25,9 @@ import net.xinkong.furagent.data.*
 import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.ui.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import androidx.compose.runtime.rememberCoroutineScope
 
 /**
  * 高级设置 —— 整屏页面。
@@ -44,6 +47,7 @@ fun AdvancedSettingsPage(
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE) }
+    val scope = rememberCoroutineScope()
     var local by remember { mutableStateOf(settings) }
     var showPromptAdvanced by remember { mutableStateOf(false) }
     var showNotifyToolsAdvanced by remember { mutableStateOf(false) }
@@ -51,6 +55,7 @@ fun AdvancedSettingsPage(
     var wfRefreshKey by remember { mutableIntStateOf(0) }
     var editingWorkflow by remember { mutableStateOf<Workflow?>(null) }
     var showWorkflowEditor by remember { mutableStateOf(false) }
+    var pendingDeleteWorkflow by remember { mutableStateOf<Workflow?>(null) }
 
     LaunchedEffect(settings) {
         if (settings != local) local = settings
@@ -60,16 +65,18 @@ fun AdvancedSettingsPage(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
         uri?.let {
-            try {
-                val inputStream = context.contentResolver.openInputStream(it)
-                val text = inputStream?.bufferedReader()?.use { reader -> reader.readText() }
-                if (text.isNullOrBlank()) {
-                    notifyToast(context, "读取文件失败")
-                    return@rememberLauncherForActivityResult
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val inputStream = context.contentResolver.openInputStream(it)
+                    val text = inputStream?.bufferedReader()?.use { reader -> reader.readText() }
+                    if (text.isNullOrBlank()) {
+                        notifyToast(context, "读取文件失败")
+                        return@launch
+                    }
+                    onImportRequested(text)
+                } catch (e: Exception) {
+                    notifyToast(context, "读取失败：${e.message}")
                 }
-                onImportRequested(text)
-            } catch (e: Exception) {
-                notifyToast(context, "读取失败：${e.message}")
             }
         }
     }
@@ -97,6 +104,25 @@ fun AdvancedSettingsPage(
                 showWorkflowEditor = false
                 editingWorkflow = null
                 notifyToast(context, "已保存")
+            }
+        )
+    }
+
+    pendingDeleteWorkflow?.let { w ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { pendingDeleteWorkflow = null },
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("删除工作流") },
+            text = { Text("确定删除「${w.name}」？不可恢复。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    WorkflowStore.delete(context, w.id)
+                    wfRefreshKey++
+                    pendingDeleteWorkflow = null
+                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDeleteWorkflow = null }) { Text("取消") }
             }
         )
     }
@@ -137,30 +163,13 @@ fun AdvancedSettingsPage(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
 
-                // ============ 安全确认 ============
-                item { PocoGroupTitle("安全确认") }
+                // ============ 记忆 ============
+                // 【去重】安全确认开关已统一到「设置 → 安全确认」，
+                // 这里不再重复一份（之前两处都有，用户看到两个“安全确认”很困惑，
+                // 且这里缺 requireConfirmPython，两边不一致）。
+                item { PocoGroupTitle("记忆") }
                 item {
                     PocoCard {
-                        PocoSwitchRow(
-                            "删除文件前确认", "AI 删除时弹窗",
-                            local.requireConfirmDelete
-                        ) { quickSave(local.copy(requireConfirmDelete = it)) }
-                        PocoDivider(startIndent = 16.dp)
-                        PocoSwitchRow(
-                            "写入文件前确认", "创建/编辑/重命名时弹窗",
-                            local.requireConfirmWrite
-                        ) { quickSave(local.copy(requireConfirmWrite = it)) }
-                        PocoDivider(startIndent = 16.dp)
-                        PocoSwitchRow(
-                            "Shell 命令前确认", "Shizuku 执行命令时弹窗",
-                            local.requireConfirmShell
-                        ) { quickSave(local.copy(requireConfirmShell = it)) }
-                        PocoDivider(startIndent = 16.dp)
-                        PocoSwitchRow(
-                            "FFmpeg 覆盖前确认", "输出文件已存在时弹窗询问是否覆盖",
-                            local.requireConfirmFfmpegOverwrite
-                        ) { quickSave(local.copy(requireConfirmFfmpegOverwrite = it)) }
-                        PocoDivider(startIndent = 16.dp)
                         PocoSwitchRow(
                             "启用长期记忆", "AI 自动读取已保存的记忆",
                             local.enableMemory
@@ -182,7 +191,7 @@ fun AdvancedSettingsPage(
                             Spacer(Modifier.height(12.dp))
                             Button(
                                 onClick = onOpenPermissions,
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(AppRadius.SM),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("打开权限管理")
@@ -290,7 +299,7 @@ fun AdvancedSettingsPage(
                             Spacer(Modifier.height(12.dp))
                             Button(
                                 onClick = onOpenEnvStore,
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(AppRadius.SM),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("打开环境变量管理")
@@ -398,8 +407,7 @@ fun AdvancedSettingsPage(
                                             showWorkflowEditor = true
                                         }) { Text("编辑") }
                                         TextButton(onClick = {
-                                            WorkflowStore.delete(context, w.id)
-                                            wfRefreshKey++
+                                            pendingDeleteWorkflow = w
                                         }) {
                                             Text("删除", color = MaterialTheme.colorScheme.error)
                                         }
@@ -411,7 +419,7 @@ fun AdvancedSettingsPage(
                                     editingWorkflow = null
                                     showWorkflowEditor = true
                                 },
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(AppRadius.SM),
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("添加工作流") }
                         }
@@ -436,13 +444,13 @@ fun AdvancedSettingsPage(
                                         notifyToast(context, "导出失败（无存储权限或路径不可写）")
                                     }
                                 },
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(AppRadius.SM),
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("导出全部配置与会话") }
 
                             OutlinedButton(
                                 onClick = { importLauncher.launch("application/json") },
-                                shape = RoundedCornerShape(12.dp),
+                                shape = RoundedCornerShape(AppRadius.SM),
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("导入配置 (JSON)") }
 

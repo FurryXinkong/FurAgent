@@ -18,6 +18,10 @@ import org.jsoup.nodes.TextNode
  */
 object HtmlToMarkdown {
 
+    private val RE_WHITESPACE_RUN = Regex("""[ \t\r\n]+""")
+    private val RE_COLLAPSE_WS = Regex("""\s+""")
+    private val RE_MULTI_NL = Regex("""\n{3,}""")
+
     /** 需要整体删除的噪音标签（含其子树）。 */
     private val NOISE_TAGS = listOf(
         "script", "style", "link", "meta", "noscript", "iframe", "svg", "canvas",
@@ -147,9 +151,7 @@ object HtmlToMarkdown {
         return normalize(sb.toString())
     }
 
-    // ============================================================
     // 递归渲染
-    // ============================================================
     private fun renderChildren(node: Node, sb: StringBuilder, depth: Int) {
         for (child in node.childNodes()) {
             renderNode(child, sb, depth)
@@ -160,7 +162,7 @@ object HtmlToMarkdown {
         when (node) {
             is TextNode -> {
                 val t = node.text()
-                if (t.isNotBlank()) sb.append(t.replace(Regex("[ \\t\\r\\n]+"), " "))
+                if (t.isNotBlank()) sb.append(t.replace(RE_WHITESPACE_RUN, " "))
             }
             is Element -> renderElement(node, sb, depth)
         }
@@ -256,7 +258,7 @@ object HtmlToMarkdown {
     private fun inlineText(el: Element): String {
         val sb = StringBuilder()
         renderChildren(el, sb, 0)
-        return sb.toString().replace(Regex("\\s+"), " ").trim()
+        return sb.toString().replace(RE_COLLAPSE_WS, " ").trim()
     }
 
     private fun renderList(list: Element, sb: StringBuilder, depth: Int, ordered: Boolean) {
@@ -271,7 +273,7 @@ object HtmlToMarkdown {
                 if (child is Element && (child.tagName() == "ul" || child.tagName() == "ol")) continue
                 renderNode(child, direct, depth)
             }
-            val text = direct.toString().replace(Regex("\\s+"), " ").trim()
+            val text = direct.toString().replace(RE_COLLAPSE_WS, " ").trim()
             if (text.isNotBlank()) {
                 sb.append(indent).append(marker).append(text).append("\n")
             }
@@ -293,7 +295,7 @@ object HtmlToMarkdown {
         for (row in rows) {
             val cells = row.select("th, td")
             if (cells.isEmpty()) continue
-            val line = cells.joinToString(" | ") { it.text().replace(Regex("\\s+"), " ").trim() }
+            val line = cells.joinToString(" | ") { it.text().replace(RE_COLLAPSE_WS, " ").trim() }
             sb.append("| ").append(line).append(" |\n")
             if (!headerDone) {
                 sb.append("| ").append(cells.joinToString(" | ") { "---" }).append(" |\n")
@@ -314,7 +316,7 @@ object HtmlToMarkdown {
     private fun normalize(md: String): String {
         return md.lines()
             .joinToString("\n") { it.trimEnd() }
-            .replace(Regex("\\n{3,}"), "\n\n")
+            .replace(RE_MULTI_NL, "\n\n")
             .trim()
     }
 }

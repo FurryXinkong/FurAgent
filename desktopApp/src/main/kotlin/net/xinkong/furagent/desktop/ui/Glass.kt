@@ -10,19 +10,11 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.automirrored.filled.MenuOpen
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,7 +22,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
@@ -41,11 +36,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Shadow
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.ui.applyStreamingGradient
+import net.xinkong.furagent.shared.util.ComposeMarkdownRenderer
+import net.xinkong.furagent.shared.util.MarkdownColors
 import java.awt.Point
 
-// ============================================================
 // 颜色访问器
-// ============================================================
 
 @Composable fun BgColor() = furColors().bg
 @Composable fun BgGradientTop() = furColors().bgGradientTop
@@ -78,70 +75,18 @@ import java.awt.Point
 
 @Composable fun ShadowColor() = furColors().shadow
 
-// ============================================================
-// 玻璃色
-// ============================================================
-@Composable
-fun glassSheetBg(): Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
-
-@Composable
-fun glassCardBg(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-
-@Composable
-fun glassCardBorder(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-
-@Composable
-fun glassInputBg(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-
-@Composable
-fun glassInputBorder(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-
-@Composable
-fun glassDivider(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-
-@Composable
-fun glassTopBarBg(): Color = MaterialTheme.colorScheme.background.copy(alpha = 0.85f)
-
-@Composable
-fun glassFloatingBg(): Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)
-
-// ============================================================
 // 玻璃高光
-// ============================================================
 @Composable
 fun GlassSheen(
     modifier: Modifier = Modifier,
     height: Dp = 80.dp,
     alpha: Float = 0.06f
-) {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val sheenColor = if (isDark) {
-        Color.White.copy(alpha = alpha * 0.7f)
-    } else {
-        Color.White.copy(alpha = alpha * 1.6f)
-    }
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(height)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(sheenColor, Color.Transparent)
-                )
-            )
-    )
-}
+) = net.xinkong.furagent.shared.ui.GlassSheen(modifier, height, alpha)
 
 @Composable
-fun glassShadowColor(): Color {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    return if (isDark) Color.Black.copy(alpha = 0.55f)
-    else Color.Black.copy(alpha = 0.10f)
-}
+fun glassShadowColor() = net.xinkong.furagent.shared.ui.glassShadowColor()
 
-// ============================================================
 // 背景
-// ============================================================
 @Composable
 fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
     val top = BgGradientTop()
@@ -257,32 +202,25 @@ fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
 }
 
 @Composable
-fun ApplyBackgroundBlur(enabled: Boolean = true) {
-    // 桌面端不需要
-}
-
-@Composable
 fun GlassDragHandle() {
     Box(
         modifier = Modifier
             .padding(vertical = 12.dp)
             .width(36.dp)
             .height(4.dp)
-            .clip(RoundedCornerShape(2.dp))
+            .clip(RoundedCornerShape(Radius.HAIRLINE))
             .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
     )
 }
 
-// ============================================================
 // 【标准卡片】GlassCard / PocoCard
-// ============================================================
-//
+
 // 桌面端所有页面级卡片统一走这一个实现：
 //   - 底色  CardColor()       (#242629 深色不透明)
 //   - 边框  1dp BorderColor() (#383B40)
 //   - 圆角  Radius.MD (16dp)
 //   - 阴影  hover 4dp / 常态 2dp / 按下 0dp
-//
+
 // PocoCard 是历史遗留名（早期来自 Android 端），已改为转发到 GlassCard，
 // 保证两端视觉一致。所有新代码统一写 GlassCard。
 
@@ -337,8 +275,6 @@ fun GlassCard(
     }
 }
 
-// 【批次 18 死代码清理】桌面端 PocoCard（转发空壳）全项目零引用，已删除。
-
 /**
  * 右上角浮层卡片的统一外壳。
  *
@@ -372,13 +308,11 @@ fun GlassDivider(modifier: Modifier = Modifier, startIndent: Dp = 0.dp, color: C
     Box(Modifier.fillMaxWidth().padding(start = startIndent).height(1.dp).background(color).then(modifier))
 }
 
-// ============================================================
 // 【通用阴影包装】GlassShadow
-// ============================================================
-//
+
 // 用途：给任意 content 套一层统一阴影（不改变底色/边框）。
 // 典型场景：空状态提示卡片、对话空状态里的 "未配置 API Key" 卡片。
-//
+
 // 与 GlassCard 的区别：
 //   GlassCard 提供完整卡片（底色 + 边框 + 阴影 + 圆角）
 //   GlassShadow 只提供阴影 + 圆角裁剪，内层自己决定底色和边框
@@ -406,9 +340,7 @@ fun GlassShadow(
     }
 }
 
-// ============================================================
 // 分组标题
-// ============================================================
 
 @Composable
 fun SectionLabel(text: String, modifier: Modifier = Modifier) {
@@ -421,9 +353,7 @@ fun HintText(text: String, modifier: Modifier = Modifier, color: Color = TextMut
     Text(text, modifier, fontSize = 11.sp, lineHeight = 16.sp, color = color)
 }
 
-// ============================================================
 // 按钮
-// ============================================================
 
 @Composable
 fun PrimaryButton(
@@ -492,6 +422,30 @@ fun DangerButton(
     }
 }
 
+/**
+ * 桌面悬停提示（tooltip）。
+ *
+ * 包住纯图标按钮，悬停片刻后弹出功能说明——解决"图标认不出"的问题。
+ * 全站纯图标按钮统一走它。
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun HoverTip(label: String, content: @Composable () -> Unit) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
+            TooltipAnchorPosition.Above
+        ),
+        tooltip = {
+            // PlainTooltip 是 TooltipScope 扩展，依赖 lambda 的 receiver 直接调用
+            PlainTooltip {
+                Text(label, fontSize = 11.sp)
+            }
+        },
+        state = rememberTooltipState(),
+        content = content
+    )
+}
+
 @Composable
 fun IconActionButton(
     icon: ImageVector,
@@ -549,9 +503,7 @@ fun IconActionButton(
     }
 }
 
-// ============================================================
 // 输入框
-// ============================================================
 
 @Composable
 fun GlassTextField(
@@ -589,9 +541,22 @@ fun GlassTextField(
     }
 }
 
-// ============================================================
 // 开关
-// ============================================================
+
+/**
+ * 统一的 Switch 配色。全项目所有 Switch 都走这里。
+ *
+ * 选中 = AccentColor 轨道 + OnAccent 滑块
+ * 未选 = CardStrongColor 轨道 + TextSecondary 滑块 + BorderColor 描边
+ */
+@Composable
+fun glassSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = OnAccent(),
+    checkedTrackColor = AccentColor(),
+    uncheckedThumbColor = TextSecondary(),
+    uncheckedTrackColor = CardStrongColor(),
+    uncheckedBorderColor = BorderColor()
+)
 
 @Composable
 fun GlassSwitchRow(
@@ -608,18 +573,12 @@ fun GlassSwitchRow(
         }
         Spacer(Modifier.width(12.dp))
         Switch(checked = checked, onCheckedChange = onChange, enabled = enabled,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = OnAccent(), checkedTrackColor = AccentColor(),
-                uncheckedThumbColor = TextSecondary(), uncheckedTrackColor = CardStrongColor(),
-                uncheckedBorderColor = BorderColor()
-            ))
+            colors = glassSwitchColors())
     }
 }
 
-// ============================================================
 // Chip
-// ============================================================
-//
+
 // 两种 chip 语义不同，但视觉统一（12dp 圆角、相同内边距）：
 //   GlassChip         — toggle 语义（选中 / 未选中）
 //   QuickActionChip   — action 语义（点击触发，带可选图标）
@@ -643,23 +602,9 @@ fun GlassChip(
     }
 }
 
-// 【批次 18 死代码清理】QuickActionChip 全项目零引用，已删除。
-
-// ============================================================
 // 侧边栏项
-// ============================================================
 
-// 【批次 18 死代码清理】SidebarItem 全项目零引用（Sidebar.kt 用自己的 NavItem / SessionItem），已删除。
-
-// ============================================================
-// 头像
-// ============================================================
-
-// 【批次 18 死代码清理】AvatarDot 全项目零引用，已删除。
-
-// ============================================================
 // 页面标题栏
-// ============================================================
 
 @Composable
 fun PageTitleBar(
@@ -682,9 +627,7 @@ fun PageTitleBar(
     }
 }
 
-// ============================================================
 // 折叠按钮
-// ============================================================
 
 @Composable
 fun SidebarToggleButton(expanded: Boolean, onClick: () -> Unit) {
@@ -704,9 +647,7 @@ fun SidebarToggleButton(expanded: Boolean, onClick: () -> Unit) {
     }
 }
 
-// ============================================================
 // 窗口标题栏
-// ============================================================
 
 @Composable
 fun WindowTitleBar(
@@ -771,50 +712,58 @@ private fun WindowControlButton(kind: WindowControlKind, onClick: () -> Unit) {
     ) {
         when (kind) {
             WindowControlKind.MINIMIZE -> Box(Modifier.width(10.dp).height(1.dp).background(fg))
-            WindowControlKind.MAXIMIZE -> Box(Modifier.size(9.dp).border(1.dp, fg, RoundedCornerShape(1.dp)))
+            WindowControlKind.MAXIMIZE -> Box(Modifier.size(9.dp).border(1.dp, fg, RoundedCornerShape(Radius.HAIRLINE)))
             WindowControlKind.CLOSE -> Icon(Icons.Default.Close, "关闭", tint = fg, modifier = Modifier.size(14.dp))
         }
     }
 }
 
-// ============================================================
 // 对话框
-// ============================================================
+
+// 【复用收口】弹入动画（0.92→1 缩放 + 淡入）三处对话框共用一份，
+
+/**
+ * 对话框弹入动画 Modifier：挂到对话框内容上即可获得统一的缩放淡入进场。
+ */
+@Composable
+fun rememberDialogEnter(): Modifier {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { visible = true }
+    val scale by animateFloatAsState(
+        targetValue = if (visible) 1f else 0.92f,
+        animationSpec = tween(220, easing = FastOutSlowInEasing),
+        label = "dialogEnterScale"
+    )
+    val alpha by animateFloatAsState(
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = tween(200, easing = FastOutSlowInEasing),
+        label = "dialogEnterAlpha"
+    )
+    return Modifier.graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+        this.alpha = alpha
+    }
+}
 
 @Composable
 fun GlassDialog(
     title: String, onDismiss: () -> Unit, width: Dp = 480.dp,
     content: @Composable ColumnScope.() -> Unit, actions: @Composable RowScope.() -> Unit
 ) {
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-
-    val scale by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.92f,
-        animationSpec = tween(220, easing = FastOutSlowInEasing),
-        label = "dialogScale"
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
-        label = "dialogAlpha"
-    )
+    val enter = rememberDialogEnter()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CardColor(), titleContentColor = TextPrimary(), textContentColor = TextSecondary(),
         shape = RoundedCornerShape(Radius.MD),
         title = {
-            Box(Modifier.graphicsLayer {
-                scaleX = scale; scaleY = scale; this.alpha = alpha
-            }) {
+            Box(enter) {
                 Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         },
         text = {
-            Box(Modifier.width(width).graphicsLayer {
-                scaleX = scale; scaleY = scale; this.alpha = alpha
-            }) {
+            Box(Modifier.width(width).then(enter)) {
                 Column(content = content)
             }
         },
@@ -830,35 +779,19 @@ fun ConfirmDialog(
     dismissText: String = "取消", danger: Boolean = false,
     onConfirm: () -> Unit, onDismiss: () -> Unit
 ) {
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-
-    val scale by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.92f,
-        animationSpec = tween(220, easing = FastOutSlowInEasing),
-        label = "confirmScale"
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
-        label = "confirmAlpha"
-    )
+    val enter = rememberDialogEnter()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CardColor(), titleContentColor = TextPrimary(), textContentColor = TextSecondary(),
         shape = RoundedCornerShape(Radius.MD),
         title = {
-            Box(Modifier.graphicsLayer {
-                scaleX = scale; scaleY = scale; this.alpha = alpha
-            }) {
+            Box(enter) {
                 Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         },
         text = {
-            Box(Modifier.graphicsLayer {
-                scaleX = scale; scaleY = scale; this.alpha = alpha
-            }) {
+            Box(enter) {
                 Text(message, fontSize = 13.sp, lineHeight = 20.sp)
             }
         },
@@ -873,35 +806,19 @@ fun ConfirmDialog(
 
 @Composable
 fun InfoDialog(title: String, message: String, onDismiss: () -> Unit) {
-    var visible by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) { visible = true }
-
-    val scale by animateFloatAsState(
-        targetValue = if (visible) 1f else 0.92f,
-        animationSpec = tween(220, easing = FastOutSlowInEasing),
-        label = "infoScale"
-    )
-    val alpha by animateFloatAsState(
-        targetValue = if (visible) 1f else 0f,
-        animationSpec = tween(200, easing = FastOutSlowInEasing),
-        label = "infoAlpha"
-    )
+    val enter = rememberDialogEnter()
 
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = CardColor(), titleContentColor = TextPrimary(), textContentColor = TextSecondary(),
         shape = RoundedCornerShape(Radius.MD),
         title = {
-            Box(Modifier.graphicsLayer {
-                scaleX = scale; scaleY = scale; this.alpha = alpha
-            }) {
+            Box(enter) {
                 Text(title, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
         },
         text = {
-            Box(Modifier.graphicsLayer {
-                scaleX = scale; scaleY = scale; this.alpha = alpha
-            }) {
+            Box(enter) {
                 Text(message, fontSize = 13.sp, lineHeight = 20.sp, fontFamily = FontFamily.Monospace)
             }
         },
@@ -924,64 +841,46 @@ fun LoadingBox(modifier: Modifier = Modifier, text: String = "") {
     }
 }
 
-// ============================================================
-// 图片查看器 → 已抽到 GlassImageViewer.kt
-// ============================================================
-
-// ============================================================
 // Markdown 渲染
-// ============================================================
-
 @Composable
 fun MarkdownText(
     text: String, color: Color, modifier: Modifier = Modifier,
     fontSize: androidx.compose.ui.unit.TextUnit = 14.sp,
     lineHeight: androidx.compose.ui.unit.TextUnit = 15.sp * 1.4f,
-    onLinkClick: ((String) -> Unit)? = null
+    onLinkClick: ((String) -> Unit)? = null,
+    maxLines: Int = Int.MAX_VALUE,
+    plainText: Boolean = false
 ) {
     val linkColor = AccentColor()
     val codeBg = CardStrongColor()
 
-    val annotated = remember(text, color, linkColor, codeBg) {
-        DesktopMarkdownRenderer.render(text, color, linkColor, codeBg)
+    if (plainText) {
+        // 流式输出：渐变纯文本
+        val annotated = remember(text, color) { applyStreamingGradient(text, color) }
+        Text(
+            annotated,
+            modifier,
+            fontSize = fontSize,
+            lineHeight = lineHeight,
+            color = color,
+            maxLines = maxLines,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+    } else {
+        // 富文本：组件化渲染
+        ComposeMarkdownRenderer(
+            text = text,
+            colors = MarkdownColors(
+                textColor = color,
+                linkColor = linkColor,
+                codeBg = codeBg,
+                quoteColor = color.copy(alpha = 0.4f),
+                dividerColor = BorderSubtle(),
+                tableBorderColor = BorderColor()
+            ),
+            modifier = modifier,
+            onLinkClick = onLinkClick,
+            maxLines = maxLines
+        )
     }
-    var layoutResult by remember {
-        mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null)
-    }
-
-    val interactionModifier = if (onLinkClick != null) {
-        Modifier.pointerInput(text, color) {
-            detectTapGestures(
-                onTap = { offset: Offset ->
-                    val layout = layoutResult ?: return@detectTapGestures
-                    val pos = try { layout.getOffsetForPosition(offset) }
-                    catch (_: Exception) { return@detectTapGestures }
-                    annotated.getStringAnnotations(
-                        tag = "url", start = pos, end = pos
-                    ).firstOrNull()?.let { onLinkClick(it.item) }
-                }
-            )
-        }
-    } else Modifier
-
-    Text(
-        annotated,
-        modifier.then(interactionModifier),
-        fontSize = fontSize,
-        lineHeight = lineHeight,
-        color = color,
-        onTextLayout = { layoutResult = it }
-    )
 }
-
-// ============================================================
-// 附件 chip
-// ============================================================
-
-// 【批次 18 死代码清理】AttachmentChip 全项目零引用（ChatPage.kt 用 AttachmentThumb），已删除。
-
-// ============================================================
-// 下载浮层 → 已抽到 DownloadToast.kt
-// ============================================================
-
-// formatSpeed / formatEta / SafeClipboard 已抽到 GlassUtils.kt（同包，引用零改动）。

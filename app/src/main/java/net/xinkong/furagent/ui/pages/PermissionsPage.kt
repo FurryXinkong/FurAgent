@@ -5,10 +5,7 @@ package net.xinkong.furagent.ui.pages
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Warning
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,7 +27,9 @@ import net.xinkong.furagent.ui.ApplyBackgroundBlur
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
 import net.xinkong.furagent.ui.PocoPageTopBar
+import net.xinkong.furagent.ui.SuccessColor
 import net.xinkong.furagent.ui.glassPageBg
+import net.xinkong.furagent.ui.theme.AppRadius
 
 /**
  * 权限管理 —— 整屏页面。
@@ -132,7 +131,7 @@ fun PermissionsPage(onBack: () -> Unit) {
                             Spacer(Modifier.height(12.dp))
                             Button(
                                 onClick = { PermissionChecker.openAutoStartSettings(context) },
-                                shape = RoundedCornerShape(14.dp),
+                                shape = RoundedCornerShape(AppRadius.MD_MINUS),
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                                     contentColor = MaterialTheme.colorScheme.primary
@@ -147,9 +146,7 @@ fun PermissionsPage(onBack: () -> Unit) {
     }
 }
 
-// ============================================================
 // 权限行
-// ============================================================
 
 @Composable
 private fun PermissionRow(item: PermissionItem, onOpen: () -> Unit) {
@@ -162,7 +159,7 @@ private fun PermissionRow(item: PermissionItem, onOpen: () -> Unit) {
         Icon(
             imageVector = if (item.granted) Icons.Default.CheckCircle else Icons.Default.Warning,
             contentDescription = null,
-            tint = if (item.granted) Color(0xFF34C759) else MaterialTheme.colorScheme.error,
+            tint = if (item.granted) SuccessColor() else MaterialTheme.colorScheme.error,
             modifier = Modifier.size(22.dp)
         )
         Spacer(Modifier.width(16.dp))
@@ -185,7 +182,7 @@ private fun PermissionRow(item: PermissionItem, onOpen: () -> Unit) {
             Text(
                 "已授权",
                 style = MaterialTheme.typography.labelMedium,
-                color = Color(0xFF34C759),
+                color = SuccessColor(),
                 fontWeight = FontWeight.Medium
             )
         } else {

@@ -26,6 +26,12 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 object DesktopConfirmation {
 
+    /**
+     * 子会话（后台子代理）协程名。该上下文里的确认请求没人能点，
+     * 会一直排队到 300s 超时，表现为「子会话卡住 5 分钟」。
+     */
+    const val SUBSESSION_COROUTINE_NAME = "FurAgentSubSession"
+
     data class PendingConfirm(
         val title: String,
         val message: String
@@ -49,7 +55,15 @@ object DesktopConfirmation {
 
     /** 挂起等待用户响应。超时或拒绝返回 false。 */
     suspend fun request(title: String, message: String): Boolean {
-        val entry = Entry(PendingConfirm(title, message), CompletableDeferred())
+        // 子代理在后台独立协程里跑，但确认弹窗本来就是全局队列 + 主窗口订阅，
+        // 直接转到主会话弹窗即可（用户能点）。这里只给标题标注来源，
+        // 避免用户不知道是谁在请求。
+        val fromSub = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.CoroutineName]?.name ==
+                SUBSESSION_COROUTINE_NAME
+        val entry = Entry(
+            PendingConfirm(if (fromSub) "子代理 · $title" else title, message),
+            CompletableDeferred()
+        )
         synchronized(lock) {
             queue.addLast(entry)
             // 只有当前没有正在展示的确认时，才把队首推给 UI

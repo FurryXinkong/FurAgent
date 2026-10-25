@@ -19,6 +19,9 @@ object MessageType {
     const val RELAY_FILE_RESULT = "relay_file_result"
     const val LIST_PEERS = "list_peers"
     const val PEERS_LIST = "peers_list"
+
+    /** 手机端通知同步到电脑（单向）。 */
+    const val NOTIFICATION = "notification"
 }
 
 object EndpointId {
@@ -30,7 +33,7 @@ object BridgeConfig {
     const val DEFAULT_PORT = 8425
 
     /**
-     * 【F9】心跳间隔 20s → 10s。
+     * 心跳间隔 20s → 10s。
      *
      * 原因：部分路由器的 NAT 表对空闲 TCP 连接的超时在 30~60 秒。
      * 旧值 20s 会在弱网/空闲时被路由或运营商设备悄悄断掉，客户端表现为
@@ -44,7 +47,7 @@ object BridgeConfig {
     const val PROTOCOL_VERSION = "1.0"
 
     /**
-     * 【F9】连续 N 次没收到 pong 才判定连接死。
+     * 连续 N 次没收到 pong 才判定连接死。
      *
      * 20s×3 或 10s×5：超时窗口从 60s 略放宽到 50s，但探测频率翻倍，
      * 实际死连接检测更快，而弱网下误判断线更少。
@@ -199,6 +202,38 @@ data class BridgeMessage(
         fun peersList(id: String, from: String, peersJson: String): BridgeMessage =
             BridgeMessage(MessageType.PEERS_LIST, id = id, from = from,
                 timestamp = currentTimeMillis(), payload = mapOf("peers" to peersJson))
+
+        /**
+         * 手机端通知转发到电脑。
+         *
+         * 单向：手机 → 电脑。电脑端收到后弹系统通知。
+         *
+         * @param appName     应用名（如“微信”）
+         * @param packageName 包名（用于电脑端过滤/去重）
+         * @param title       通知标题
+         * @param text        通知正文
+         * @param postTime    通知产生时间（毫秒）
+         * @param notifKey    通知唯一 key（用于去重）
+         */
+        fun notification(
+            from: String,
+            appName: String,
+            packageName: String,
+            title: String,
+            text: String,
+            postTime: Long,
+            notifKey: String = ""
+        ): BridgeMessage = BridgeMessage(
+            MessageType.NOTIFICATION, from = from, timestamp = currentTimeMillis(),
+            payload = mapOf(
+                "appName" to appName,
+                "packageName" to packageName,
+                "title" to title,
+                "text" to text,
+                "postTime" to postTime.toString(),
+                "notifKey" to notifKey
+            )
+        )
     }
 }
 

@@ -9,12 +9,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.ExpandMore
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,18 +23,22 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.EnvDetector
+import net.xinkong.furagent.shared.tools.BackupHelper
+import net.xinkong.furagent.shared.tools.TrashHelper
 import net.xinkong.furagent.desktop.system.TempCleaner
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
 import java.io.File
-import javax.swing.JFileChooser
+import net.xinkong.furagent.desktop.system.NativeFilePicker
 import kotlin.time.Duration.Companion.milliseconds
 
 val HIDDEN_GROUPS: List<Pair<String, String>> = listOf(
     "appearance" to "外观",
+    "files" to "文件",
     "model" to "模型",
     "agent" to "智能体",
     "image" to "图片压缩",
@@ -101,9 +100,7 @@ fun SettingsPage(
                     ),
                 verticalArrangement = Arrangement.spacedBy(Spacing.CARD_GAP)
             ) {
-                // ============================================================
                 // 外观
-                // ============================================================
                 if (isVisible("appearance")) {
                     SettingGroup(
                         title = "外观",
@@ -137,9 +134,55 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
+                // 文件
+                if (isVisible("files")) {
+                    SettingGroup(
+                        title = "文件",
+                        groupKey = "files",
+                        expanded = isExpanded("files"),
+                        onToggle = { toggleGroup("files") }
+                    ) {
+                        SubSection("下载目录") {
+                            HintText("手机推过来的文件、AI 下载的文件都落在这里。留空则用默认目录。")
+                            var dirInput by remember { mutableStateOf(settings.receiveDir) }
+                            LaunchedEffect(settings.receiveDir) {
+                                if (dirInput != settings.receiveDir) dirInput = settings.receiveDir
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                GlassTextField(
+                                    value = dirInput,
+                                    onValueChange = { dirInput = it },
+                                    label = "下载目录",
+                                    placeholder = DesktopPaths.receivedDir().absolutePath,
+                                    monospace = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                SecondaryButton(text = "应用") {
+                                    val v = dirInput.trim().ifBlank { DesktopPaths.receivedDir().absolutePath }
+                                    onSettingsChange(settings.copy(receiveDir = v))
+                                }
+                                SecondaryButton(text = "默认") {
+                                    val v = DesktopPaths.receivedDir().absolutePath
+                                    dirInput = v
+                                    onSettingsChange(settings.copy(receiveDir = v))
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "当前：${settings.receiveDir}",
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = TextMuted()
+                            )
+                        }
+                    }
+                }
+
                 // 模型
-                // ============================================================
                 if (isVisible("model")) {
                     SettingGroup(
                         title = "模型",
@@ -193,9 +236,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 智能体
-                // ============================================================
                 if (isVisible("agent")) {
                     SettingGroup(
                         title = "智能体",
@@ -217,6 +258,14 @@ fun SettingsPage(
                                 }
                             }
 
+                            var budgetInput by remember {
+                                mutableStateOf(settings.contextTokenBudgetK.toString())
+                            }
+                            LaunchedEffect(settings.contextTokenBudgetK) {
+                                if (budgetInput != settings.contextTokenBudgetK.toString()) {
+                                    budgetInput = settings.contextTokenBudgetK.toString()
+                                }
+                            }
                             Row(
                                 Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -238,6 +287,45 @@ fun SettingsPage(
                                         val v = filtered.toIntOrNull()
                                         if (v != null && v >= 1) {
                                             onSettingsChange(settings.copy(maxTurns = v))
+                                        }
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(Radius.SM),
+                                    modifier = Modifier.width(110.dp),
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        color = TextPrimary(),
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = CardColor(),
+                                        unfocusedContainerColor = CardColor(),
+                                        focusedBorderColor = AccentColor(),
+                                        unfocusedBorderColor = BorderColor()
+                                    )
+                                )
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("上下文 token 上限（千）", fontSize = 13.sp, color = TextPrimary())
+                                    Text(
+                                        "超出后从最旧的工具过程开始省略，保留对话内容；0 = 不限制",
+                                        fontSize = 11.sp,
+                                        color = TextMuted()
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = budgetInput,
+                                    onValueChange = { s ->
+                                        val filtered = s.filter { it.isDigit() }.take(6)
+                                        budgetInput = filtered
+                                        val v = filtered.toIntOrNull()
+                                        if (v != null) {
+                                            onSettingsChange(settings.copy(contextTokenBudgetK = v))
                                         }
                                     },
                                     singleLine = true,
@@ -428,9 +516,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 图片压缩
-                // ============================================================
                 if (isVisible("image")) {
                     SettingGroup(
                         title = "图片压缩",
@@ -452,18 +538,13 @@ fun SettingsPage(
                                 fontSize = 13.sp,
                                 color = if (settings.imageCompress) TextPrimary() else TextMuted()
                             )
-                            Slider(
+                            GradientSlider(
                                 value = settings.imageCompressQuality.toFloat(),
                                 onValueChange = { v ->
                                     onSettingsChange(settings.copy(imageCompressQuality = v.toInt()))
                                 },
                                 valueRange = 30f..100f,
-                                enabled = settings.imageCompress,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = AccentColor(),
-                                    activeTrackColor = AccentColor(),
-                                    inactiveTrackColor = BorderColor()
-                                )
+                                enabled = settings.imageCompress
                             )
                             Spacer(Modifier.height(8.dp))
                             Text(
@@ -471,7 +552,7 @@ fun SettingsPage(
                                 fontSize = 13.sp,
                                 color = if (settings.imageCompress) TextPrimary() else TextMuted()
                             )
-                            Slider(
+                            GradientSlider(
                                 value = settings.imageCompressMaxDim.toFloat(),
                                 onValueChange = { v ->
                                     onSettingsChange(
@@ -481,20 +562,13 @@ fun SettingsPage(
                                     )
                                 },
                                 valueRange = 320f..4096f,
-                                enabled = settings.imageCompress,
-                                colors = SliderDefaults.colors(
-                                    thumbColor = AccentColor(),
-                                    activeTrackColor = AccentColor(),
-                                    inactiveTrackColor = BorderColor()
-                                )
+                                enabled = settings.imageCompress
                             )
                         }
                     }
                 }
 
-                // ============================================================
                 // 通知与语音
-                // ============================================================
                 if (isVisible("notification")) {
                     SettingGroup(
                         title = "通知与语音",
@@ -520,9 +594,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 安全确认
-                // ============================================================
                 if (isVisible("security")) {
                     SettingGroup(
                         title = "安全确认",
@@ -561,12 +633,22 @@ fun SettingsPage(
                         ) {
                             onSettingsChange(settings.copy(requireConfirmFfmpegOverwrite = it))
                         }
+
+                        // —— 新功能开关 ——
+                        // 「底部状态栏」「修改文件列表」已移除开关：功能强制常开；
+                        // 「AI 建议新对话」已废弃（由子代理 run_sub_session 取代）；
+                        // 「修改历史」入口已移到聊天页底栏。
+                        GlassSwitchRow(
+                            "写前备份与回档",
+                            "覆盖已有文件前自动留档，可从聊天页「修改历史」一键回档",
+                            settings.fileBackupEnabled
+                        ) {
+                            onSettingsChange(settings.copy(fileBackupEnabled = it))
+                        }
                     }
                 }
 
-                // ============================================================
                 // 环境检测
-                // ============================================================
                 if (isVisible("env")) {
                     SettingGroup(
                         title = "环境检测",
@@ -582,9 +664,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 工具
-                // ============================================================
                 if (isVisible("tools")) {
                     SettingGroup(
                         title = "工具",
@@ -613,9 +693,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 文件存储位置
-                // ============================================================
                 if (isVisible("storage")) {
                     SettingGroup(
                         title = "文件存储位置",
@@ -676,9 +754,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 工作流
-                // ============================================================
                 if (isVisible("workflow")) {
                     SettingGroup(
                         title = "工作流",
@@ -742,9 +818,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 备份与恢复
-                // ============================================================
                 if (isVisible("backup")) {
                     SettingGroup(
                         title = "备份与恢复",
@@ -759,9 +833,7 @@ fun SettingsPage(
                     }
                 }
 
-                // ============================================================
                 // 服务
-                // ============================================================
                 if (isVisible("service")) {
                     SettingGroup(
                         title = "服务",
@@ -804,12 +876,28 @@ fun SettingsPage(
                                 autostartEnabled = isAutoStartEnabled()
                             }
                         }
+
+                        GlassDivider(color = BorderSubtle())
+
+                        // 【关闭行为】关闭主窗口时是真退出，还是缩到托盘继续跑。
+                        // 放在「服务」组：它和开机自启动一样，都属于
+                        // 「这个程序在后台怎么活着」。
+                        GlassSwitchRow(
+                            title = "关闭时最小化到托盘",
+                            subtitle = if (settings.closeToTray) {
+                                "点×只隐藏窗口，后台任务继续跑；托盘右键可真正退出"
+                            } else {
+                                "点×直接退出，正在跑的任务会被中断"
+                            },
+                            checked = settings.closeToTray
+                        ) { want ->
+                            // 开关本身就是结果，不再弹提示框
+                            onSettingsChange(settings.copy(closeToTray = want))
+                        }
                     }
                 }
 
-                // ============================================================
                 // 高级
-                // ============================================================
                 SettingGroup(
                     title = "高级",
                     groupKey = "advanced",
@@ -848,9 +936,7 @@ fun SettingsPage(
         }
     }
 
-    // ============================================================
     // 弹窗
-    // ============================================================
     editingProfile?.let { profile ->
         EditModelProfileDialog(
             title = "编辑模型",
@@ -944,10 +1030,8 @@ fun SettingsPage(
     infoMsg?.let { msg -> InfoDialog(title = "提示", message = msg, onDismiss = { infoMsg = null }) }
 }
 
-// ============================================================
 // 分组组件（唯一一层折叠）
-// ============================================================
-//
+
 // 【本次改动】内部卡片从"手写 Column + background + border"
 // 改为统一用 GlassCard 承载，圆角/底色/边框/阴影自动和全站一致。
 
@@ -1023,9 +1107,7 @@ private fun SubSection(title: String, content: @Composable ColumnScope.() -> Uni
     }
 }
 
-// ============================================================
 // 工具行
-// ============================================================
 
 @Composable
 private fun ToolRow(
@@ -1082,339 +1164,10 @@ private fun ToolRow(
     }
 }
 
-// ============================================================
-// 环境检测
-// ============================================================
 
-@Composable
-private fun EnvDetectSection(
-    settings: DesktopSettings,
-    onSettingsChange: (DesktopSettings) -> Unit,
-    onInfo: (String) -> Unit
-) {
-    var refreshKey by remember { mutableIntStateOf(0) }
-    var statuses by remember { mutableStateOf<List<EnvDetector.ToolStatus>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var installingKey by remember { mutableStateOf<String?>(null) }
-    var installOutput by remember { mutableStateOf("") }
-    var installingDialog by remember { mutableStateOf<String?>(null) }
-    var pendingClearToolKey by remember { mutableStateOf<String?>(null) }
+// 环境检测 → 已拆到 EnvDetectSection.kt
 
-    var visibleCount by remember { mutableIntStateOf(0) }
-
-    LaunchedEffect(refreshKey) {
-        loading = true
-        statuses = EnvDetector.detectAll()
-        loading = false
-    }
-
-    LaunchedEffect(statuses.size, refreshKey) {
-        visibleCount = 0
-        for (i in statuses.indices) {
-            delay(30.milliseconds)
-            visibleCount = i + 1
-        }
-    }
-
-    val detectedCount = statuses.count { it.detected }
-
-    HintText("检测本机已安装的常用开发工具。已安装的工具会告知 AI，可直接在命令中使用。")
-    HintText("点\"选择路径\"可手动指定可执行文件位置；手动路径优先于自动探测。")
-
-    if (loading) {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            CircularProgressIndicator(
-                Modifier.size(14.dp), strokeWidth = 2.dp, color = AccentColor()
-            )
-            Spacer(Modifier.width(10.dp))
-            Text("正在检测…", fontSize = 12.sp, color = TextSecondary())
-        }
-    } else {
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                "已检测到 $detectedCount / ${statuses.size} 个工具",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Medium,
-                color = TextSecondary(),
-                modifier = Modifier.weight(1f)
-            )
-            TextButton(
-                onClick = {
-                    EnvDetector.clearCache()
-                    refreshKey++
-                },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
-            ) {
-                Text("重新检测", fontSize = 11.sp, color = AccentColor())
-            }
-        }
-        GlassDivider(color = BorderSubtle())
-        statuses.forEachIndexed { i, s ->
-            AnimatedVisibility(
-                visible = i < visibleCount,
-                enter = fadeIn(tween(180)) +
-                        expandVertically(
-                            animationSpec = tween(220, easing = FastOutSlowInEasing),
-                            expandFrom = Alignment.Top
-                        ),
-                exit = fadeOut(tween(120)) +
-                        shrinkVertically(tween(160))
-            ) {
-                Column {
-                    EnvToolRow(
-                        status = s,
-                        customPath = settings.customToolPaths[s.key] ?: "",
-                        onInstall = {
-                            installingKey = s.key
-                            installOutput = ""
-                            installingDialog = s.key
-                        },
-                        onPickPath = {
-                            val chooser = JFileChooser().apply {
-                                dialogTitle = "选择 ${s.displayName} 可执行文件"
-                                fileSelectionMode = JFileChooser.FILES_ONLY
-                            }
-                            if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-                                val f = chooser.selectedFile ?: return@EnvToolRow
-                                if (!f.exists() || !f.isFile) {
-                                    onInfo("所选文件不存在或不是文件：${f.absolutePath}")
-                                    return@EnvToolRow
-                                }
-                                if (!f.canExecute()) {
-                                    onInfo("所选文件没有执行权限：${f.absolutePath}")
-                                    return@EnvToolRow
-                                }
-                                val newMap = settings.customToolPaths.toMutableMap()
-                                newMap[s.key] = f.absolutePath
-                                onSettingsChange(settings.copy(customToolPaths = newMap))
-                                onInfo("已设置 ${s.displayName} 路径：${f.absolutePath}")
-                            }
-                        },
-                        onClearPath = { pendingClearToolKey = s.key },
-                        onUseDetected = {
-                            if (s.path.isBlank()) {
-                                onInfo("未检测到 ${s.displayName} 的可执行文件路径，无法填入")
-                                return@EnvToolRow
-                            }
-                            val newMap = settings.customToolPaths.toMutableMap()
-                            newMap[s.key] = s.path
-                            onSettingsChange(settings.copy(customToolPaths = newMap))
-                            onInfo("已填入 ${s.displayName} 路径：${s.path}")
-                        }
-                    )
-                    if (i != statuses.lastIndex) GlassDivider(color = BorderSubtle())
-                }
-            }
-        }
-    }
-
-    installingDialog?.let { key ->
-        val def = EnvDetector.TOOLS.firstOrNull { it.key == key }
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { if (installingKey == null) installingDialog = null },
-            properties = androidx.compose.ui.window.DialogProperties(
-                usePlatformDefaultWidth = false,
-                dismissOnClickOutside = false
-            )
-        ) {
-            Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.45f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Surface(
-                    color = CardColor(),
-                    shape = RoundedCornerShape(Radius.MD),
-                    border = BorderStroke(1.dp, BorderColor()),
-                    shadowElevation = 20.dp,
-                    modifier = Modifier.width(800.dp).heightIn(min = 400.dp, max = 700.dp)
-                ) {
-                    Column(Modifier.padding(20.dp)) {
-                        Text(
-                            "正在安装：${def?.displayName ?: key}",
-                            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = TextPrimary()
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            def?.let { EnvDetector.currentInstallCommand(it) } ?: "",
-                            fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = TextMuted()
-                        )
-                        Spacer(Modifier.height(12.dp))
-                        GlassDivider(color = BorderSubtle())
-                        Spacer(Modifier.height(12.dp))
-                        Box(
-                            Modifier.fillMaxWidth()
-                                .heightIn(min = 250.dp, max = 500.dp)
-                                .clip(RoundedCornerShape(Radius.XS))
-                                .background(BgColor())
-                                .padding(10.dp)
-                        ) {
-                            val vScroll = rememberScrollState()
-                            LaunchedEffect(installOutput) {
-                                vScroll.animateScrollTo(vScroll.maxValue)
-                            }
-                            Text(
-                                installOutput.ifBlank { "等待输出…" },
-                                fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-                                color = TextPrimary(), lineHeight = 15.sp,
-                                modifier = Modifier.verticalScroll(vScroll)
-                            )
-                        }
-                        Spacer(Modifier.height(12.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (installingKey != null) {
-                                Text(
-                                    "安装中，请不要关闭窗口…",
-                                    fontSize = 11.sp, color = WarningColor(),
-                                    modifier = Modifier.weight(1f)
-                                )
-                            } else {
-                                Spacer(Modifier.weight(1f))
-                            }
-                            SecondaryButton(
-                                text = "关闭",
-                                enabled = installingKey == null
-                            ) {
-                                installingDialog = null
-                                EnvDetector.clearCache()
-                                refreshKey++
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        LaunchedEffect(installingDialog) {
-            if (installingKey == key) {
-                val (ok, _) = EnvDetector.install(key) { line ->
-                    installOutput = (installOutput + line + "\n").takeLast(20000)
-                }
-                installOutput += if (ok) "\n安装完成" else "\n安装失败"
-                installingKey = null
-            }
-        }
-    }
-
-    pendingClearToolKey?.let { key ->
-        val def = EnvDetector.TOOLS.firstOrNull { it.key == key }
-        ConfirmDialog(
-            title = "清除手动路径",
-            message = "确定清除 ${def?.displayName ?: key} 的手动路径？清除后将回退到自动探测。",
-            confirmText = "清除",
-            onConfirm = {
-                val newMap = settings.customToolPaths.toMutableMap()
-                newMap.remove(key)
-                onSettingsChange(settings.copy(customToolPaths = newMap))
-                pendingClearToolKey = null
-            },
-            onDismiss = { pendingClearToolKey = null }
-        )
-    }
-}
-
-@Composable
-private fun EnvToolRow(
-    status: EnvDetector.ToolStatus,
-    customPath: String,
-    onInstall: () -> Unit,
-    onPickPath: () -> Unit,
-    onClearPath: () -> Unit,
-    onUseDetected: () -> Unit
-) {
-    val hasCustom = customPath.isNotBlank()
-    val customValid = remember(customPath) {
-        if (customPath.isBlank()) false
-        else {
-            val f = File(customPath)
-            f.exists() && f.isFile && f.canExecute()
-        }
-    }
-
-    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            val dotColor = when {
-                hasCustom && customValid -> AccentColor()
-                hasCustom && !customValid -> ErrorColor()
-                status.detected -> ResultColor()
-                else -> TextMuted()
-            }
-            Box(Modifier.size(8.dp).clip(CircleShape).background(dotColor))
-            Spacer(Modifier.width(12.dp))
-
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        status.displayName,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = TextPrimary()
-                    )
-                    if (hasCustom) {
-                        Spacer(Modifier.width(6.dp))
-                        Box(
-                            Modifier.clip(RoundedCornerShape(Radius.XS))
-                                .background(
-                                    if (customValid) AccentSoft()
-                                    else ErrorColor().copy(alpha = 0.15f)
-                                )
-                                .padding(horizontal = 6.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                if (customValid) "已自定义" else "自定义路径无效",
-                                fontSize = 9.sp,
-                                color = if (customValid) AccentColor() else ErrorColor(),
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    buildString {
-                        if (hasCustom) {
-                            append(customPath)
-                            if (!customValid) append("  （无效）")
-                        } else if (status.detected) {
-                            append(status.version.ifBlank { status.path })
-                        } else {
-                            append(status.description)
-                        }
-                    },
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = if (hasCustom && !customValid) ErrorColor()
-                    else if (status.detected || hasCustom) TextSecondary()
-                    else TextMuted(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            SecondaryButton(text = "选择路径", onClick = onPickPath)
-            if (hasCustom) {
-                DangerButton(text = "清除", onClick = onClearPath)
-            } else if (status.detected && status.path.isNotBlank()) {
-                SecondaryButton(text = "使用检测到的路径", onClick = onUseDetected)
-            }
-            if (!status.detected) {
-                SecondaryButton(text = "一键安装", onClick = onInstall)
-            }
-        }
-    }
-}
-
-// ============================================================
 // API Key 来源
-// ============================================================
 
 @Composable
 private fun ApiKeySourceSection(
@@ -1553,9 +1306,7 @@ private fun EnvStatusBlock() {
     }
 }
 
-// ============================================================
 // 存储路径行
-// ============================================================
 
 @Composable
 private fun StoragePathRow(label: String, path: String) {
@@ -1602,267 +1353,11 @@ private fun StoragePathRow(label: String, path: String) {
     }
 }
 
-// ============================================================
-// 模型卡片
-// ============================================================
+
+// 模型卡片 → 已拆到 ModelProfileCard.kt
 
 @Composable
-private fun ModelProfileCard(
-    profile: DesktopModelProfile,
-    isCurrent: Boolean,
-    onSetCurrent: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val hovered by interaction.collectIsHoveredAsState()
-
-    val bg by animateColorAsState(
-        targetValue = when {
-            isCurrent -> AccentSoft()
-            hovered -> CardHoverColor()
-            else -> CardStrongColor()
-        },
-        animationSpec = tween(140),
-        label = "modelCardBg"
-    )
-    val borderColor by animateColorAsState(
-        targetValue = if (isCurrent) AccentColor().copy(alpha = 0.5f) else BorderColor(),
-        animationSpec = tween(140),
-        label = "modelCardBorder"
-    )
-
-    Surface(
-        color = bg,
-        shape = RoundedCornerShape(Radius.SM),
-        border = BorderStroke(1.dp, borderColor),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onSetCurrent
-            )
-    ) {
-        Row(
-            Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            RadioButton(
-                selected = isCurrent,
-                onClick = onSetCurrent,
-                enabled = profile.kind != "image",
-                colors = RadioButtonDefaults.colors(selectedColor = AccentColor())
-            )
-            Spacer(Modifier.width(4.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        profile.name.ifBlank { "未命名" },
-                        fontSize = 13.sp,
-                        fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal,
-                        color = TextPrimary(),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (isCurrent) {
-                        Spacer(Modifier.width(6.dp))
-                        Box(
-                            Modifier.clip(RoundedCornerShape(Radius.XS))
-                                .background(AccentColor().copy(alpha = 0.18f))
-                                .padding(horizontal = 5.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                "使用中",
-                                fontSize = 9.sp,
-                                color = AccentColor(),
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                    if (profile.kind == "image") {
-                        Spacer(Modifier.width(6.dp))
-                        Box(
-                            Modifier.clip(RoundedCornerShape(Radius.XS))
-                                .background(WarningColor().copy(alpha = 0.18f))
-                                .padding(horizontal = 5.dp, vertical = 1.dp)
-                        ) {
-                            Text(
-                                "生图",
-                                fontSize = 9.sp,
-                                color = WarningColor(),
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-
-                }
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    buildString {
-                        append(profile.model.ifBlank { "未设置模型" })
-                        if (profile.apiKey.isBlank()) {
-                            append(" · 未配置 Key")
-                        }
-                    },
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = if (profile.apiKey.isBlank()) WarningColor() else TextMuted(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            AnimatedVisibility(
-                visible = hovered || isCurrent,
-                enter = fadeIn(tween(120)),
-                exit = fadeOut(tween(100))
-            ) {
-                Row {
-                    IconActionButton(
-                        Icons.Default.Edit,
-                        onClick = onEdit,
-                        tint = TextSecondary(),
-                        size = 28.dp
-                    )
-                    IconActionButton(
-                        Icons.Default.Delete,
-                        onClick = onDelete,
-                        tint = ErrorColor(),
-                        size = 28.dp
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EditModelProfileDialog(
-    title: String,
-    initial: DesktopModelProfile,
-    onDismiss: () -> Unit,
-    onConfirm: (DesktopModelProfile) -> Unit
-) {
-    var name by remember { mutableStateOf(initial.name) }
-    var baseUrl by remember { mutableStateOf(initial.baseUrl) }
-    var model by remember { mutableStateOf(initial.model) }
-    var apiKey by remember { mutableStateOf(initial.apiKey) }
-    var supportsThinking by remember { mutableStateOf(initial.supportsThinking) }
-    var supportsVision by remember { mutableStateOf(initial.supportsVision) }
-    var temperature by remember { mutableStateOf(initial.temperature.toFloat()) }
-    var selectedPresetId by remember { mutableStateOf<String?>(null) }
-    val isImageModel = initial.kind == "image"
-
-    GlassDialog(
-        title = title,
-        onDismiss = onDismiss,
-        width = 640.dp,
-        content = {
-            Column(
-                Modifier.heightIn(max = 560.dp).verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                if (isImageModel) {
-                    // ===== 文生图模型：只填 名称 / 接口地址 / 模型名 / Key =====
-                    Text(
-                        "文生图模型走 /images/generations 接口，不参与对话。",
-                        fontSize = 12.sp, color = TextSecondary()
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    GlassTextField(name, { name = it }, label = "显示名称", placeholder = "例如：豆包生图")
-                    GlassTextField(
-                        baseUrl, { baseUrl = it },
-                        label = "接口地址",
-                        placeholder = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
-                    )
-                    GlassTextField(
-                        model, { model = it },
-                        label = "模型名",
-                        placeholder = "doubao-seedream-5.0-pro"
-                    )
-                    GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...")
-                } else {
-                    // ===== 对话模型 =====
-                    Text("快速填充预设", fontSize = 12.sp, color = TextSecondary())
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        BUILTIN_MODEL_PRESETS.forEach { p ->
-                            val sel = selectedPresetId == p.id
-                            PresetChip(p, sel, Modifier.weight(1f)) {
-                                selectedPresetId = p.id
-                                if (name.isBlank()) name = p.name
-                                baseUrl = p.baseUrl
-                                model = p.model
-                            }
-                        }
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-                    GlassTextField(name, { name = it }, label = "显示名称", placeholder = "例如：DeepSeek")
-                    GlassTextField(baseUrl, { baseUrl = it }, label = "Base URL", placeholder = "https://.../v1/chat/completions")
-                    GlassTextField(model, { model = it }, label = "模型名", placeholder = "deepseek-chat")
-                    GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...")
-                    GlassSwitchRow(
-                        title = "支持深度思考",
-                        subtitle = "关闭后聊天页不显示「深度思考」开关（如 DeepSeek-V3 非思考版）",
-                        checked = supportsThinking
-                    ) { supportsThinking = it }
-                    GlassSwitchRow(
-                        title = "支持图片输入（多模态）",
-                        subtitle = "关闭后禁用「截图」「查看图片」工具，并拒绝手动发送的图片",
-                        checked = supportsVision
-                    ) { supportsVision = it }
-
-                    // 【新增】采样温度
-                    Column(Modifier.fillMaxWidth()) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("采样温度", fontSize = 13.sp, color = TextPrimary())
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                String.format(java.util.Locale.US, "%.2f", temperature),
-                                fontSize = 13.sp, color = AccentColor(), fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                        Text(
-                            "越低越稳定（适合调工具），越高越有创意（适合写作）。默认 0.1",
-                            fontSize = 11.sp, color = TextSecondary()
-                        )
-                        Slider(
-                            value = temperature,
-                            onValueChange = { temperature = it },
-                            valueRange = 0f..1.5f,
-                            steps = 29,
-                            colors = SliderDefaults.colors(
-                                thumbColor = AccentColor(),
-                                activeTrackColor = AccentColor(),
-                                inactiveTrackColor = CardStrongColor()
-                            )
-                        )
-                    }
-                }
-            }
-        },
-        actions = {
-            TextButton(onClick = onDismiss) { Text("取消", color = TextSecondary()) }
-            TextButton(onClick = {
-                if (name.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank()) {
-                    onConfirm(
-                        initial.copy(
-                            name = name.trim(), baseUrl = baseUrl.trim(),
-                            model = model.trim(), apiKey = apiKey.trim(),
-                            supportsThinking = supportsThinking,
-                            supportsVision = supportsVision,
-                            temperature = temperature.toDouble(),
-                            kind = initial.kind
-                        )
-                    )
-                }
-            }) { Text("保存", color = AccentColor(), fontWeight = FontWeight.SemiBold) }
-        }
-    )
-}
-
-@Composable
-private fun PresetChip(
+internal fun PresetChip(
     preset: ModelPreset,
     selected: Boolean,
     modifier: Modifier = Modifier,
@@ -1886,9 +1381,7 @@ private fun PresetChip(
     }
 }
 
-// ============================================================
 // Theme / Prompt 选项
-// ============================================================
 
 @Composable
 private fun RowScope.ThemeOption(
@@ -1936,9 +1429,7 @@ private fun RowScope.PromptModeOption(
     }
 }
 
-// ============================================================
 // 临时文件清理
-// ============================================================
 
 @Composable
 private fun TempCleanupSection(
@@ -2051,3 +1542,5 @@ private fun RowScope.TempCleanupOption(
         )
     }
 }
+
+// 修改历史 + 一键回档（已移到聊天页 ChatPage 底栏）

@@ -94,7 +94,7 @@ object McpManager {
      */
     fun allTools(): List<Triple<String, String, McpClient.McpToolInfo>> {
         val out = mutableListOf<Triple<String, String, McpClient.McpToolInfo>>()
-        // 【缓存关键】用 sortedClients() 而非 clients.values，保证顺序稳定
+        // 用 sortedClients() 而非 clients.values，保证顺序稳定
         sortedClients().forEach { c ->
             if (c.state.value is McpClient.State.Ready) {
                 c.tools.value.forEach { t ->

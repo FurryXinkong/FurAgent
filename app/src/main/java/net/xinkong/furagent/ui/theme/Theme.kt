@@ -16,9 +16,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 
-// ============================================================
 // Light 色板
-// ============================================================
 private val LightColors = lightColorScheme(
     primary = LightPrimary,
     onPrimary = LightOnPrimary,
@@ -55,9 +53,7 @@ private val LightColors = lightColorScheme(
     scrim = Color(0xFF000000)
 )
 
-// ============================================================
 // Dark 色板
-// ============================================================
 private val DarkColors = darkColorScheme(
     primary = DarkPrimary,
     onPrimary = DarkOnPrimary,
@@ -95,16 +91,14 @@ private val DarkColors = darkColorScheme(
 )
 
 private val AppShapes = Shapes(
-    extraSmall = RoundedCornerShape(8.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(28.dp)
+    extraSmall = RoundedCornerShape(AppRadius.XS),
+    small = RoundedCornerShape(AppRadius.SM),
+    medium = RoundedCornerShape(AppRadius.MD),
+    large = RoundedCornerShape(AppRadius.LG),
+    extraLarge = RoundedCornerShape(AppRadius.XL)
 )
 
-// ============================================================
 // 颜色插值
-// ============================================================
 private fun lerpColor(a: Color, b: Color, t: Float): Color {
     val tt = t.coerceIn(0f, 1f)
     return Color(
@@ -157,9 +151,7 @@ private fun lerpColorScheme(light: ColorScheme, dark: ColorScheme, t: Float): Co
     )
 }
 
-// ============================================================
 // 主题
-// ============================================================
 @Composable
 fun FurAgentTheme(
     themeMode: String = "system",
@@ -194,7 +186,7 @@ fun FurAgentTheme(
     MaterialTheme(
         colorScheme = colorScheme,
         shapes = AppShapes,
-        typography = Typography,
+        typography = rememberMiSansTypography(),
         content = content
     )
 }

@@ -45,7 +45,6 @@ class AndroidToolHost(
         return result.resolved
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared PathAlias
     private fun expandAlias(path: String): String =
         net.xinkong.furagent.shared.util.PathAlias.expandAndroid(path, sdcardPath)
 
@@ -135,9 +134,7 @@ class AndroidToolHost(
         }
     }
 
-    // ============================================================
     // 回收站
-    // ============================================================
 
     /** 回收站根目录：app 私有目录下的 temp/trash */
     private val trashRoot: File by lazy {
@@ -216,16 +213,12 @@ class AndroidToolHost(
         }
     }
 
-    override fun formatSize(bytes: Long): String = when {
-        bytes < 1024 -> "${bytes}B"
-        bytes < 1024 * 1024 -> String.format(Locale.US, "%.1fKB", bytes / 1024.0)
-        bytes < 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1fMB", bytes / 1024.0 / 1024.0)
-        else -> String.format(Locale.US, "%.1fGB", bytes / 1024.0 / 1024.0 / 1024.0)
-    }
+    // 【P1-11】统一到 shared/util/Format.formatFileSize
+    // 原来 host 版是 %.1fGB，shared 版是 %.2fGB，同一个文件在两个位置显示不同精度。
+    override fun formatSize(bytes: Long): String =
+        net.xinkong.furagent.shared.util.formatFileSize(bytes)
 
-    // ============================================================
     // 代码导航（实现共用 ToolCodeNav）
-    // ============================================================
 
     override suspend fun readTextLines(path: String, offset: Int, limit: Int): List<TextLine>? =
         ToolCodeNav.readTextLines(path, offset, limit)
@@ -245,9 +238,7 @@ class AndroidToolHost(
         root, keyword, regex, nameGlob, maxResults, maxFileSize, contextLines
     ) { msg -> ToolLogger.log("ToolHost", msg) }
 
-    // ============================================================
     // KV 存储（env_ 前缀）
-    // ============================================================
 
     override suspend fun kvGet(key: String): String? = withContext(Dispatchers.IO) {
         envPrefs.getString("env_$key", null)

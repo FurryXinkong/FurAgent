@@ -625,7 +625,6 @@ object FfmpegTools {
         }
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared CommandLine，这里只转发
     private fun parseCommandLine(cmd: String): List<String> =
         net.xinkong.furagent.shared.util.CommandLine.parse(cmd)
 

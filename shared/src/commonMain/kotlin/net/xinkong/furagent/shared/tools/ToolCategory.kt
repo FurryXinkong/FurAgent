@@ -135,7 +135,7 @@ object ToolCategory {
 
         // 系统
         "time", "calculate", "convert", "statistics", "text", "json",
-        "env_store", "sleep",
+        "env_store", "sleep", "run_sub_session", "sub_session",
         "app", "device", "calendar", "schedule", "workflow",
         "execute_shell", "execute_command", "set_alarm", "get_location",
         "add_contact", "notifications", "open_url", "apps" -> "system"

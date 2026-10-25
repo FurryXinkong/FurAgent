@@ -21,7 +21,7 @@ class DesktopToolHost : ToolHost {
         File(dir, "env.json")
     }
 
-    // 【修复 3】env.json 读写的串行保护。
+    // env.json 读写的串行保护。
     // 原来读和写都无锁，两个协程同时 kvSet 会互踩同一个 .tmp 文件。
     private val envFileLock = Any()
 
@@ -35,11 +35,6 @@ class DesktopToolHost : ToolHost {
             val home = System.getProperty("user.home") ?: return null
             val expanded = if (t.startsWith("~")) home + t.substring(1) else t
 
-            // 【修复】别名支持“别名/子路径”形式。
-            // 原来用 when (expanded.lowercase()) 全等匹配，
-            // 导致“桌面/xxx.docx”不匹配“桌面”，落到 else 后被当成相对路径，
-            // 相对化到进程 CWD（如 desktopApp/桌面/xxx.docx）。
-            // 现在先取第一段做别名展开，剩下的拼回去。
             val aliased = expandAlias(expanded, home)
 
             try {
@@ -60,7 +55,6 @@ class DesktopToolHost : ToolHost {
         }
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared PathAlias
     private fun expandAlias(path: String, home: String): String =
         net.xinkong.furagent.shared.util.PathAlias.expandDesktop(path, home)
 
@@ -149,9 +143,7 @@ class DesktopToolHost : ToolHost {
         }
     }
 
-    // ============================================================
     // 回收站
-    // ============================================================
 
     /** 回收站根目录：~/.furagent/temp/trash */
     private val trashRoot: File by lazy {
@@ -225,16 +217,12 @@ class DesktopToolHost : ToolHost {
         }
     }
 
-    override fun formatSize(bytes: Long): String = when {
-        bytes < 1024 -> "${bytes}B"
-        bytes < 1024 * 1024 -> String.format(Locale.US, "%.1fKB", bytes / 1024.0)
-        bytes < 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1fMB", bytes / 1024.0 / 1024.0)
-        else -> String.format(Locale.US, "%.1fGB", bytes / 1024.0 / 1024.0 / 1024.0)
-    }
+    // 【P1-11】统一到 shared/util/Format.formatFileSize
+    // 原来 host 版是 %.1fGB，shared 版是 %.2fGB，同一个文件在两个位置显示不同精度。
+    override fun formatSize(bytes: Long): String =
+        net.xinkong.furagent.shared.util.formatFileSize(bytes)
 
-    // ============================================================
     // 代码导航（实现共用 ToolCodeNav）
-    // ============================================================
 
     override suspend fun readTextLines(path: String, offset: Int, limit: Int): List<TextLine>? =
         ToolCodeNav.readTextLines(path, offset, limit)
@@ -254,9 +242,7 @@ class DesktopToolHost : ToolHost {
         root, keyword, regex, nameGlob, maxResults, maxFileSize, contextLines
     ) { msg -> ToolLogger.log("ToolHost", msg) }
 
-    // ============================================================
     // KV 存储（全部经 envFileLock 串行化）
-    // ============================================================
 
     override suspend fun kvGet(key: String): String? = withContext(Dispatchers.IO) {
         try {

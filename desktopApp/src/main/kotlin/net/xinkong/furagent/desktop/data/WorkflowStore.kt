@@ -7,14 +7,12 @@ import org.json.JSONObject
 import java.io.File
 import java.util.*
 
-// 【冗余清理 Batch 13】Workflow / WorkflowStep 的 typealias 已集中到 DesktopSession.kt。
 
 object WorkflowStore {
 
     private fun file(): File = File(DesktopPaths.rootDir(), "workflows.json")
 
     private fun atomicWrite(target: File, content: String) {
-        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
 

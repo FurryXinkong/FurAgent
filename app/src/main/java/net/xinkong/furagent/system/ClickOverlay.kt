@@ -82,11 +82,11 @@ object ClickOverlay {
         private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = dpLocal(4f)
-            color = 0xFF5A9BFF.toInt()
+            color = 0xFF8B93FF.toInt()
         }
         private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
-            color = 0xFF5A9BFF.toInt()
+            color = 0xFF8B93FF.toInt()
         }
 
         private var cx = 0f

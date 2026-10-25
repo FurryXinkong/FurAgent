@@ -36,9 +36,7 @@ object MediaTools {
         else -> "未实现的媒体工具：$name"
     }
 
-    // ========================================================
     // ffmpeg
-    // ========================================================
     private suspend fun doFfmpeg(args: JSONObject, settings: AppSettings): String {
         val mode = args.optString("mode", "").lowercase()
         return when (mode) {
@@ -573,8 +571,8 @@ object MediaTools {
                 val dur = duration.ifBlank { "2" }
                 val f = fps.ifBlank { "25" }
                 val inputs = files.joinToString(" ") { "-loop 1 -t $dur -i \"$it\"" }
-                val concatFilter = files.indices.joinToString("") { "[$it:v]" } + "concat=n=${files.size}:v=1:a=0[v]"
-                "$inputs -filter_complex \"$concatFilter\" -map \"[v]\" -vf \"fps=$f\" $encVideo -pix_fmt yuv420p \"$output\""
+                val concatFilter = files.indices.joinToString("") { "[$it:v]" } + "concat=n=${files.size}:v=1:a=0,fps=$f[v]"
+                "$inputs -filter_complex \"$concatFilter\" -map \"[v]\" $encVideo -pix_fmt yuv420p \"$output\""
             }
 
             "info_probe" -> null
@@ -588,7 +586,6 @@ object MediaTools {
         }
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared CommandLine，这里只转发
     private fun parseCommandLine(cmd: String): List<String> =
         net.xinkong.furagent.shared.util.CommandLine.parse(cmd)
 
@@ -649,9 +646,7 @@ object MediaTools {
         return "已加载图片并附加到下一轮上下文：$path（${formatFileSize(size)}）"
     }
 
-    // ========================================================
     // media_session
-    // ========================================================
 
     private fun doMediaSession(args: JSONObject, context: Context): String {
         val op = args.optString("op", "").lowercase()
@@ -675,7 +670,7 @@ object MediaTools {
         }
     }
 
-    private fun hasNotificationListenerAccess(context: Context): Boolean {
+    fun hasNotificationListenerAccess(context: Context): Boolean {
         return try {
             val flat = android.provider.Settings.Secure.getString(
                 context.contentResolver,

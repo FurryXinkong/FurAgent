@@ -59,7 +59,7 @@ object TokenStats {
     private fun persist() {
         // 高频调用路径，SharedPreferences 几乎不会失败，保留静默
         try {
-            val ctx = AppContextHolder.get() ?: return
+            val ctx = net.xinkong.furagent.shared.util.AndroidContextHolder.get() ?: return
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
                 putLong(KEY_PROMPT, _prompt)
                     .putLong(KEY_COMPLETION, _completion)
@@ -74,15 +74,4 @@ object TokenStats {
         _total = 0
         persist()
     }
-}
-
-object AppContextHolder {
-    @Volatile
-    private var ctx: Context? = null
-
-    fun set(c: Context) {
-        ctx = c.applicationContext
-    }
-
-    fun get(): Context? = ctx
 }

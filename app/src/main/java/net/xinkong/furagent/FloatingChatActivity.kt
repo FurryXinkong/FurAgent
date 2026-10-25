@@ -1,3 +1,4 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
 package net.xinkong.furagent
 
 import android.content.Context
@@ -16,15 +17,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Mic
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -43,12 +40,15 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import net.xinkong.furagent.core.AgentLogger
+import kotlinx.coroutines.flow.debounce
 import net.xinkong.furagent.core.AgentRunner
 import net.xinkong.furagent.data.*
 import net.xinkong.furagent.system.notifyToast
-import net.xinkong.furagent.ui.ChatBubble
+import net.xinkong.furagent.ui.WorkProcessItemList
+import net.xinkong.furagent.ui.ChipSurface
 import net.xinkong.furagent.ui.ImageViewerDialog
 import net.xinkong.furagent.ui.theme.FurAgentTheme
+import net.xinkong.furagent.ui.theme.AppRadius
 import java.util.*
 
 /**
@@ -123,9 +123,15 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
     val listState = rememberLazyListState()
 
     // 读取 MainActivity 当前会话 ID（SharedPreferences 桥接）
+    // 【健壮性】读到的 ID 必须先验证还在 SessionStore 里。
+    // 用户可能在主界面删除了会话，或者 MainActivity 崩溃后残留旧值。
+    // 不验证的话，发消息会写入一个已删除的会话，SessionStore.save 会创建一个
+    // 孤立会话（sessionList 里看不到），用户完全不知道消息去哪了。
     val currentSessionId = remember {
-        prefs.getString("current_session_id", null)
-            ?: SessionStore.list(context).firstOrNull()?.id
+        val saved = prefs.getString("current_session_id", null)
+        val savedExists = saved != null && SessionStore.load(context, saved) != null
+        if (savedExists) saved
+        else SessionStore.list(context).firstOrNull()?.id
     }
 
     var history by remember {
@@ -137,7 +143,7 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
     }
 
     // 实时监听 AgentRunner 状态，更新历史
-    val snapshot by AgentRunner.snapshot.collectAsState()
+    val snapshot by AgentRunner.snapshot.debounce(32).collectAsState(initial = AgentRunner.snapshot.value)
     LaunchedEffect(snapshot.history, snapshot.sessionId) {
         if (snapshot.history.isNotEmpty() && snapshot.sessionId == currentSessionId) {
             history = snapshot.history
@@ -290,7 +296,7 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
             Column(
                 modifier = Modifier
                     .padding(12.dp)
-                    .clip(RoundedCornerShape(24.dp))
+                    .clip(RoundedCornerShape(AppRadius.XL))
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.98f))
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
@@ -331,21 +337,21 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 260.dp)
-                            .clip(RoundedCornerShape(14.dp))
+                            .clip(RoundedCornerShape(AppRadius.MD_MINUS))
                             .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         // 【体验优化 B3】从 50 增加到 200，与主界面更接近。
+                        // 改用 WorkProcessItemList，与主界面一致：
+                        // 工具调用渲染为树形紧凑行，不再是大卡片。
                         val shown = history.takeLast(200)
-                        items(shown, key = { it.id }) { msg ->
-                            if (msg.type != "system_note") {
-                                ChatBubble(
-                                    message = msg,
-                                    onLongPress = { },
-                                    onImageClick = { path -> viewingImage = path }
-                                )
-                            }
+                        item {
+                            WorkProcessItemList(
+                                items = shown.filter { it.type != "system_note" },
+                                onMessageLongPress = { },
+                                onImageClick = { path -> viewingImage = path }
+                            )
                         }
                     }
                 }
@@ -355,13 +361,13 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
                     modifier = Modifier
                         .fillMaxWidth()
                         .heightIn(min = 52.dp, max = 140.dp)
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(RoundedCornerShape(AppRadius.MD))
                         .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
                         .border(
                             width = 1.dp,
                             color = if (inputFocused) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.outlineVariant,
-                            shape = RoundedCornerShape(16.dp)
+                            shape = RoundedCornerShape(AppRadius.MD)
                         ),
                     contentAlignment = Alignment.TopStart
                 ) {
@@ -397,13 +403,13 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    QuickChip("截图") {
+                    ChipSurface("截图", selected = false) {
                         userInput = "截图看看当前屏幕"
                     }
-                    QuickChip("读通知") {
+                    ChipSurface("读通知", selected = false) {
                         userInput = "读一下最近的通知"
                     }
-                    QuickChip("主界面") {
+                    ChipSurface("主界面", selected = false) {
                         try {
                             val intent = Intent(context, MainActivity::class.java).apply {
                                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -443,21 +449,5 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
 
     viewingImage?.let { path ->
         ImageViewerDialog(path = path, onDismiss = { viewingImage = null })
-    }
-}
-
-@Composable
-private fun QuickChip(text: String, onClick: () -> Unit) {
-    Surface(
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        shape = RoundedCornerShape(12.dp),
-        onClick = onClick
-    ) {
-        Text(
-            text,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-            color = MaterialTheme.colorScheme.onSurface
-        )
     }
 }

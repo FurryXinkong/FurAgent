@@ -212,9 +212,7 @@ class ScreenAccessibilityService : AccessibilityService() {
         // nothing
     }
 
-    // ============================================================
     // dumpScreen
-    // ============================================================
 
     private fun dumpScreenInternal(maxDepth: Int, maxNodes: Int): ScreenDump {
         val root = rootInActiveWindow
@@ -259,28 +257,19 @@ class ScreenAccessibilityService : AccessibilityService() {
     /**
      * 递归收集节点。
      *
-     * 【v3 修正】
+     * 【v4：不做豁免】
      *
-     * 三条判据（A/B/C/D 分支）：
-     *   mustKeep    = 有 text/contentDesc/hintText，或可交互（含 checked/selected）
-     *   hasId       = 有 resourceId
-     *   hasChildren = 有有意义子孙
+     * 除 maxDepth / maxNodes 两个总量上限外，不丢弃任何节点：
+     *  - 不可见节点照常保留（UiTreeFormatter 标记 (invisible)，AI 自行判断）
+     *  - 零尺寸节点照常保留
+     *  - 无 text / 无 id 的叶子照常保留
      *
-     *  A. mustKeep → 保留
-     *  B. 非 mustKeep + 有子孙 → 穿透
-     *  C. 非 mustKeep + 无子孙 + 有 id → 保底保留
-     *  D. 非 mustKeep + 无子孙 + 无 id → 丢
+     * 原先的判据里「不可见丢子树 / 零尺寸丢 / 无 id 丢」这三类豁免
+     * 会因 isVisibleToUser 误报（转场动画、多窗口、alpha 待淡入）或
+     * 元素尚未布局完成而误杀，让 AI 变瞎子，已全部去除。
      *
-     * 【修正点】
-     *
-     * 1. 不可见元素：不再一刀切丢，先看子孙有没有可见的
-     *    isVisibleToUser 会误报（转场动画 / 多窗口 / alpha=0 待淡入），
-     *    原逻辑会把误报的容器整棵子树丢掉 → 偶发"屏幕无元素"。
-     *
-     * 2. 不可见时的 mustKeep 判据：必须用严格版本（不算 contentDesc）
-     *    否则 Overflow 菜单 / 未选中 tab 的图标按钮都被保下来。
-     *
-     * 3. 穿透 group 分配：上提的子孙带同一个 groupId
+     * 仅保留穿透：无 text 无交互的容器外壳丢自己、子孙上提并带同一 groupId，
+     * 信息零丢失（这是层级压平，不是豁免）。
      *
      * @param path 从 root 到当前节点的 child 索引数组；root 的 path 为空。
      * @param seq 全局自增序号数组（Kotlin 没有闭包可变变量捕获，用数组绕）
@@ -318,8 +307,6 @@ class ScreenAccessibilityService : AccessibilityService() {
         val contentDesc = node.contentDescription?.toString() ?: ""
         val hintText = node.hintText?.toString() ?: ""
         val visible = node.isVisibleToUser
-        // 【改】零尺寸判定：<=1 也算零（1px 分割线 / 未布局元素）
-        val isZeroSize = rect.width() <= 1 || rect.height() <= 1
 
         // 递归子节点（先递归，拿到 childNodes 后再判自己）
         val childNodes = mutableListOf<UiNode>()
@@ -338,9 +325,7 @@ class ScreenAccessibilityService : AccessibilityService() {
             childNodes.addAll(childResult)
         }
 
-        // ============================================================
         // 三判据
-        // ============================================================
         val hasText = text.isNotBlank() || contentDesc.isNotBlank() || hintText.isNotBlank()
 
         // 【改】checked / selected 也算交互性。
@@ -353,58 +338,22 @@ class ScreenAccessibilityService : AccessibilityService() {
 
         val mustKeepNormal = hasText || isInteractive
 
-        // 【改】不可见时的严格判据：contentDesc 不算数。
-        // 大量不可见元素（Overflow 菜单、未选中 tab、ViewPager 预加载页）
-        // 的图标按钮都带 contentDesc，会被 mustKeepNormal 误保下来。
-        // 不可见时只信"有 text / hintText / 可编辑"这类强信号。
-        val mustKeepIfInvisible = text.isNotBlank() || hintText.isNotBlank() || node.isEditable
+        // 【不做豁免】原先对「不可见 / 零尺寸 / 无文本无 id」的节点会整棵丢弃。
+        // 这类过滤会误杀（isVisibleToUser 在转场动画、多窗口、alpha 待淡入时误报；
+        // 未布局完成的元素零尺寸），让 AI 变瞎子。
+        // 现在除 maxDepth / maxNodes 上限外不做任何丢弃：
+        // 不可见节点照常保留，由 UiTreeFormatter 标记 (invisible)，AI 自行判断。
 
-        // ============================================================
-        // 【改】不可见元素：不再一刀切丢子树
-        //
-        // 原逻辑：!visible && !mustKeep → 丢整棵子树
-        // 问题：isVisibleToUser 会误报（转场动画 / 多窗口 / alpha=0 待淡入），
-        // 一个恰好 !mustKeep 的容器被误判后整棵子树消失 → 偶发"屏幕无元素"。
-        //
-        // 新逻辑：先看子孙里有没有 visible 的，有就上提，没有才丢。
-        // ============================================================
-        if (!visible) {
-            if (!mustKeepIfInvisible) {
-                val visibleChildren = childNodes.filter { it.visible }
-                return if (visibleChildren.isNotEmpty()) {
-                    assignGroup(visibleChildren, inheritedGroup, groupCounter)
-                } else emptyList()
-            }
-            // 走到这里：!visible 但有强信号（text/hintText/editable）→ 走正常保留
-        } else {
-            // visible == true
-            if (isZeroSize && !mustKeepNormal) {
-                // 零尺寸但 visible（罕见：尚未布局完成的元素）
-                val visibleChildren = childNodes.filter { it.visible }
-                return if (visibleChildren.isNotEmpty()) {
-                    assignGroup(visibleChildren, inheritedGroup, groupCounter)
-                } else emptyList()
-            }
-        }
-
-        // ============================================================
-        // 穿透 / 保底保留
-        // ============================================================
+        // 穿透（仅丢无信息的容器外壳，子孙全部保留上提）
         if (!mustKeepNormal) {
             if (childNodes.isNotEmpty()) {
-                // B 分支：有子孙 → 穿透（丢弃自己，子孙上提），同时分配 group
+                // B 分支：有子孙 → 穿透（丢自己，子孙上提），同时分配 group
                 return assignGroup(childNodes, inheritedGroup, groupCounter)
             }
-            if (resourceId.isBlank()) {
-                // D 分支：无子孙无 id → 丢
-                return emptyList()
-            }
-            // C 分支：无子孙但有 id → 保底保留（落到下面正常保留流程）
+            // 叶子节点也保留（原先无 id 会丢，属豁免，现去除）
         }
 
-        // ============================================================
         // 正常保留
-        // ============================================================
         val mySeq = seq[0]++
         val nodeId = mySeq.toString()
 
@@ -505,9 +454,7 @@ class ScreenAccessibilityService : AccessibilityService() {
         else -> null
     }
 
-    // ============================================================
     // findNodes
-    // ============================================================
 
     private suspend fun findNodesInternal(query: UiQuery): List<UiNode> =
         withContext(Dispatchers.Main.immediate) {
@@ -566,9 +513,7 @@ class ScreenAccessibilityService : AccessibilityService() {
         return true
     }
 
-    // ============================================================
     // performAction
-    // ============================================================
 
     private suspend fun performActionInternal(
         nodeId: String,
@@ -690,9 +635,7 @@ class ScreenAccessibilityService : AccessibilityService() {
         return cur
     }
 
-    // ============================================================
     // dispatchGesture
-    // ============================================================
 
     private suspend fun dispatchGestureInternal(gesture: UiGesture): ActionResult =
         withContext(Dispatchers.Main.immediate) {
@@ -756,9 +699,7 @@ class ScreenAccessibilityService : AccessibilityService() {
             else ActionResult.fail("手势被系统取消或未派发")
         }
 
-    // ============================================================
     // globalAction
-    // ============================================================
 
     private suspend fun globalActionInternal(action: GlobalAction): ActionResult =
         withContext(Dispatchers.Main.immediate) {

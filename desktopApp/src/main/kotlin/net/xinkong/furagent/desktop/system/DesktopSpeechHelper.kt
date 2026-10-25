@@ -46,9 +46,7 @@ object DesktopSpeechHelper {
 
     @Volatile private var availableCache: Boolean? = null
 
-    // ============================================================
     // 固定名脚本文件
-    // ============================================================
 
     private val psLock = Any()
 
@@ -62,19 +60,13 @@ object DesktopSpeechHelper {
         File(DesktopPaths.tempDir(), "furagent_speak.ps1")
     }
 
-    // ============================================================
     // 探测
-    // ============================================================
 
     fun isAvailable(): Boolean {
         availableCache?.let { return it }
         val result = checkAvailable()
         availableCache = result
         return result
-    }
-
-    fun clearAvailabilityCache() {
-        availableCache = null
     }
 
     private fun checkAvailable(): Boolean {
@@ -99,9 +91,7 @@ object DesktopSpeechHelper {
         }
     }
 
-    // ============================================================
     // 朗读
-    // ============================================================
 
     fun speak(text: String): Boolean {
         if (!isWindows()) {
@@ -246,9 +236,7 @@ object DesktopSpeechHelper {
     private fun isWindows(): Boolean =
         System.getProperty("os.name").lowercase(Locale.ROOT).contains("win")
 
-    // ============================================================
     // 写入朗读脚本（固定名，持久，由 TempCleaner 按时间清）
-    // ============================================================
 
     private fun writeSpeakerScript(): File {
         synchronized(speechPsLock) {

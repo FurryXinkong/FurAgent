@@ -1,10 +1,12 @@
 package net.xinkong.furagent.desktop.tools
 
+import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.DesktopPaths
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.tools.ToolResult
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -48,14 +50,22 @@ object CodeEditTools {
                     "每多拆一次调用，就要重发一遍完整上下文，token 成本成倍增加；能一轮改完就必须一轮改完。" +
                     "files 是数组，每项含 path 和 edits；edits 是数组，每项含 old（原文锚点）和 new（替换后）。" +
                     "每个 old 必须在文件中恰好出现 1 次，否则该文件整体拒绝（不会部分修改）。" +
+                    "【按行号改】已知行号时优先用 {\"line_start\":起行,\"line_end\":止行,\"new\":\"替换后\"}（1起、含两端），" +
+                    "不需要手抄原文锚点——从 read_file / list_files 拿到的行号可直接用，不会因错一个字符整批回滚。" +
+                    "只改一行可只给 line_start（line_end 缺省等于 line_start）。" +
+                    "【注意】line_start/line_end 是替换整段，不是插入。要在某行前/后插入新代码，" +
+                    "用 {\"insert_before_line\":行号,\"new\":\"新代码\"} 或 {\"insert_after_line\":行号,\"new\":\"新代码\"}，原行不动。" +
+                    "【删大段代码】用 edits 项 {\"delete_start\":起行,\"delete_end\":止行}（1 起、含两端），" +
+                    "比用 old 锚点逐字复制整段可靠得多；可与 old/new、line_start/line_end 混用。" +
+                    "【执行顺序】old/new 与 line_start/line_end 先按顺序应用；delete_* 最后按原行号从后往前执行。" +
                     "新建文件：该项加 \"create\": true，且 edits 只放 1 项，old 留空，new 为整个文件内容。" +
                     "可选 verify 数组做应用后校验：[{\"type\":\"contains\"|\"not_contains\",\"path\":\"...\",\"text\":\"...\"}]，校验失败自动回滚。" +
                     "所有文件全部成功才写盘，任一失败则全部回滚。" +
                     "改前会自动备份到 ~/.furagent/exports/code_backup/。" +
                     "返回内容包含每个改动点的 unified diff（@@ -原行 +新行 @@ 与前后行），可直接自检，不用再读回文件。" +
-                    "锚点找不到时会返回最相似位置及前后上下文，据此修正锚点后重试。" +
+                    "锚点找不到时会返回最相似位置、前后上下文，以及【逐字符差异】（直接告诉你差在缩进还是内容），据此修正后重试。" +
                     "只做编辑，不做编译 / 语法检查 / 格式化。",
-            paramsSchema = """{"type":"object","properties":{"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"create":{"type":"boolean","description":"true 表示新建文件，此时 edits 只放 1 项，old 留空，new 为整个文件内容"},"edits":{"type":"array","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"}},"required":["old","new"]}}},"required":["path","edits"]}},"verify":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string","enum":["contains","not_contains"]},"path":{"type":"string"},"text":{"type":"string"}},"required":["type","path","text"]}},"diff":{"type":"boolean","description":"是否返回 diff，默认 true"}},"required":["files"]}"""
+            paramsSchema = """{"type":"object","properties":{"files":{"type":"array","description":"要修改的文件列表","items":{"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"create":{"type":"boolean","description":"true 表示新建文件，此时 edits 只放 1 项，old 留空，new 为整个文件内容"},"edits":{"type":"array","description":"改动列表","items":{"type":"object","properties":{"old":{"type":"string","description":"原文锚点，必须逐字符匹配（含缩进），且在文件中恰好出现 1 次"},"new":{"type":"string","description":"替换后的内容"},"delete_start":{"type":"integer","description":"按行号删除的起始行（1 起，含）。与 delete_end 配对使用，此时不要填 old/new/line_*"},"delete_end":{"type":"integer","description":"按行号删除的结束行（1 起，含）。与 delete_start 配对使用"},"line_start":{"type":"integer","description":"[推荐] 按行号替换的起始行（1 起，含）。不需要 old 锚点，直接用 read_file 拿到的行号"},"line_end":{"type":"integer","description":"按行号替换的结束行（1 起，含）。缺省等于 line_start；使用 line_start 时不需要填 old"},"insert_before_line":{"type":"integer","description":"在指定行之前插入 new（1 起），原行不动"},"insert_after_line":{"type":"integer","description":"在指定行之后插入 new（1 起），原行不动"}},"additionalProperties":false}}},"required":["path","edits"],"additionalProperties":false}},"verify":{"type":"array","description":"应用后校验","items":{"type":"object","properties":{"type":{"type":"string","enum":["contains","not_contains"]},"path":{"type":"string"},"text":{"type":"string"}},"required":["type","path","text"],"additionalProperties":false}},"diff":{"type":"boolean","description":"是否返回 diff，默认 true"}},"required":["files"],"additionalProperties":false}"""
         )
     )
 
@@ -69,11 +79,49 @@ object CodeEditTools {
         return doEdit(args)
     }
 
-    // ============================================================
     // 实现
-    // ============================================================
 
     private data class EditOp(val old: String, val new: String)
+
+    /**
+     * 按行号删除。
+     *
+     * 删几百行代码时，用 old 锚点要逐字复制整段，极易失败；
+     * 用行号区间则稳定得多。
+     *
+     * @param start 起始行（1 起，含）
+     * @param end   结束行（1 起，含）
+     */
+    private data class DeleteOp(val start: Int, val end: Int)
+
+    /**
+     * 按行号替换。
+     *
+     * 【为什么需要】已知行号时还要逐字拄 old 锚点是最大的浪费源：
+     * 错一个字符、少一层缩进就整批回滚，而且每次重试都要重发全文。
+     * read_file / list_files 本来就给行号，直接拿来替换即可。
+     *
+     * @param start 起始行（1 起，含）
+     * @param end   结束行（1 起，含）
+     * @param new   替换后的内容（可为空 = 删除）
+     */
+    /** 行号类操作的类型。 */
+    private enum class LineMode { REPLACE, INSERT_BEFORE, INSERT_AFTER }
+
+    private data class LineOp(
+        val start: Int,
+        val end: Int,
+        val new: String,
+        val mode: LineMode = LineMode.REPLACE
+    )
+
+    /** 行号区间操作（替换/插入/删除）的统一表示，用于从后往前应用。 */
+    private data class LineSpan(
+        val start: Int,
+        val end: Int,
+        val newText: String,
+        val mode: LineMode = LineMode.REPLACE
+    )
 
     /**
      * 一处已应用的替换。
@@ -138,9 +186,7 @@ object CodeEditTools {
         file.writeText(if (hasBom) BOM + content else content, Charsets.UTF_8)
     }
 
-    // ============================================================
     // 锚点失败诊断
-    // ============================================================
 
     /**
      * 锚点找不到 / 不唯一时，输出足够多的上下文，让人（和模型）一眼看出差异。
@@ -176,7 +222,7 @@ object CodeEditTools {
         val top = cands.take(10)
 
         if (top.isEmpty()) {
-            sb.append("    ❌ 文件里没有相似行，可能整段不存在\n")
+            sb.append("    [错误] 文件里没有相似行，可能整段不存在\n")
             return sb.toString()
         }
 
@@ -199,6 +245,89 @@ object CodeEditTools {
                 sb.append("      ").append(marker).append(" L").append(idx.toString().padStart(4))
                     .append("| ").append(textLines[idx - 1].take(120)).append('\n')
             }
+            // 对最佳候选（ci==0）额外输出逐字符差异，
+            // 直接告诉模型是缩进差还是内容差，不用自己肉眼找。
+            if (ci == 0) {
+                val fileSlice = textLines.subList(ln - 1, minOf(total, ln - 1 + oldLinesRaw.size))
+                val hint = diffHint(oldLinesRaw, fileSlice, ln)
+                if (hint.isNotBlank()) {
+                    sb.append("\n    逐字符差异（候选 1）\n").append(hint)
+                }
+                // 直接给出可用的修改方式，避免模型照着差异手抄。
+                sb.append("\n    可直接用（候选 1 真实原文，L").append(ln)
+                    .append(" 起共 ").append(fileSlice.size).append(" 行）\n")
+                sb.append("    方式A 按行号改：{\"line_start\": ").append(ln)
+                    .append(", \"line_end\": ").append(ln + fileSlice.size - 1)
+                    .append(", \"new\": \"<替换内容>\"}\n")
+                sb.append("    方式B 继续用 old：把 old 整段换成下面这份原文：\n")
+                fileSlice.forEach { l -> sb.append("      |").append(l).append('\n') }
+            }
+        }
+        return sb.toString()
+    }
+
+    /** 把空白字符可见化，便于一眼看出缩进差异。 */
+    private fun visible(s: String): String = buildString {
+        for (c in s.take(160)) {
+            when (c) {
+                ' ' -> append('·')
+                '\t' -> append('→')
+                else -> append(c)
+            }
+        }
+        if (s.length > 160) append("…")
+    }
+
+    private fun visibleChar(c: Char): String = when (c) {
+        ' ' -> "空格"
+        '\t' -> "制表符"
+        '\n' -> "换行"
+        else -> c.toString()
+    }
+
+    /**
+     * 逐行对比锚点与候选，指出具体差在哪。
+     *
+     * 之前只给“最相似 3 处 + 前后 15 行”，模型得自己肉眼找差异，
+     * 经常看不出是缩进差 4 个空格还是多了个空行，反复重试。
+     */
+    private fun diffHint(oldLines: List<String>, fileLines: List<String>, fileStart: Int): String {
+        val sb = StringBuilder()
+        val n = minOf(oldLines.size, fileLines.size)
+        var firstDiff = -1
+        for (i in 0 until n) {
+            if (oldLines[i] != fileLines[i]) { firstDiff = i; break }
+        }
+        if (firstDiff < 0) {
+            if (oldLines.size != fileLines.size) {
+                sb.append("    行数不一致：锚点 ${oldLines.size} 行，文件对应位置 ${fileLines.size} 行\n")
+            }
+            return sb.toString()
+        }
+
+        val a = oldLines[firstDiff]
+        val b = fileLines[firstDiff]
+        sb.append("    首个差异在第 ").append(firstDiff + 1).append(" 行（文件 L")
+            .append(fileStart + firstDiff).append("）\n")
+
+        val kind = when {
+            a.trim() == b.trim() -> "缩进/空白不同（内容相同）"
+            a.trimStart() == b.trimStart() -> "行首缩进不同"
+            a.trimEnd() == b.trimEnd() -> "行尾空白不同"
+            else -> "内容不同"
+        }
+        sb.append("    差异类型：").append(kind).append('\n')
+        sb.append("    锚点行：").append(visible(a)).append('\n')
+        sb.append("    文件行：").append(visible(b)).append('\n')
+
+        val maxCmp = minOf(a.length, b.length)
+        var ci = 0
+        while (ci < maxCmp && a[ci] == b[ci]) ci++
+        if (ci < maxCmp || a.length != b.length) {
+            sb.append("    首个字符差异在第 ").append(ci + 1).append(" 列")
+            if (ci < a.length) sb.append("，锚点字符='").append(visibleChar(a[ci])).append('\'')
+            if (ci < b.length) sb.append("，文件字符='").append(visibleChar(b[ci])).append('\'')
+            sb.append('\n')
         }
         return sb.toString()
     }
@@ -223,10 +352,91 @@ object CodeEditTools {
         return 2.0 * lcs / (m + n)
     }
 
+    /**
+     * 把「顶层 path + edits」的单文件写法自动包成 files 数组。
+     *
+     * 只在语义完全确定时生效（顶层有 path 且有 edits），不猜其他形状。
+     * 返回 null 表示不是可安全纠正的形状，交给 [buildFilesDiagnosis] 报错。
+     */
+    private fun normalizeTopLevelSingleFile(args: JSONObject): JSONArray? {
+        val path = args.optString("path", "").trim()
+        if (path.isEmpty()) return null
+        // edits 可能在顶层，也可能只有单个 old/new
+        val topEdits = args.optJSONArray("edits")
+        val single = args.optJSONObject("edits")
+        val edits: JSONArray = when {
+            topEdits != null && topEdits.length() > 0 -> topEdits
+            single != null -> JSONArray().put(single)
+            args.has("old") || args.has("new") || args.has("line_start") ||
+                    args.has("delete_start") -> JSONArray().put(
+                JSONObject().apply {
+                    args.keys().forEach { k ->
+                        if (k != "path" && k != "create") put(k, args.opt(k))
+                    }
+                }
+            )
+            else -> return null
+        }
+        return JSONArray().put(
+            JSONObject().apply {
+                put("path", path)
+                if (args.has("create")) put("create", args.optBoolean("create", false))
+                put("edits", edits)
+            }
+        )
+    }
+
+    /**
+     * files 参数缺失/类型错误时的诊断信息。
+     *
+     * 之前只报“未提供 files（应为数组）”，
+     * 模型看不出是自己传了顶层 path 还是 JSON 结构错了，只能盲猜重试。
+     */
+    private fun buildFilesDiagnosis(args: JSONObject): String {
+        val sb = StringBuilder("files 参数无效。\n")
+        val keys = args.keys().asSequence().toList()
+        sb.append("收到的参数名：").append(if (keys.isEmpty()) "（无）" else keys.joinToString(", "))
+        sb.append('\n')
+
+        when {
+            args.has("path") -> {
+                sb.append("\n[错误] 检测到你传了顶层 `path`。code_edit 不支持单文件模式，必须包成数组：\n")
+                sb.append("{\"files\":[{\"path\":\"...\",\"edits\":[{\"old\":\"...\",\"new\":\"...\"}]}]}\n")
+            }
+            args.has("file") -> {
+                sb.append("\n[错误] 参数名应为 `files`（复数），不是 `file`。\n")
+            }
+            args.has("edits") -> {
+                sb.append("\n[错误] `edits` 必须放在 files 数组的每一项里，不能放顶层。\n")
+            }
+            args.opt("files") != null -> {
+                val v = args.opt("files")
+                sb.append("\n[错误] `files` 存在但类型不对（实际是 ").append(v?.javaClass?.simpleName).append("），必须是 JSON 数组。\n")
+            }
+            else -> {
+                sb.append("\n[错误] 完全没有 `files` 参数。\n")
+            }
+        }
+        sb.append("\n正确结构：\n")
+        sb.append("{\"files\":[{\"path\":\"文件路径\",\"edits\":[{\"old\":\"原文锚点\",\"new\":\"替换后\"}]}]}\n")
+        return sb.toString()
+    }
+
     private suspend fun doEdit(args: JSONObject): ToolResult = withContext(Dispatchers.IO) {
-        val filesArr = args.optJSONArray("files")
-            ?: return@withContext ToolResult.fail("未提供 files（应为数组）")
-        if (filesArr.length() == 0) return@withContext ToolResult.fail("files 为空")
+        // files 缺失时给出具体诊断，而不是笼统的“未提供 files”。
+        // 常见错误：
+        //   1) 顶层传了 path（单文件习惯），忘了包成 files 数组
+        //   2) files 传成了字符串（JSON 序列化错误）
+        //   3) 参数名拼错（file / edits）
+        // 【自动纠正单文件写法】
+        // 常见错：把 path / edits 直接放在顶层（write_file 的习惯）。
+        // 以前这种情况一律报「未提供 files」，模型只能盲猜重试，白白浪费一轮。
+        // 但顶层 path 的含义是完全确定的，没必要报错，直接包成 files 即可。
+        val filesArr = args.optJSONArray("files") ?: normalizeTopLevelSingleFile(args)
+        if (filesArr == null) {
+            return@withContext ToolResult.fail(buildFilesDiagnosis(args))
+        }
+        if (filesArr.length() == 0) return@withContext ToolResult.fail("files 为空数组，没有要改的内容")
 
         // ---------- 阶段 1：全部校验 + 在内存里算出结果，不碰磁盘 ----------
         val plans = mutableListOf<FilePlan>()
@@ -293,6 +503,15 @@ object CodeEditTools {
             }
 
             val ops = mutableListOf<EditOp>()
+            val delOps = mutableListOf<DeleteOp>()
+            val lineOps = mutableListOf<LineOp>()
+            // 行号类操作（line_* / insert_* / delete_*）的上限校验靠它。
+            // 插入允许落在最后一行之后（行数+1），所以这里给得宽松一点。
+            val fileLineCountHint = try {
+                file.readText(Charsets.UTF_8).count { it == '\n' }
+            } catch (_: Exception) {
+                Int.MAX_VALUE
+            }
             var opError = false
             for (j in 0 until editsArr.length()) {
                 val e = editsArr.optJSONObject(j)
@@ -301,10 +520,70 @@ object CodeEditTools {
                     opError = true
                     break
                 }
+                // 【插入】在某行前/后插入新代码，原行不动。
+                // 之前只能替换，想插一行得把目标行也写一遍，很容易误删原行。
+                if (e.has("insert_before_line") || e.has("insert_after_line")) {
+                    val before = e.has("insert_before_line")
+                    if (before && e.has("insert_after_line")) {
+                        errors.add("$pathStr：edits[$j] 不能同时给 insert_before_line 和 insert_after_line")
+                        opError = true
+                        break
+                    }
+                    val ln = if (before) e.optInt("insert_before_line", -1)
+                    else e.optInt("insert_after_line", -1)
+                    if (ln < 1 || ln > fileLineCountHint) {
+                        errors.add("$pathStr：edits[$j] 的 insert 行号无效（$ln，要求 1..$fileLineCountHint）")
+                        opError = true
+                        break
+                    }
+                    if (!e.has("new")) {
+                        errors.add("$pathStr：edits[$j] 用了 insert_* 但缺少 new")
+                        opError = true
+                        break
+                    }
+                    lineOps.add(
+                        LineOp(
+                            start = ln,
+                            end = ln,
+                            new = e.optString("new", ""),
+                            mode = if (before) LineMode.INSERT_BEFORE else LineMode.INSERT_AFTER
+                        )
+                    )
+                    continue
+                }
+                // 支持 line_start / line_end 按行号替换（不需要 old 锚点）
+                if (e.has("line_start")) {
+                    val s = e.optInt("line_start", -1)
+                    val en = e.optInt("line_end", s)
+                    if (s < 1 || en < s) {
+                        errors.add("$pathStr：edits[$j] 的 line_start/line_end 无效（line_start=$s, line_end=$en，要求 1 <= line_start <= line_end）")
+                        opError = true
+                        break
+                    }
+                    if (!e.has("new")) {
+                        errors.add("$pathStr：edits[$j] 用了 line_start 但缺少 new（删除请用 delete_start/delete_end）")
+                        opError = true
+                        break
+                    }
+                    lineOps.add(LineOp(s, en, e.optString("new", "")))
+                    continue
+                }
+                // 支持 delete_start / delete_end 按行号删除（扁平字段，避免嵌套 object 触发 schema 校验失败）
+                if (e.has("delete_start") || e.has("delete_end")) {
+                    val s = e.optInt("delete_start", -1)
+                    val en = e.optInt("delete_end", -1)
+                    if (s < 1 || en < s) {
+                        errors.add("$pathStr：edits[$j] 的 delete_start/delete_end 无效（delete_start=$s, delete_end=$en，要求 1 <= delete_start <= delete_end）")
+                        opError = true
+                        break
+                    }
+                    delOps.add(DeleteOp(s, en))
+                    continue
+                }
                 val old = e.optString("old", "")
                 val new = e.optString("new", "")
                 if (old.isEmpty()) {
-                    errors.add("$pathStr：edits[$j] 的 old 为空（新建文件请用 create=true）")
+                    errors.add("$pathStr：edits[$j] 的 old 为空（新建文件请用 create=true；按行号删除请用 delete_start/delete_end）")
                     opError = true
                     break
                 }
@@ -324,10 +603,54 @@ object CodeEditTools {
             val originalLf = toLf(original)
 
             // 逐个锚点校验唯一性，并在内存里累积替换
-            var working = originalLf
             var applied = 0
             var anchorError = false
             val appliedEdits = mutableListOf<AppliedEdit>()
+
+            // 【行号类操作先做】line_start/line_end 与 delete_start/delete_end 都以
+            // 「原文件行号」为准，所以必须在锚点替换之前、按行号从后往前应用。
+            // 否则锚点替换改变行数后行号就错位了（旧代码的 delete 就有这个隐患）。
+            var working = originalLf
+            val lineSpans = mutableListOf<LineSpan>()
+            lineOps.forEach { lineSpans.add(LineSpan(it.start, it.end, toLf(it.new), it.mode)) }
+            delOps.forEach { lineSpans.add(LineSpan(it.start, it.end, "")) }
+            if (lineSpans.isNotEmpty()) {
+                val lines = working.split('\n').toMutableList()
+                var rangeError = false
+                for (s in lineSpans) {
+                    if (s.end > lines.size) {
+                        errors.add(
+                            "$pathStr：按行号操作的行号超出文件行数（start=${s.start}, end=${s.end}, 文件共 ${lines.size} 行）"
+                        )
+                        rangeError = true
+                        break
+                    }
+                }
+                if (rangeError) continue
+                for (s in lineSpans.sortedByDescending { it.start }) {
+                    val newLines = if (s.newText.isEmpty()) emptyList() else s.newText.split('\n')
+                    when (s.mode) {
+                        LineMode.REPLACE -> {
+                            val removed = lines.subList(s.start - 1, s.end).toList()
+                            for (i in s.end - 1 downTo s.start - 1) lines.removeAt(i)
+                            lines.addAll(s.start - 1, newLines)
+                            appliedEdits.add(
+                                AppliedEdit(removed.joinToString("\n"), s.newText, s.start, s.start)
+                            )
+                        }
+                        LineMode.INSERT_BEFORE, LineMode.INSERT_AFTER -> {
+                            // 插入点：前插在 start-1，后插在 end（即 start）
+                            val at = if (s.mode == LineMode.INSERT_BEFORE) s.start - 1 else s.end
+                            lines.addAll(at, newLines)
+                            appliedEdits.add(
+                                AppliedEdit("", s.newText, at + 1, at + 1)
+                            )
+                        }
+                    }
+                    applied++
+                }
+                working = lines.joinToString("\n")
+            }
             for ((j, op) in ops.withIndex()) {
                 val oldLf = toLf(op.old)
                 val newLf = toLf(op.new)
@@ -338,7 +661,15 @@ object CodeEditTools {
                     break
                 }
                 if (count > 1) {
-                    errors.add("$pathStr：edits[$j] 的 old 在文件中出现 $count 次（必须恰好 1 次），请扩大锚点范围\n" + anchorFailureHint(working, oldLf))
+                    // 短锚点重复时，额外提示“锚点太短”，
+                    // 引导模型扩大范围而不是盲目重试。
+                    val shortHint = if (oldLf.lines().size <= 2) {
+                        "\n    [警告] 锚点只有 ${oldLf.lines().size} 行，太短容易重复。建议带上前后各 1~2 行上下文。"
+                    } else ""
+                    errors.add(
+                        "$pathStr：edits[$j] 的 old 在文件中出现 $count 次（必须恰好 1 次），请扩大锚点范围" +
+                                shortHint + "\n" + anchorFailureHint(working, oldLf)
+                    )
                     anchorError = true
                     break
                 }
@@ -368,7 +699,7 @@ object CodeEditTools {
 
         // ---------- 阶段 2：备份 + 写盘 ----------
         val backupDir = File(DesktopPaths.exportsDir(), "code_backup")
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+        val stamp = DateFormats.formatFileTs()
 
         val written = mutableListOf<FilePlan>()
         try {
@@ -422,7 +753,7 @@ object CodeEditTools {
             for (i in 0 until verifyArr.length()) {
                 val v = verifyArr.optJSONObject(i)
                 if (v == null) {
-                    vmsgs.add("❌ verify[$i] 不是对象")
+                    vmsgs.add("[错误] verify[$i] 不是对象")
                     vok = false
                     continue
                 }
@@ -431,32 +762,37 @@ object CodeEditTools {
                 val vtext = v.optString("text", "")
                 val vf = File(vpath)
                 if (!vf.isFile) {
-                    vmsgs.add("❌ verify[$i] 文件不存在：$vpath")
+                    vmsgs.add("[错误] verify[$i] 文件不存在：$vpath")
                     vok = false
                     continue
                 }
                 val content = try {
                     vf.readText(Charsets.UTF_8)
                 } catch (e: Exception) {
-                    vmsgs.add("❌ verify[$i] 读取失败：${e.message}")
+                    vmsgs.add("[错误] verify[$i] 读取失败：${e.message}")
                     vok = false
                     continue
                 }
+                // verify 之前直接拿原始文件内容（CRLF）去 contains
+                // 模型传的 vtext 是 LF，多行校验必然失败（明明存在却报“不含”）。
+                // 两边都归一化成 LF 再比。
+                val contentLf = toLf(content)
+                val vtextLf = toLf(vtext)
                 when (vtype) {
-                    "contains" -> if (content.contains(vtext)) {
-                        vmsgs.add("✓ verify[$i] $vpath 含目标字符串")
+                    "contains" -> if (contentLf.contains(vtextLf)) {
+                        vmsgs.add("[通过] verify[$i] $vpath 含目标字符串")
                     } else {
-                        vmsgs.add("❌ verify[$i] $vpath 不含：${vtext.take(80)}")
+                        vmsgs.add("[错误] verify[$i] $vpath 不含：${vtext.take(80)}")
                         vok = false
                     }
-                    "not_contains" -> if (!content.contains(vtext)) {
-                        vmsgs.add("✓ verify[$i] $vpath 不含目标字符串")
+                    "not_contains" -> if (!contentLf.contains(vtextLf)) {
+                        vmsgs.add("[通过] verify[$i] $vpath 不含目标字符串")
                     } else {
-                        vmsgs.add("❌ verify[$i] $vpath 仍含：${vtext.take(80)}")
+                        vmsgs.add("[错误] verify[$i] $vpath 仍含：${vtext.take(80)}")
                         vok = false
                     }
                     else -> {
-                        vmsgs.add("❌ verify[$i] 未知 type：$vtype")
+                        vmsgs.add("[错误] verify[$i] 未知 type：$vtype")
                         vok = false
                     }
                 }
@@ -491,13 +827,18 @@ object CodeEditTools {
                 plan.edits.forEach { e -> sb.append(renderUnifiedDiff(e)) }
             }
         }
-        sb.append("\n\n备份目录：${backupDir.absolutePath}")
-
-        // 【会话反馈】记录调用并生成成本提示
+        // 【会话反馈】先记录调用（备份目录打印需要 callCount）
         val snapshot = EditSessionTracker.record(
             files = written.size,
             edits = written.sumOf { it.appliedCount },
         )
+
+        // 备份目录只在首次调用时打印，避免每次刷屏占 token。
+        // 后续调用需要时自己去 ~/.furagent/exports/code_backup/ 找。
+        if (snapshot.callCount <= 1) {
+            sb.append("\n\n备份目录：${backupDir.absolutePath}")
+        }
+
         val hint = buildSessionHint(snapshot, written.size)
         if (hint.isNotBlank()) {
             sb.append("\n\n").append(hint)
@@ -526,7 +867,7 @@ object CodeEditTools {
         val wastedK = s.tokensWasted / 1000
 
         return buildString {
-            append("⚠ 这是本次会话第 ").append(s.callCount).append(" 次 code_edit。")
+            append("[警告] 这是本次会话第 ").append(s.callCount).append(" 次 code_edit。")
             append("累计已改 ").append(s.filesChanged).append(" 个文件、")
             append(s.editsApplied).append(" 处替换。")
             append("\n估算已浪费约 ").append(wastedK).append("K token")
@@ -545,12 +886,13 @@ object CodeEditTools {
      */
     private fun renderUnifiedDiff(e: AppliedEdit): String {
         val oldLines = e.oldText.split('\n')
-        val newLines = e.newText.split('\n')
+        val newLines = if (e.newText.isEmpty()) emptyList() else e.newText.split('\n')
         val sb = StringBuilder()
         // - 侧用原文件行号，+ 侧用新文件行号
         sb.append("@@ -").append(e.oldStartLine).append(',').append(oldLines.size)
             .append(" +").append(e.newStartLine).append(',').append(newLines.size).append(" @@\n")
         oldLines.forEach { sb.append("-").append(it).append("\n") }
+        // newText 为空（delete_lines 删除）时不输出空的 + 行
         newLines.forEach { sb.append("+").append(it).append("\n") }
         return sb.toString()
     }

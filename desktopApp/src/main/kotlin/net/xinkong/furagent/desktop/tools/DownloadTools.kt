@@ -2,6 +2,7 @@ package net.xinkong.furagent.desktop.tools
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import net.xinkong.furagent.desktop.core.DownloadManager
 import net.xinkong.furagent.desktop.core.TaskRuntime
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.tools.ToolHost
@@ -78,6 +79,11 @@ object DownloadTools {
             if (taskId != null) {
                 TaskRuntime.registerCancel(taskId) { cancelled.set(true) }
             }
+            // 【与 phone_receive_file / 状态面板对齐】把下载进度旁路登记到 DownloadManager，
+            // 让右下角 DownloadToastBar 也能看到进度（旧实现只有 TaskFloatingBar 可见）。
+            val displayId = try {
+                DownloadManager.beginExternal(url, savePath)
+            } catch (_: Exception) { null }
 
             try {
                 val result = DownloadEngine.download(
@@ -93,9 +99,21 @@ object DownloadTools {
                                     if (total > 0) " / ${formatFileSize(total)}" else ""
                             TaskRuntime.updateProgress(taskId, p, detail)
                         }
+                        if (displayId != null) {
+                            try { DownloadManager.updateExternal(displayId, done, total) } catch (_: Exception) { }
+                        }
                     },
                     isCancelled = { cancelled.get() }
                 )
+                // 无论成功失败都标记，让 Toast 自动收起
+                if (displayId != null) {
+                    try {
+                        DownloadManager.finishExternal(
+                            displayId, result.ok,
+                            if (result.ok) null else result.message
+                        )
+                    } catch (_: Exception) { }
+                }
 
                 if (!result.ok) {
                     return@withContext ToolResult.fail(result.message)

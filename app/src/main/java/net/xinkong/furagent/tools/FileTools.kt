@@ -21,21 +21,19 @@ import java.util.zip.ZipOutputStream
 
 object FileTools {
 
+    private val RE_WHITESPACE = Regex("""\s+""")
+
     val TOOLS = setOf("file_op", "zip", "base64", "download_file")
 
-    // ============================================================
     // 大小上限（【P2-8】从 ToolRegistry.kt 顶部移入）
-    //
+
     // 这几个常量只被 FileTools 使用，放在通用 ToolRegistry 里是历史遗留。
     // 移到本类内部，作用域更清晰。
-    // ============================================================
     private const val MAX_ZIP_TOTAL_BYTES = 512L * 1024 * 1024
     private const val MAX_UNZIP_TOTAL_BYTES = 1024L * 1024 * 1024
     private const val MAX_BASE64_DECODE_BYTES = 32L * 1024 * 1024
 
-    // ============================================================
     // 公共辅助
-    // ============================================================
 
     /**
      * 弹确认。
@@ -95,9 +93,7 @@ object FileTools {
         }
     }
 
-    // ========================================================
     // file_op 实现
-    // ========================================================
 
     private suspend fun doDelete(args: JSONObject, context: Context, settings: AppSettings): String {
         val path = normalizeAlias(args.optString("path", ""))
@@ -112,7 +108,7 @@ object FileTools {
             rejectMessage = "用户已拒绝删除操作，文件未删除"
         )?.let { return it }
 
-        // 【安全删除】不真删，移入回收站，由用户决定何时清空。
+        // 不真删，移入回收站，由用户决定何时清空。
         return try {
             val trashDir = File(context.filesDir, "temp/trash")
             val r = TrashHelper.moveToTrash(file, trashDir)
@@ -242,9 +238,7 @@ object FileTools {
         }
     }
 
-    // ========================================================
     // zip 实现
-    // ========================================================
 
     private suspend fun doZipFiles(args: JSONObject, settings: AppSettings): String {
         val sourceDir = normalizeAlias(args.optString("source_dir", ""))
@@ -366,9 +360,7 @@ object FileTools {
         }
     }
 
-    // ========================================================
     // base64 实现
-    // ========================================================
 
     private suspend fun doDecodeBase64(args: JSONObject, settings: AppSettings): String {
         val rawContent = args.optString("content", "").trim()
@@ -381,7 +373,7 @@ object FileTools {
             rawContent.substringAfter(",", "")
         } else rawContent
 
-        base64 = base64.replace(Regex("""\s+"""), "")
+        base64 = base64.replace(RE_WHITESPACE, "")
         base64 = base64.replace('-', '+').replace('_', '/')
         val mod = base64.length % 4
         if (mod != 0) base64 += "=".repeat(4 - mod)
@@ -487,9 +479,7 @@ object FileTools {
         }
     }
 
-    // ========================================================
     // download_file
-    // ========================================================
 
     private suspend fun doDownloadFile(args: JSONObject, settings: AppSettings): String {
         val url = args.optString("url", "").trim()

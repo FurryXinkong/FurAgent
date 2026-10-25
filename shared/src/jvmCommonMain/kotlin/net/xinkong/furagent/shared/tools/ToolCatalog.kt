@@ -23,6 +23,8 @@ import org.json.JSONObject
  */
 object ToolCatalog {
 
+    private val RE_WHITESPACE = Regex("""\s+""")
+
     /**
      * 构建"目录"文本，会拼进 tool_search 工具的 description。
      *
@@ -82,7 +84,7 @@ object ToolCatalog {
     ): List<CatalogTool> {
         if (query.isBlank()) return emptyList()
         val q = query.lowercase()
-        val terms = q.split(Regex("\\s+")).filter { it.isNotBlank() }
+        val terms = q.split(RE_WHITESPACE).filter { it.isNotBlank() }
         // 【新增】category 支持中文（“文件”“屏幕控制”等）
         val catFilter = category?.trim()?.takeIf { it.isNotBlank() }
             ?.let { ToolCategory.normalizeCategory(it) }

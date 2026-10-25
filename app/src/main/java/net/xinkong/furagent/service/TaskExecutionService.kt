@@ -1,5 +1,6 @@
 package net.xinkong.furagent.service
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -9,14 +10,20 @@ import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.core.AgentSession
+import net.xinkong.furagent.core.runAgentTurn
+import net.xinkong.furagent.data.ChatMessage
 import net.xinkong.furagent.data.ScheduleStore
 import net.xinkong.furagent.data.ScheduledTask
+import net.xinkong.furagent.data.Session
+import net.xinkong.furagent.data.SessionStore
 import net.xinkong.furagent.data.SettingsStore
+import net.xinkong.furagent.data.currentProfile
 import net.xinkong.furagent.system.NotificationHelper
 import net.xinkong.furagent.system.ShizukuHelper
+import net.xinkong.furagent.system.SpeechHelper
 import net.xinkong.furagent.tools.ToolRegistry
 import org.json.JSONObject
-import java.text.SimpleDateFormat
 import java.util.*
 
 /**
@@ -24,7 +31,7 @@ import java.util.*
  *
  * 【为什么需要】
  *  TaskReceiver 是 BroadcastReceiver，goAsync() 只有 10 秒窗口。
- *  run_workflow / run_cron / ffmpeg 这类任务可能跑几分钟到几小时，必然超时被 KILL。
+ *  run_workflow / run_command / ffmpeg 这类任务可能跑几分钟到几小时，必然超时被 KILL。
  *  用一个前台服务承载：
  *    - 无时长限制
  *    - 可持 WakeLock 防止 CPU 休眠
@@ -52,6 +59,15 @@ class TaskExecutionService : Service() {
          * 万一 release 失败，超时后系统自动释放，避免泄漏。
          */
         private const val WAKE_LOCK_TIMEOUT_MS = 30 * 60 * 1000L
+
+        /** 定时任务 AI 结果回流广播：MainActivity 收到后刷新当前会话。 */
+        const val ACTION_SCHEDULED_AGENT_RESULT =
+            "net.xinkong.furagent.ACTION_SCHEDULED_AGENT_RESULT"
+
+        // 朗读前的文本清洗（与 AgentRunner 保持一致）
+        private val RE_STRIP_URL = Regex("""https?://\S+""")
+        private val RE_STRIP_PATH = Regex("""/\S+""")
+        private val RE_STRIP_MARKDOWN = Regex("""[*_`#>\[\]()!]+""")
 
         fun start(context: Context, originalIntent: Intent) {
             val intent = Intent(context, TaskExecutionService::class.java).apply {
@@ -132,9 +148,7 @@ class TaskExecutionService : Service() {
         super.onDestroy()
     }
 
-    // ============================================================
     // 主逻辑（从 TaskReceiver 搬过来）
-    // ============================================================
 
     private suspend fun handleIntent(intent: Intent) {
         val taskId = intent.getStringExtra("task_id")
@@ -146,7 +160,8 @@ class TaskExecutionService : Service() {
             }
         } else null
 
-        val action = storedTask?.action ?: fallbackAction
+        // 动作名归一：旧任务/旧 intent 的 send_notification、run_cron 转为统一命名
+        val action = ScheduleStore.normalizeAction(storedTask?.action ?: fallbackAction)
         val appName = storedTask?.appName ?: intent.getStringExtra("app_name").orEmpty()
 
         AgentLogger.log(
@@ -194,9 +209,11 @@ class TaskExecutionService : Service() {
         updateNotification("正在执行：${storedTask?.description?.ifBlank { action } ?: action}")
 
         when (action) {
-            "run_cron" -> executeCron(intent, storedTask, appName)
-            "send_notification" -> executeNotification(intent, storedTask)
+            "run_command" -> executeCron(intent, storedTask, appName)
+            "notify" -> executeNotification(intent, storedTask)
             "run_workflow" -> executeWorkflow(intent, storedTask)
+            "run_agent" -> executeAgent(intent, storedTask)
+            "run_tool" -> executeTool(intent, storedTask)
             else -> executeOpenApp(intent, storedTask, appName)
         }
 
@@ -272,6 +289,235 @@ class TaskExecutionService : Service() {
         }
     }
 
+    /**
+     * 【能力对齐桌面】run_tool 动作执行：调用 ToolRegistry 里的任意工具。
+     * 工具名来自 task.toolName，参数是 task.toolArgs（JSON 对象字符串）。
+     */
+    private suspend fun executeTool(intent: Intent, task: ScheduledTask?) {
+        val toolName = task?.toolName?.takeIf { it.isNotBlank() }
+            ?: intent.getStringExtra("tool_name")?.takeIf { it.isNotBlank() }
+        if (toolName == null) {
+            NotificationHelper.showGeneric(this, "工具任务未执行", "未提供工具名")
+            return
+        }
+        val argsText = task?.toolArgs?.takeIf { it.isNotBlank() }
+            ?: intent.getStringExtra("tool_args").orEmpty().ifBlank { "{}" }
+        val args = try {
+            JSONObject(argsText)
+        } catch (e: Exception) {
+            NotificationHelper.showGeneric(this, "工具任务失败", "参数不是合法 JSON")
+            return
+        }
+
+        AgentLogger.log("SYS", "[定时任务] run_tool 开始：$toolName")
+        try {
+            val prefs = getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE)
+            val settings = SettingsStore.load(prefs)
+            val result = withContext(Dispatchers.IO) {
+                ToolRegistry.execute(toolName, args, this@TaskExecutionService, settings)
+            }
+            AgentLogger.log("SYS", "[定时任务] 工具结果：${result.take(500)}")
+            val summary = if (result.startsWith("失败")) result.take(200)
+            else "执行完成，输出 ${result.length} 字符"
+            NotificationHelper.showGeneric(this, "工具已执行：$toolName", summary)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "ERR",
+                "[定时任务] 工具执行异常：${e.javaClass.simpleName}: ${e.message}"
+            )
+            NotificationHelper.showGeneric(
+                this,
+                "工具执行失败",
+                "$toolName：${e.message ?: "未知错误"}"
+            )
+        }
+    }
+
+    /**
+     * 【AI 主动说话】run_agent 动作执行。
+     *
+     * 调用 LLM API 获取回复，如果任务绑定了 sessionId，
+     * 将结果作为 assistant 消息写回该会话（结果回流）。
+     */
+    /**
+     * 【AI 主动说话】run_agent 动作执行。
+     *
+     * 【与桌面端对齐】旧实现是手写的非流式 HTTP 单轮问答，导致三个问题：
+     *   1. 没有工具能力（AI 只能空口说话，不能查天气/读文件/发消息）
+     *   2. 没有记忆、没有系统提示词、没有会话上下文
+     *   3. 结果只发通知，不朗读 —— 用户问的「为什么只能通知不能说话」就是这个
+     *
+     * 现在改为复用 runAgentTurn（与聊天页完全同一条链路）：
+     *   - 完整 Agent 循环：工具调用、记忆、系统提示词、多轮
+     *   - 绑定了 sessionId 时，把该会话历史作为上下文，结果追加回该会话
+     *   - 执行完按 autoSpeakReplies 用 TTS 朗读（这就是「让 AI 说话」）
+     *   - 广播通知 UI 实时刷新
+     */
+    private suspend fun executeAgent(intent: Intent, task: ScheduledTask?) {
+        val prompt = task?.prompt?.ifBlank { null }
+            ?: intent.getStringExtra("prompt").orEmpty().ifBlank { null }
+        if (prompt == null) {
+            NotificationHelper.showGeneric(this, "AI 任务未执行", "未提供 prompt")
+            return
+        }
+
+        val prefs = getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE)
+        val settings = SettingsStore.load(prefs)
+        val profile = settings.currentProfile()
+        if (profile == null || profile.apiKey.isBlank()) {
+            NotificationHelper.showGeneric(this, "AI 任务未执行", "未配置模型或 API Key")
+            return
+        }
+
+        val sessionId = task?.sessionId.orEmpty()
+        AgentLogger.log(
+            "SYS",
+            "[定时任务] run_agent 开始（${profile.name}，会话=${sessionId.ifBlank { "无" }}）：${prompt.take(100)}"
+        )
+
+        // 绑定会话时以该会话历史为上下文；未绑定则空历史（纯问答）
+        val baseHistory: List<ChatMessage> = if (sessionId.isNotBlank()) {
+            withContext(Dispatchers.IO) { SessionStore.load(this@TaskExecutionService, sessionId) }
+                ?.messages.orEmpty()
+        } else emptyList()
+
+        // 把本次 prompt 作为 user 消息追加
+        val history = baseHistory + ChatMessage(role = "user", content = prompt)
+
+        // 与 AgentRunner 一致：开始任务时拿代际，工具执行前会比对
+        val cancelGen = AgentSession.beginTask()
+
+        var finalHistory: List<ChatMessage> = history
+        var errorText = ""
+
+        // 【P0-3】会话专用提示词：与聊天页 AgentRunner.start 保持一致
+        val sessionPrompt = if (sessionId.isNotBlank()) {
+            withContext(Dispatchers.IO) { SessionStore.load(this@TaskExecutionService, sessionId) }
+                ?.systemPrompt ?: ""
+        } else ""
+
+        try {
+            runAgentTurn(
+                profile = profile,
+                history = history,
+                maxTurns = settings.maxToolCallLoops.coerceAtLeast(1),
+                context = this@TaskExecutionService,
+                settings = settings,
+                cancelGen = cancelGen,
+                onHistoryChanged = { h -> finalHistory = h },
+                onThinking = { },
+                onError = { err -> errorText = err },
+                onReasoning = { },
+                onStreamChunk = { },
+                onStreamCommit = { },
+                onFinish = { },
+                sessionPrompt = sessionPrompt
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AgentLogger.log("ERR", "[定时任务] run_agent 异常：${e.javaClass.simpleName}: ${e.message}")
+            NotificationHelper.showGeneric(this, "AI 任务失败", e.message ?: "未知错误")
+            return
+        }
+
+        if (errorText.isNotBlank()) {
+            AgentLogger.log("ERR", "[定时任务] run_agent 失败：$errorText")
+            NotificationHelper.showGeneric(this, "AI 任务失败", errorText.take(200))
+            return
+        }
+
+        // 取本轮最后一条 AI 正文（跳过工具消息 / 思考消息）
+        val reply = finalHistory.lastOrNull {
+            it.role == "assistant" && it.type == "text" && it.content.isNotBlank()
+        }?.content.orEmpty()
+
+        if (reply.isBlank()) {
+            AgentLogger.log("ERR", "[定时任务] run_agent 未产出正文")
+            NotificationHelper.showGeneric(this, "AI 任务失败", "模型未返回内容")
+            return
+        }
+
+        AgentLogger.log("SYS", "[定时任务] run_agent 完成：${reply.take(200)}")
+
+        // 结果回流：整轮历史写回会话（含工具调用过程，与聊天页一致）
+        if (sessionId.isNotBlank()) {
+            val written = withContext(Dispatchers.IO) {
+                writeAgentResultToSession(sessionId, finalHistory)
+            }
+            if (written) {
+                val refreshIntent = Intent(ACTION_SCHEDULED_AGENT_RESULT).apply {
+                    setPackage(packageName)
+                    putExtra("session_id", sessionId)
+                }
+                sendBroadcast(refreshIntent)
+                AgentLogger.log("SYS", "[定时任务] 结果已写入会话 $sessionId")
+            }
+        }
+
+        // 【让 AI 说话】与聊天页 autoSpeakReplies 同一开关、同一实现
+        speakIfEnabled(settings.autoSpeakReplies, reply)
+
+        NotificationHelper.showGeneric(this, "AI 已回复", reply.take(200))
+    }
+
+    /**
+     * 朗读 AI 回复。
+     *
+     * 与 AgentRunner.autoSpeakIfEnabled 保持一致的清洗规则：
+     * 去掉 URL / 路径 / Markdown 符号，避免 TTS 念出 "https 冒号 斜杠斜杠"。
+     */
+    private fun speakIfEnabled(enabled: Boolean, text: String) {
+        if (!enabled) return
+        // 【P1-抽 shared】统一走 shared/util/SpeechCleaner，与桌面端完全同源
+        val clean = net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
+        if (clean.isBlank()) return
+
+        // TTS 引擎可能还没初始化（进程被闹钟冷启动时 MainActivity 没跑过）
+        if (!SpeechHelper.isReady()) {
+            SpeechHelper.init(applicationContext)
+            AgentLogger.log("SYS", "[定时任务] TTS 未就绪，已触发初始化，本次跳过朗读")
+            return
+        }
+        val ok = SpeechHelper.speakSegmented(clean.take(500))
+        AgentLogger.log(
+            "SYS",
+            if (ok) "[定时任务] 已朗读回复（${clean.length} 字）"
+            else "[定时任务] 朗读失败"
+        )
+    }
+
+    /**
+     * 把本轮完整历史写回会话。
+     *
+     * 【修复】旧实现手写 sessions/$id.json，绕过了 SessionStore 的索引维护和
+     * 500ms 节流，导致：会话列表的 messageCount / updatedAt 不更新、
+     * 与聊天页并发写时互相覆盖。现在统一走 SessionStore.save。
+     *
+     * @return true 写入成功，false 会话不存在或写入失败
+     */
+    private fun writeAgentResultToSession(sessionId: String, history: List<ChatMessage>): Boolean {
+        return try {
+            val session: Session = SessionStore.load(this, sessionId) ?: run {
+                AgentLogger.log("ERR", "[定时任务] 会话不存在，跳过写回：$sessionId")
+                return false
+            }
+            SessionStore.save(
+                this,
+                session.copy(
+                    messages = history,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+            true
+        } catch (e: Exception) {
+            AgentLogger.log("ERR", "[定时任务] 写入会话结果失败：${e.javaClass.simpleName}: ${e.message}")
+            false
+        }
+    }
+
     private suspend fun executeOpenApp(intent: Intent, task: ScheduledTask?, appName: String) {
         val pkg = task?.packageName?.ifBlank { null }
             ?: intent.getStringExtra("package_name").orEmpty()
@@ -314,14 +560,13 @@ class TaskExecutionService : Service() {
         if (next != null) {
             val updated = task.copy(triggerTime = next)
             withContext(Dispatchers.IO) {
-                ScheduleStore.add(this@TaskExecutionService, updated)
+                // 【性能】只改 triggerTime，不再 add() 全量重写整个 schedules.json
+                ScheduleStore.updateTriggerTime(this@TaskExecutionService, task.id, next)
                 ScheduleStore.scheduleAlarm(this@TaskExecutionService, updated)
             }
             AgentLogger.log(
                 "SYS",
-                "[定时任务] 已排下次：" + SimpleDateFormat(
-                    "yyyy-MM-dd HH:mm:ss", Locale.getDefault()
-                ).format(Date(next))
+                "[定时任务] 已排下次：" + DateFormats.formatDateTime(next)
             )
         } else if (task.repeatMode == "cron") {
             // 【体验优化 B8】cron 非法：不删任务，日志 + 通知，让用户改
@@ -342,9 +587,7 @@ class TaskExecutionService : Service() {
         }
     }
 
-    // ============================================================
     // 前台通知
-    // ============================================================
 
     private fun createChannel() {
         try {
@@ -394,9 +637,7 @@ class TaskExecutionService : Service() {
         } catch (_: Exception) { }
     }
 
-    // ============================================================
     // WakeLock
-    // ============================================================
 
     private fun acquireWakeLock() {
         try {

@@ -1,5 +1,6 @@
 package net.xinkong.furagent.tools
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -17,6 +18,7 @@ import kotlinx.coroutines.withContext
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.ConfirmationBroker
 import net.xinkong.furagent.data.*
+import net.xinkong.furagent.shared.util.TaskCondition
 import net.xinkong.furagent.shared.util.WebSearchEngine
 import net.xinkong.furagent.shared.util.formatFileSize
 import net.xinkong.furagent.system.MediaSessionListenerService
@@ -30,6 +32,10 @@ import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
 
 object SystemTools {
+
+    private val RE_RANGE = Regex("""^(\d+)\.\.(\d+)$""")
+    private val RE_LENGTH = Regex("^length(>=|<=|==|=|>|<)(\\d+)$")
+    private val RE_NUM_OP = Regex("^(>=|<=|==|=|>|<)(-?\\d+(?:\\.\\d+)?)$")
 
     val TOOLS = setOf(
         "app", "device", "calendar", "schedule", "workflow", "memory", "web",
@@ -60,9 +66,7 @@ object SystemTools {
         else -> "未实现的系统工具：$name"
     }
 
-    // ========================================================
     // app
-    // ========================================================
     private suspend fun doApp(args: JSONObject, context: Context): String {
         val op = args.optString("op", "").lowercase()
         return when (op) {
@@ -185,9 +189,7 @@ object SystemTools {
         }
     }
 
-    // ========================================================
     // device
-    // ========================================================
     private suspend fun doDevice(args: JSONObject, context: Context): String {
         val op = args.optString("op", "").lowercase()
         return when (op) {
@@ -339,9 +341,7 @@ object SystemTools {
         return sb.toString()
     }
 
-    // ========================================================
     // calendar
-    // ========================================================
     private suspend fun doCalendar(args: JSONObject, context: Context): String {
         val op = args.optString("op", "").lowercase()
         return when (op) {
@@ -353,7 +353,7 @@ object SystemTools {
 
     private fun addCalendar(args: JSONObject, context: Context): String {
         val title = args.optString("title", "新日程")
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf = DateFormats.dateTimeFormatter()
         val start = try { sdf.parse(args.optString("start_time"))?.time } catch (_: Exception) { null }
             ?: System.currentTimeMillis()
         val endStr = args.optString("end_time", "")
@@ -372,7 +372,7 @@ object SystemTools {
     }
 
     private suspend fun readCalendar(args: JSONObject, context: Context): String {
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf = DateFormats.dateTimeFormatter()
         val startStr = args.optString("start_time", "").trim()
         val endStr = args.optString("end_time", "").trim()
         val limit = args.optInt("limit", 500).coerceIn(1, 5000)
@@ -424,7 +424,7 @@ object SystemTools {
                 val idxAllDay = cursor.getColumnIndex(CalendarContract.Events.ALL_DAY)
                 val idxCal = cursor.getColumnIndex(CalendarContract.Events.CALENDAR_DISPLAY_NAME)
 
-                val displaySdf = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+                val displaySdf = DateFormats.dateTimeNoSecFormatter()
                 while (cursor.moveToNext() && count < limit) {
                     val title = cursor.getString(idxTitle) ?: "(无标题)"
                     val start = cursor.getLong(idxStart)
@@ -480,9 +480,7 @@ object SystemTools {
         }
     }
 
-    // ========================================================
     // schedule
-    // ========================================================
     private suspend fun doSchedule(
         args: JSONObject, context: Context, settings: AppSettings
     ): String {
@@ -498,10 +496,11 @@ object SystemTools {
     private suspend fun scheduleCreate(
         args: JSONObject, context: Context, settings: AppSettings
     ): String {
-        val action = args.optString("action", "open_app").trim()
+        // 动作归一：AI 传旧名（send_notification / run_cron）也接受，统一存新名
+        val action = ScheduleStore.normalizeAction(args.optString("action", "open_app").trim())
         val description = args.optString("description", "").trim()
-        if (action !in listOf("open_app", "run_cron", "send_notification", "run_workflow")) {
-            return "失败：action 只能是 open_app / run_cron / send_notification / run_workflow"
+        if (action !in ScheduleStore.VALID_ACTIONS) {
+            return "失败：action 只能是 ${ScheduleStore.VALID_ACTIONS.joinToString(" / ")}"
         }
 
         val intervalSeconds = args.optInt("interval_seconds", 0).coerceIn(
@@ -513,14 +512,16 @@ object SystemTools {
             return "失败：repeat_mode 只能是 once / daily / weekly / interval / cron"
         }
 
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf = DateFormats.dateTimeFormatter()
         val triggerStr = args.optString("trigger_time", "").trim()
+        val delaySeconds = args.optInt("delay_seconds", 0)
         val triggerTime = if (triggerStr.isBlank()) {
-            when (repeatMode) {
-                "cron" -> System.currentTimeMillis() + 60_000L
-                "interval" -> System.currentTimeMillis() +
+            when {
+                delaySeconds > 0 -> System.currentTimeMillis() + delaySeconds * 1000L
+                repeatMode == "cron" -> System.currentTimeMillis() + 60_000L
+                repeatMode == "interval" -> System.currentTimeMillis() +
                         (if (intervalSeconds > 0) intervalSeconds else 60) * 1000L
-                else -> return "失败：非 cron 模式必须提供 trigger_time"
+                else -> return "失败：非 cron/interval 模式必须提供 trigger_time 或 delay_seconds"
             }
         } else {
             try { sdf.parse(triggerStr)?.time } catch (_: Exception) { null }
@@ -565,17 +566,21 @@ object SystemTools {
             cronExpression = args.optString("cron_expression", ""),
             action = action,
             command = args.optString("command", ""),
+            toolName = args.optString("tool_name", ""),
+            toolArgs = args.optString("tool_args", ""),
             notificationTitle = args.optString("notification_title", ""),
             notificationContent = args.optString("notification_content", ""),
             workflowName = args.optString("workflow_name", ""),
             conditions = conds,
             conditionMode = args.optString("condition_mode", "and"),
             skipIfNotMet = args.optBoolean("skip_if_not_met", true),
-            description = description
+            description = description,
+            prompt = args.optString("prompt", ""),
+            sessionId = args.optString("session_id", "")
         )
 
-        if (action == "run_cron") {
-            if (task.command.isBlank()) return "失败：run_cron 需要 command"
+        if (action == "run_command") {
+            if (task.command.isBlank()) return "失败：run_command 需要 command"
             requireShizuku()?.let { return it }
             if (settings.requireConfirmShell) {
                 val preview = task.command.take(300)
@@ -585,6 +590,12 @@ object SystemTools {
                 )
                 if (!approved) return "用户已拒绝"
             }
+        }
+        if (action == "run_tool" && task.toolName.isBlank()) {
+            return "失败：run_tool 需要 tool_name"
+        }
+        if (action == "run_agent") {
+            if (task.prompt.isBlank()) return "失败：run_agent 需要 prompt（要发给 AI 的内容）"
         }
         if (action == "open_app" && task.packageName.isBlank()) {
             return "失败：open_app 需要 package_name"
@@ -626,7 +637,7 @@ object SystemTools {
     private fun listScheduledTasks(context: Context): String {
         val list = ScheduleStore.list(context)
         if (list.isEmpty()) return "当前没有定时任务。"
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf = DateFormats.dateTimeFormatter()
         val sb = StringBuilder("共 ${list.size} 个定时任务：\n\n")
         list.forEachIndexed { i, t ->
             sb.append("${i + 1}. ${t.description.ifBlank { t.appName.ifBlank { t.id.take(8) } }}\n")
@@ -664,9 +675,7 @@ object SystemTools {
         return "已取消：${target.description.ifBlank { target.appName }}"
     }
 
-    // ========================================================
     // workflow
-    // ========================================================
     private suspend fun doWorkflow(
         args: JSONObject, context: Context, settings: AppSettings
     ): String {
@@ -926,9 +935,7 @@ object SystemTools {
         }
     }
 
-    // ========================================================
     // memory
-    // ========================================================
     private fun doMemory(args: JSONObject, context: Context): String {
         val op = args.optString("op", "").lowercase()
         return when (op) {
@@ -949,13 +956,37 @@ object SystemTools {
                     sb.toString()
                 }
             }
-            else -> "失败：op 只能是 save / recall"
+            "list" -> {
+                val list = MemoryStore.list(context)
+                if (list.isEmpty()) "暂无记忆"
+                else {
+                    val sb = StringBuilder("共 ${list.size} 条记忆：\n\n")
+                    list.forEachIndexed { i, m ->
+                        sb.append("${i + 1}. ${m.content}\n")
+                        sb.append("   ID：${m.id}\n\n")
+                    }
+                    sb.toString()
+                }
+            }
+            "delete" -> {
+                val id = args.optString("memory_id", "").trim()
+                val keyword = args.optString("keyword", "").trim()
+                val list = MemoryStore.list(context)
+                val target = when {
+                    id.isNotBlank() -> list.firstOrNull { it.id == id }
+                    keyword.isNotBlank() -> list.firstOrNull {
+                        it.content.contains(keyword, ignoreCase = true)
+                    }
+                    else -> null
+                } ?: return "失败：未找到匹配的记忆（可用 op=list 查看 ID）"
+                MemoryStore.remove(context, target.id)
+                "已删除：${target.content}"
+            }
+            else -> "失败：op 只能是 save / recall / list / delete"
         }
     }
 
-    // ========================================================
     // web
-    // ========================================================
     private suspend fun doWeb(args: JSONObject): String {
         val op = args.optString("op", "").lowercase()
         return when (op) {
@@ -975,9 +1006,7 @@ object SystemTools {
         }
     }
 
-    // ========================================================
     // notifications
-    // ========================================================
     private fun doNotifications(args: JSONObject, context: Context): String {
         val op = args.optString("op", "list").lowercase()
         return when (op) {
@@ -990,7 +1019,7 @@ object SystemTools {
                 if (list.isEmpty()) {
                     "暂无通知（缓存 ${MediaSessionListenerService.size()} 条）"
                 } else {
-                    val sdf = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                    val sdf = DateFormats.timeFormatter()
                     val sb = StringBuilder("最近 ${list.size} 条通知：\n\n")
                     list.forEachIndexed { i, n ->
                         sb.append("${i + 1}. [${sdf.format(Date(n.timestamp))}] ${n.appName}")
@@ -1011,9 +1040,7 @@ object SystemTools {
         }
     }
 
-    // ========================================================
     // 保留的独立工具
-    // ========================================================
     private fun doSetAlarm(args: JSONObject, context: Context): String {
         val hour = args.optInt("hour", 8).coerceIn(0, 23)
         val minute = args.optInt("minute", 0).coerceIn(0, 59)
@@ -1034,7 +1061,7 @@ object SystemTools {
         val timeout = args.optInt("timeout", 30).coerceIn(1, 120)
         if (command.isBlank()) return "失败：未提供命令"
 
-        // 【安全删除】拦截 shell 里的删除操作。
+        // 拦截 shell 里的删除操作。
         // AI 不得以任何方式直接删除文件，包括通过 execute_shell 绕过 file_op。
         detectDestructiveShell(command)?.let { return it }
 
@@ -1147,7 +1174,7 @@ object SystemTools {
             sb.append("经度：${loc.longitude}\n")
             sb.append("精度：${loc.accuracy}米\n")
             sb.append("时间：").append(
-                SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(loc.time))
+                DateFormats.formatDateTime(loc.time)
             ).append("\n")
             try {
                 @Suppress("DEPRECATION")

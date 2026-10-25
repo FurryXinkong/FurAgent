@@ -1,5 +1,10 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
 package net.xinkong.furagent
 
+import net.xinkong.furagent.shared.util.DateFormats
+import net.xinkong.furagent.shared.ThinkingLevel
+import net.xinkong.furagent.ui.AndroidBackupHistoryDialog
+import net.xinkong.furagent.ui.AndroidSubSessionListDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -17,39 +22,35 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +63,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -81,11 +83,20 @@ import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.tools.FfmpegHelper
 import net.xinkong.furagent.tools.SDCARD_PATH
 import net.xinkong.furagent.tools.ToolRegistry
+import net.xinkong.furagent.tools.ToolRegistry.SubSessionProgress
 import net.xinkong.furagent.ui.*
 import net.xinkong.furagent.ui.pages.*
 import net.xinkong.furagent.ui.theme.FurAgentTheme
+import net.xinkong.furagent.ui.theme.AppRadius
 import net.xinkong.furagent.shared.util.ChatListItem
 import net.xinkong.furagent.shared.util.buildChatItems
+import net.xinkong.furagent.shared.util.SessionAnalytics
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.TextButton
+import net.xinkong.furagent.ui.PocoDivider
+import net.xinkong.furagent.ui.ModelSettingsButton
 import org.json.JSONObject
 import java.io.File
 import java.util.*
@@ -106,10 +117,26 @@ enum class AppPage {
     SCHEDULES,
     PC_HUB,
     MCP,
-    ENV_STORE
+    ENV_STORE,
+    SKILL,
+    WEBVIEW,
+    HISTORY
 }
 
+/** 修改文件按扩展名分发：这些走内置文本阅读器（其余未知扩展交给系统打开）。 */
+private val TEXT_FILE_EXTS = setOf(
+    "txt", "md", "kt", "java", "js", "jsx", "ts", "tsx", "json", "xml", "yaml", "yml",
+    "toml", "ini", "conf", "cfg", "log", "csv", "tsv", "sql", "sh", "bash", "zsh",
+    "css", "scss", "gradle", "properties", "pro", "env", "gitignore", "lua", "c", "h",
+    "cpp", "hpp", "go", "rs", "rb", "php", "vue", "bat", "ps1", "dockerfile"
+)
+
+private val RE_STRIP_URL = Regex("""https?://\S+""")
+private val RE_STRIP_PATH = Regex("""/\S+""")
+private val RE_STRIP_MARKDOWN = Regex("""[*_`#>]+""")
+
 class MainActivity : ComponentActivity() {
+
     private val themeState = mutableStateOf("system")
 
     private val shizukuReceivedListener = rikka.shizuku.Shizuku.OnBinderReceivedListener {
@@ -130,14 +157,32 @@ class MainActivity : ComponentActivity() {
             AgentLogger.log(tag, msg)
         }
 
+        // 【自定义脚本】安装安卓端脚本运行时（Chaquopy 内嵌 CPython）
+        try {
+            net.xinkong.furagent.shared.skill.SkillStore.install(
+                net.xinkong.furagent.tools.AndroidSkillRuntime(applicationContext)
+            )
+            // ensureExample 会调 Python 解析脚本，首次启动 Chaquopy 要解压运行时，
+            // 放主线程会卡顿甚至 ANR。改到后台线程异步执行。
+            Thread {
+                try {
+                    net.xinkong.furagent.shared.skill.SkillStore.ensureExample()
+                } catch (e: Throwable) {
+                    AgentLogger.log("Skill", "创建示例脚本失败：${e.javaClass.simpleName}: ${e.message}")
+                }
+            }.start()
+        } catch (e: Throwable) {
+            AgentLogger.log("Skill", "初始化脚本运行时失败：${e.javaClass.simpleName}: ${e.message}")
+        }
+
         setupGlobalCrashHandler()
         enableEdgeToEdge()
         val prefs = getSharedPreferences("FurAgentPrefs", MODE_PRIVATE)
         themeState.value = prefs.getString("theme_mode", "system") ?: "system"
 
-        AppContextHolder.set(applicationContext)
         TokenStats.init(applicationContext)
         SpeechHelper.init(applicationContext)
+        NotificationSyncSettings.init(applicationContext)
 
         try {
             val settings = SettingsStore.load(prefs)
@@ -223,6 +268,15 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         try {
+            // 会话文件写盘节流 500ms，退到后台时强制落盘，避免进程被杀时丢最后一条消息
+            SessionStore.flushPending(applicationContext)
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "SYS",
+                "flushPending 失败（onPause）：${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+        try {
             if (FloatingService.isRunning) FloatingService.setBallVisible(true)
         } catch (e: Exception) {
             AgentLogger.log(
@@ -269,6 +323,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<String>,
@@ -327,18 +382,9 @@ class MainActivity : ComponentActivity() {
             defaultHandler?.uncaughtException(thread, throwable)
         }
     }
-
-    private fun formatFileSize(bytes: Long): String = when {
-        bytes < 1024 -> "${bytes}B"
-        bytes < 1024 * 1024 -> String.format(Locale.US, "%.1fKB", bytes / 1024.0)
-        bytes < 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1fMB", bytes / 1024.0 / 1024.0)
-        else -> String.format(Locale.US, "%.2fGB", bytes / 1024.0 / 1024.0 / 1024.0)
-    }
 }
 
-// ============================================================
 // 图片压缩
-// ============================================================
 private object ImageCompressor {
     suspend fun compress(src: File, quality: Int, maxDim: Int = 1280): File? =
         withContext(Dispatchers.IO) {
@@ -390,34 +436,64 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     val sendMutex = remember { Mutex() }
 
     val density = LocalDensity.current
-    val imeBottomPx = WindowInsets.ime.getBottom(density)
-    val imeBottomDp = with(density) { imeBottomPx.toDp() }
-    val dynamicBottomPadding = 120.dp + imeBottomDp
+    // 底部留白 = 输入框实测高度 + 8dp 余量（键盘由外层 imePadding 统一处理）
+    var inputBarHeightPx by remember { mutableIntStateOf(0) }
+    val inputBarHeightDp = with(density) { inputBarHeightPx.toDp() }
+    val dynamicBottomPadding = inputBarHeightDp + 8.dp
 
-    val agentSnapshot by AgentRunner.snapshot.collectAsState()
+    val agentSnapshot by AgentRunner.snapshot.debounce(32.milliseconds).collectAsState(initial = AgentRunner.snapshot.value)
 
     var currentSessionId by rememberSaveable { mutableStateOf<String?>(null) }
     var chatHistory by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     var sessionList by remember { mutableStateOf<List<SessionMeta>>(emptyList()) }
     var userInput by rememberSaveable { mutableStateOf("") }
+    // 【会话隔离】输入框草稿按会话保存：切走存盘、切回恢复
+    val draftPrefs = remember {
+        context.getSharedPreferences("session_drafts", Context.MODE_PRIVATE)
+    }
+    fun readDraft(id: String): String = draftPrefs.getString("d_$id", "") ?: ""
+    fun writeDraft(id: String, text: String) {
+        draftPrefs.edit().putString("d_$id", text).apply()
+    }
+
+    // 草稿归属者：知道当前 userInput 属于哪个会话
+    var draftOwner by remember { mutableStateOf(currentSessionId) }
+    // 会话切换：旧会话的输入存回它自己，再取新会话的草稿。
+    // 监听 currentSessionId 而非改每个调用点，新增切换入口也不会漏。
+    LaunchedEffect(currentSessionId) {
+        val prev = draftOwner
+        if (prev == currentSessionId) return@LaunchedEffect
+        prev?.let { writeDraft(it, userInput) }
+        draftOwner = currentSessionId
+        userInput = currentSessionId?.let { readDraft(it) } ?: ""
+    }
+    // 输入后防抖落盘：直接杀进程也不丢草稿
+    LaunchedEffect(userInput, currentSessionId) {
+        delay(400.milliseconds)
+        // 只写回「自己的」会话，避免切换瞬间串味
+        if (draftOwner == currentSessionId) {
+            currentSessionId?.let { writeDraft(it, userInput) }
+        }
+    }
+    var isSwitchingSession by remember { mutableStateOf(false) }
+    var showSearch by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
 
     val isLoading = agentSnapshot.isRunning && agentSnapshot.sessionId == currentSessionId
     val streamingText = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.streaming else ""
-    val currentThinking = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.thinking else ""
     val currentReasoning = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.reasoning else ""
+    val currentThinking = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.thinking else ""
+    // 【错误状态】API 错误（如「HTTP 429 · 用量配额已用尽」），渲染成状态小气泡
+    val currentError = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.error else ""
 
-    // ============================================================
     // 整屏 Page 导航
     // 短交互（更多功能面板、关于）保留 boolean。
-    // ============================================================
     var currentPage by rememberSaveable { mutableStateOf<AppPage?>(null) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
     var showMorePanel by rememberSaveable { mutableStateOf(false) }
+    // 【P1-1】会话专用提示词弹窗
+    var showSessionPrompt by remember { mutableStateOf(false) }
 
-    // 系统返回键：有 Page 就关 Page，没有就交给系统
-    BackHandler(enabled = currentPage != null) {
-        currentPage = null
-    }
 
     var maxTurns by remember { mutableIntStateOf(prefs.getInt("max_turns", 5)) }
     var crashInfo by remember { mutableStateOf(CrashStore.load(context)) }
@@ -435,6 +511,29 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     var pendingPickedImages by remember { mutableStateOf<List<String>>(emptyList()) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
 
+    // 【子会话出口】系统返回键：有 Page 就关 Page，在子会话里优先回母会话。
+    // 以前只在有 Page 时接管返回键，子会话里按返回会直接退出应用。
+    // 放在 currentSessionCreatedAt / sessionList / currentPage 声明之后，避免前向引用。
+    val inSubSessionForBack = currentSessionId?.startsWith("sub_") == true
+    BackHandler(enabled = currentPage != null || inSubSessionForBack) {
+        if (currentPage != null) {
+            currentPage = null
+        } else {
+            val back = SubSessionNavigator.originId
+            if (back != null) {
+                SubSessionNavigator.open?.invoke(back)
+            } else {
+                // 来路不明（进程重建 / 从子代理列表直进）：回最近一个主会话
+                val main = sessionList.firstOrNull { !it.id.startsWith("sub_") }
+                if (main != null) {
+                    currentSessionId = main.id
+                    chatHistory = SessionStore.load(context, main.id)?.messages ?: emptyList()
+                    currentSessionCreatedAt = main.createdAt
+                }
+            }
+        }
+    }
+
     var autoChatMode by rememberSaveable { mutableStateOf(false) }
     var voiceTriggerCounter by remember { mutableIntStateOf(0) }
     var voiceFailStreak by remember { mutableIntStateOf(0) }
@@ -449,11 +548,123 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     val isSpeaking by SpeechHelper.isSpeaking.collectAsState()
 
     val chatItems = remember(chatHistory) { buildChatItems(chatHistory) }
+    // 任务完成结果卡的数据源（remember 必须在 Composable 上下文，不能放 LazyListScope）
+    val modifiedFiles = remember(chatHistory) { SessionAnalytics.collectModifiedFiles(chatHistory) }
+    // 文件预览状态：修改文件卡片点击 → 按类型分发（html→内置浏览器 / 文本→阅读器 / py→执行器）
+    // webViewerUrl 用 saveable：currentPage 是 rememberSaveable，旋转/进程恢复后
+    // 若只有 URL 丢失，WEBVIEW 页会以空地址恢复成一张白屏
+    var webViewerUrl by rememberSaveable { mutableStateOf("") }
+    var fileTextPath by remember { mutableStateOf<String?>(null) }
+    var filePyPath by remember { mutableStateOf<String?>(null) }
+    fun openModifiedFile(path: String) {
+        val ext = path.substringAfterLast('.', "").lowercase()
+        when (ext) {
+            "html", "htm" -> {
+                webViewerUrl = path
+                currentPage = AppPage.WEBVIEW
+            }
+            "py" -> filePyPath = path
+            in TEXT_FILE_EXTS -> fileTextPath = path
+            else -> openLocalFileOnAndroid(context, path)
+        }
+    }
+    // 【定时任务 AI 结果回流】
+    // TaskExecutionService 执行完 run_agent 后发广播，这里收到就把消息注入当前会话。
+    // 旧代码只 sendBroadcast 没人接，导致「AI 在后台回了话，但打开 App 看不到」。
+    DisposableEffect(Unit) {
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(ctx: Context?, intent: Intent?) {
+                val sid = intent?.getStringExtra("session_id").orEmpty()
+                if (sid.isBlank()) return
+                // 刷新侧栏会话列表（标题/时间/条数可能变了）
+                sessionList = SessionStore.list(context)
+                // 当前正开着这个会话：重新读盘注入，避免与后台写入竞争
+                if (sid == currentSessionId) {
+                    val loaded = SessionStore.load(context, sid)
+                    if (loaded != null) {
+                        chatHistory = loaded.messages
+                        currentSessionCreatedAt = loaded.createdAt
+                    }
+                }
+            }
+        }
+        val filter = android.content.IntentFilter(
+            net.xinkong.furagent.service.TaskExecutionService.ACTION_SCHEDULED_AGENT_RESULT
+        )
+        androidx.core.content.ContextCompat.registerReceiver(
+            context, receiver, filter,
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        onDispose { try { context.unregisterReceiver(receiver) } catch (_: Exception) { } }
+    }
 
-    // ============================================================
+    // 子会话完成 → 主对话注入「子代理完成」通知（结果摘要回流）
+    LaunchedEffect(Unit) {
+        SubSessionProgress.events.collect { e ->
+            // 【对齐桌面端】originId 为空（桥接/悬浮窗发起、母会话已关）时
+            // 以前直接丢弃，子代理结果彻底蒸发，主会话什么也收不到。
+            // 现在回落到最近一个主会话，至少能看到结果。
+            val target = e.originId.ifBlank {
+                SessionStore.list(context).firstOrNull { it.parentId == null }?.id ?: ""
+            }
+            if (target.isBlank()) return@collect
+            val notice = ChatMessage(
+                role = "system",
+                content = "【子代理完成】「${e.title}」（${e.subId}）已完成，共 ${e.msgCount} 条消息。\n" +
+                        "结果摘要：\n${e.summary}",
+                type = "text",
+                timestamp = System.currentTimeMillis()
+            )
+            if (currentSessionId == target) {
+                chatHistory = chatHistory + notice
+                val title = sessionList.find { it.id == target }?.title ?: "对话"
+                val targetSession = withContext(Dispatchers.IO) { SessionStore.load(context, target) }
+                withContext(Dispatchers.IO) {
+                    SessionStore.save(
+                        context,
+                        Session(
+                            id = target,
+                            title = title,
+                            createdAt = currentSessionCreatedAt,
+                            updatedAt = System.currentTimeMillis(),
+                            messages = chatHistory,
+                            parentId = targetSession?.parentId
+                        )
+                    )
+                }
+            } else {
+                withContext(Dispatchers.IO) {
+                    val s = SessionStore.load(context, e.originId) ?: return@withContext
+                    SessionStore.save(
+                        context,
+                        s.copy(
+                            messages = s.messages + notice,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    // 子会话卡片/列表点击 → 无打断切入；进入子会话前记住来路，顶部「返回」可切回
+    SubSessionNavigator.open = { id ->
+        val enteringSub = id.startsWith("sub_")
+        if (enteringSub && currentSessionId?.startsWith("sub_") != true) {
+            SubSessionNavigator.originId = currentSessionId
+        } else if (!enteringSub && currentSessionId?.startsWith("sub_") == true) {
+            SubSessionNavigator.originId = null
+        }
+        isSwitchingSession = true
+        currentSessionId = id
+        val loaded = SessionStore.load(context, id)
+        chatHistory = loaded?.messages ?: emptyList()
+        currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
+        isSwitchingSession = false
+    }
+
     // 【新增】首次运行引导
     // 两个独立标记，可分别跳过：权限引导 / 功能导览。
-    // ============================================================
     var onboardingStage by remember {
         val permDone = prefs.getBoolean("onboarding_permissions_done", false)
         val guideDone = prefs.getBoolean("onboarding_guide_done", false)
@@ -483,17 +694,38 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     fun persist() {
         val id = currentSessionId ?: return
-        val title = SessionStore.generateTitle(chatHistory)
+        // 【子会话标题保护】子会话标题带「↳ 」前缀，是子代理列表的识别依据。
+        // 以前这里无条件 generateTitle，一 persist 就把前缀抹掉，
+        // 子会话于是混进主会话列表、又不在子代理列表里
+        //（看起来就像“子代理把原会话覆盖了”，而且找不到回去的入口）。
+        val isSub = id.startsWith("sub_")
+        val existing = if (isSub) SessionStore.load(context, id) else null
+        val title = when {
+            existing?.title?.startsWith("↳") == true -> existing.title
+            isSub -> "↳ " + SessionStore.generateTitle(chatHistory)
+            else -> SessionStore.generateTitle(chatHistory)
+        }
+        val now = System.currentTimeMillis()
         SessionStore.save(
             context,
             Session(
                 id = id, title = title,
                 createdAt = currentSessionCreatedAt,
-                updatedAt = System.currentTimeMillis(),
-                messages = chatHistory
+                updatedAt = now,
+                messages = chatHistory,
+                parentId = existing?.parentId
             )
         )
-        sessionList = SessionStore.list(context)
+        // 增量更新：避免每次 persist 都读磁盘重建列表
+        val idx = sessionList.indexOfFirst { it.id == id }
+        sessionList = if (idx >= 0) {
+            sessionList.toMutableList().apply {
+                set(idx, SessionMeta(id, title, currentSessionCreatedAt, now, chatHistory.size))
+            }
+        } else {
+            // 新会话首次保存，fallback 到完整读取
+            SessionStore.list(context)
+        }
     }
 
     fun interruptAgent() {
@@ -526,15 +758,17 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         currentSessionId = id
         currentSessionCreatedAt = now
         chatHistory = emptyList()
-        sessionList = SessionStore.list(context)
+        sessionList = SessionStore.list(context).filter { it.parentId == null }
     }
 
     fun switchToSession(id: String) {
         if (isLoading) interruptAgent()
+        isSwitchingSession = true
         currentSessionId = id
         val loaded = SessionStore.load(context, id)
         chatHistory = loaded?.messages ?: emptyList()
         currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
+        isSwitchingSession = false
     }
 
     fun duplicateSession(id: String) {
@@ -543,7 +777,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 SessionStore.duplicate(context, id)
             }
             if (result != null) {
-                sessionList = SessionStore.list(context)
+                sessionList = SessionStore.list(context).filter { it.parentId == null }
                 notifyToast(context, "已复制会话「${result.title}」")
             } else {
                 notifyToast(context, "复制失败：会话不存在")
@@ -575,7 +809,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 }
                 tmp.delete()
                 if (result.success) {
-                    sessionList = SessionStore.list(context)
+                    sessionList = SessionStore.list(context).filter { it.parentId == null }
                     result.sessionId?.let { switchToSession(it) }
                     notifyToast(context, "已导入：${result.sessionTitle}（${result.messageCount} 条消息）")
                 } else {
@@ -613,12 +847,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 "导入成功：${importResult.sessionCount} 个会话，${importResult.memoryCount} 条记忆"
             )
 
-            sessionList = SessionStore.list(context)
-            // 【修复】设置恢复后立即同步内存。
-            // 旧实现里 SessionStore.importAll 只返回一个 Boolean，调用方需要自己
-            // 再 SettingsStore.load(prefs) 一次才能更新内存态。契约隐晦，
-            // 换调用点极易漏。现在 importAll 直接返回恢复后的 AppSettings，
-            // 契约明确：拿到就用，不依赖调用方记着要刷内存。
+            sessionList = SessionStore.list(context).filter { it.parentId == null }
             importResult.restoredSettings?.let { restored ->
                 settings = restored
                 maxTurns = prefs.getInt("max_turns", 5)
@@ -662,11 +891,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     }
 
     fun autoSpeakForce(text: String) {
-        val clean = text
-            .replace(Regex("""https?://\S+"""), "")
-            .replace(Regex("""/\S+"""), "")
-            .replace(Regex("""[*_`#>]+"""), "")
-            .trim()
+        // 【P1-抽 shared】统一走 shared/util/SpeechCleaner，与桌面端完全同源
+        val clean = net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
         if (clean.isBlank()) {
             scope.launch {
                 delay(500.milliseconds)
@@ -687,6 +913,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     fun startAgent(initialHistory: List<ChatMessage>) {
         val profile = currentProfileValue ?: return
         val sid = currentSessionId ?: return
+        // 【P0-3】会话专用提示词：每轮发送前实时读盘，编辑后下一轮即生效
+        val sessionPrompt = SessionStore.load(context, sid)?.systemPrompt ?: ""
         val started = AgentRunner.start(
             context = context,
             sessionId = sid,
@@ -695,6 +923,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             maxTurns = maxTurns,
             prefs = prefs,
             settings = settings,
+            sessionPrompt = sessionPrompt,
             onFinish = { finalHistory ->
                 chatHistory = finalHistory
                 persist()
@@ -773,11 +1002,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 notifyToast(context, "无法解析工具调用")
                 return@launch
             }
-            // 【修复】元工具无法"再次执行"：
-            //   - tool_search / tool_load 是分层工具系统的入口，只在本轮 tools 数组里动态下发
-            //   - 它们不在 ToolRegistry.allToolNames() 里，反查失败会被 fallback 当原文
-            //   - 重新执行还会污染当前 loadedToolNames，影响后续对话
-            // 直接拒绝并给出清晰提示。
             if (firstLine == "工具搜索" || firstLine == "tool_search") {
                 notifyToast(context, "工具搜索不支持再次执行")
                 return@launch
@@ -953,7 +1177,9 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         } else null
 
         val list = SessionStore.list(context)
-        sessionList = list
+        // 【子会话识别】改按 parentId 判定，不再靠标题前缀：
+        // 以前标题被 persist 重算后子会话就混进主列表。
+        sessionList = list.filter { it.parentId == null }
 
         val target = when {
             runningSessionId != null && list.any { it.id == runningSessionId } -> runningSessionId
@@ -980,7 +1206,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 context,
                 Session(id, "新会话", currentSessionCreatedAt, currentSessionCreatedAt, emptyList())
             )
-            sessionList = SessionStore.list(context)
+            sessionList = SessionStore.list(context).filter { it.parentId == null }
         }
 
         if (settings.pcBridgeEnabled && settings.pcBridgeHost.isNotBlank()) {
@@ -1027,14 +1253,14 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     // 【修复：用户上滑后不再被强制拉到底】
     // 背景：原来只要 chatItems.size 变化（每次工具调用都会变）就无条件
     // scrollToItem 到底部，用户上滑看历史时会被反复拽回底部，体验极差。
-    //
+
     // 【方案 v2】不再用 isScrollInProgress 猜“用户是否在拖”，因为程序滚动
     // （scrollToItem）也会把它置 true，容易误判。改用两个更可靠的信号：
     //   - listState.canScrollForward == false  → 真的到底了
     //   - listState.isScrollInProgress         → 有滚动在进行
     // 只要“正在滚动”且“没到底”，就认定用户主动上滑，锁定不自动滚。
     // 程序滚动到底后 canScrollForward 变 false，会自动解锁。
-    //
+
     // 【注意】isAtBottom / userScrolledUp 必须声明在下面的自动滚动 LaunchedEffect 之前，
     // 否则 Compose 里会报 “Unresolved reference”。
     val isAtBottom by remember {
@@ -1046,7 +1272,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
     }
     var userScrolledUp by remember { mutableStateOf(false) }
-    // 【关键】程序滚动标志：scrollToItem 期间置 true，避免把“自动滚到底”
+    // 程序滚动标志：scrollToItem 期间置 true，避免把“自动滚到底”
     // 误判成“用户上滑”。
     var programmaticScroll by remember { mutableStateOf(false) }
     LaunchedEffect(listState) {
@@ -1063,30 +1289,31 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             }
     }
 
-    LaunchedEffect(chatItems.size, streamingText.length, currentThinking.length) {
-        val totalItems = chatItems.size +
+    // 【性能】用 snapshotFlow 替代 LaunchedEffect 频繁变化的 key
+    // 原来 streamingText.length 每 32ms 变一次 → LaunchedEffect 重启 → 取消+重建协程
+    // 改为 snapshotFlow：协程常驻，只在值变化时执行 collect 块
+    LaunchedEffect(Unit) {
+        snapshotFlow {
+            chatItems.size +
                 (if (streamingText.isNotEmpty()) 1 else 0) +
                 (if (currentThinking.isNotEmpty() && streamingText.isEmpty()) 1 else 0)
-        if (totalItems == 0) return@LaunchedEffect
-        val last = chatHistory.lastOrNull()
-
-        // 【修复】用户主动上滑后，不再强制拉到底部。
-        // 只有两种情况才自动滚：
-        //   1. 用户本来就在底部（没上滑）
-        //   2. 用户刚发了一条消息（last.role == "user"）——这时应该跟到最新
-        // 其余情况（工具调用、流式输出、AI 回复）若用户已上滑，一律不抢滚动。
-        val shouldFollow = !userScrolledUp || last?.role == "user"
-        if (shouldFollow) {
-            try {
-                programmaticScroll = true
-                listState.scrollToItem(totalItems - 1)
-            } catch (e: Exception) {
-                AgentLogger.log(
-                    "SYS",
-                    "滚动到底部失败：${e.javaClass.simpleName}: ${e.message}"
-                )
-            } finally {
-                programmaticScroll = false
+        }.collect { totalItems ->
+            if (totalItems == 0) return@collect
+            val last = chatHistory.lastOrNull()
+            // 用户主动上滑后不强制拉到底部
+            val shouldFollow = !userScrolledUp || last?.role == "user"
+            if (shouldFollow) {
+                try {
+                    programmaticScroll = true
+                    listState.scrollToItem(totalItems - 1)
+                } catch (e: Exception) {
+                    AgentLogger.log(
+                        "SYS",
+                        "滚动到底部失败：${e.javaClass.simpleName}: ${e.message}"
+                    )
+                } finally {
+                    programmaticScroll = false
+                }
             }
         }
     }
@@ -1119,15 +1346,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
     }
 
-    // ============================================================
     // 弹窗（保留 AlertDialog 系列的）
-    // ============================================================
     crashInfo?.let { info ->
-        AlertDialog(
-            onDismissRequest = { CrashStore.clear(context); crashInfo = null },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("软件崩溃") },
+        PocoAlertDialog(
+            onDismiss = { CrashStore.clear(context); crashInfo = null },
+            title = "软件崩溃",
             text = {
                 Column {
                     Text("上次运行发生错误。")
@@ -1141,71 +1364,51 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                    cm.setPrimaryClip(ClipData.newPlainText("crash", info))
-                    notifyToast(context, "已复制")
-                }) { Text("复制") }
+            confirmText = "复制",
+            onConfirm = {
+                val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                cm.setPrimaryClip(ClipData.newPlainText("crash", info))
+                notifyToast(context, "已复制")
             },
-            dismissButton = {
-                TextButton(onClick = {
-                    CrashStore.clear(context); crashInfo = null
-                }) { Text("我知道了") }
-            }
+            dismissText = "我知道了",
+            onDismissClick = { CrashStore.clear(context); crashInfo = null }
         )
     }
 
     PermissionRequestBroker.pending?.let { pending ->
-        AlertDialog(
-            onDismissRequest = { PermissionRequestBroker.onUserRejected() },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text(pending.title) },
+        PocoAlertDialog(
+            onDismiss = { PermissionRequestBroker.onUserRejected() },
+            title = pending.title,
             text = { Text(pending.message) },
-            confirmButton = {
-                TextButton(onClick = { PermissionRequestBroker.onUserApproved(context) }) {
-                    Text("前往设置", fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { PermissionRequestBroker.onUserRejected() }) {
-                    Text("取消", color = MaterialTheme.colorScheme.error)
-                }
-            }
+            confirmText = "前往设置",
+            onConfirm = { PermissionRequestBroker.onUserApproved(context) },
+            dismissText = "取消",
+            dismissColor = MaterialTheme.colorScheme.error,
+            onDismissClick = { PermissionRequestBroker.onUserRejected() }
         )
     }
 
     ConfirmationBroker.pending?.let { pending ->
-        AlertDialog(
-            onDismissRequest = { ConfirmationBroker.resolve(false) },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text(pending.title) },
+        PocoAlertDialog(
+            onDismiss = { ConfirmationBroker.resolve(false) },
+            title = pending.title,
             text = {
                 androidx.compose.foundation.text.selection.SelectionContainer {
                     Text(pending.message, style = MaterialTheme.typography.bodyMedium)
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { ConfirmationBroker.resolve(true) }) {
-                    Text("允许", fontWeight = FontWeight.SemiBold)
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { ConfirmationBroker.resolve(false) }) {
-                    Text("拒绝", color = MaterialTheme.colorScheme.error)
-                }
-            }
+            confirmText = "允许",
+            onConfirm = { ConfirmationBroker.resolve(true) },
+            dismissText = "拒绝",
+            dismissColor = MaterialTheme.colorScheme.error,
+            onDismissClick = { ConfirmationBroker.resolve(false) }
         )
     }
 
     pendingImportJson?.let { json ->
-        AlertDialog(
-            onDismissRequest = { pendingImportJson = null },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("导入方式") },
+        PocoAlertDialog(
+            onDismiss = { pendingImportJson = null },
+            title = "导入方式",
             text = {
                 Column {
                     Text("追加导入：保留现有会话与记忆。")
@@ -1216,137 +1419,133 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     )
                 }
             },
-            confirmButton = {
-                TextButton(onClick = { doImport(json, replaceExisting = false) }) { Text("追加") }
+            confirmText = "追加",
+            onConfirm = { doImport(json, replaceExisting = false) },
+            extraDismissText = "覆盖",
+            extraDismissColor = MaterialTheme.colorScheme.error,
+            onExtraDismissClick = {
+                pendingOverwriteJson = json
+                pendingImportJson = null
             },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        pendingOverwriteJson = json
-                        pendingImportJson = null
-                    }) { Text("覆盖", color = MaterialTheme.colorScheme.error) }
-                    TextButton(onClick = { pendingImportJson = null }) { Text("取消") }
-                }
-            }
+            dismissText = "取消",
+            onDismissClick = { pendingImportJson = null }
         )
     }
 
     pendingOverwriteJson?.let { json ->
-        AlertDialog(
-            onDismissRequest = { pendingOverwriteJson = null },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("确认覆盖？") },
+        PocoAlertDialog(
+            onDismiss = { pendingOverwriteJson = null },
+            title = "确认覆盖？",
             text = { Text("这会清空当前所有会话与记忆，然后导入备份。此操作不可恢复。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    pendingOverwriteJson = null
-                    doImport(json, replaceExisting = true)
-                }) { Text("确认覆盖", color = MaterialTheme.colorScheme.error) }
+            confirmText = "确认覆盖",
+            confirmColor = MaterialTheme.colorScheme.error,
+            onConfirm = {
+                pendingOverwriteJson = null
+                doImport(json, replaceExisting = true)
             },
-            dismissButton = {
-                TextButton(onClick = { pendingOverwriteJson = null }) { Text("取消") }
-            }
+            dismissText = "取消",
+            onDismissClick = { pendingOverwriteJson = null }
         )
     }
 
     pendingDeleteSessionId?.let { id ->
         val title = sessionList.firstOrNull { it.id == id }?.title ?: "该会话"
-        AlertDialog(
-            onDismissRequest = { pendingDeleteSessionId = null },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("删除会话") },
+        PocoAlertDialog(
+            onDismiss = { pendingDeleteSessionId = null },
+            title = "删除会话",
             text = { Text("确定删除「$title」？此操作不可恢复。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (id == currentSessionId && isLoading) interruptAgent()
-                    SessionStore.delete(context, id)
-                    sessionList = SessionStore.list(context)
-                    if (id == currentSessionId) {
-                        val next = sessionList.firstOrNull()
-                        if (next != null) {
-                            currentSessionId = next.id
-                            val loaded = SessionStore.load(context, next.id)
-                            chatHistory = loaded?.messages ?: emptyList()
-                            currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
-                        } else startNewSession()
-                    }
-                    pendingDeleteSessionId = null
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            confirmText = "删除",
+            confirmColor = MaterialTheme.colorScheme.error,
+            onConfirm = {
+                if (id == currentSessionId) {
+                    interruptAgent()
+                } else {
+                    // 非当前会话：也要取消它的任务（AgentRunner 是单任务模型，
+                    // 直接 cancel 即可；若将来支持多会话并行，这里要改成按 sessionId 取消）
+                    AgentRunner.cancel(context)
+                }
+                SessionStore.delete(context, id)
+                sessionList = SessionStore.list(context).filter { it.parentId == null }
+                if (id == currentSessionId) {
+                    val next = sessionList.firstOrNull()
+                    if (next != null) {
+                        currentSessionId = next.id
+                        val loaded = SessionStore.load(context, next.id)
+                        chatHistory = loaded?.messages ?: emptyList()
+                        currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
+                    } else startNewSession()
+                }
+                pendingDeleteSessionId = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteSessionId = null }) { Text("取消") }
-            }
+            dismissText = "取消",
+            onDismissClick = { pendingDeleteSessionId = null }
         )
     }
 
     pendingDeleteMessageId?.let { mid ->
-        AlertDialog(
-            onDismissRequest = { pendingDeleteMessageId = null },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("删除消息") },
+        PocoAlertDialog(
+            onDismiss = { pendingDeleteMessageId = null },
+            title = "删除消息",
             text = { Text("确定删除这条消息？此操作不可恢复。") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val idx = chatHistory.indexOfFirst { it.id == mid }
-                    if (idx >= 0) {
-                        chatHistory = deleteMessagePair(chatHistory, idx)
-                        persist()
-                    }
-                    pendingDeleteMessageId = null
-                }) { Text("删除", color = MaterialTheme.colorScheme.error) }
+            confirmText = "删除",
+            confirmColor = MaterialTheme.colorScheme.error,
+            onConfirm = {
+                val idx = chatHistory.indexOfFirst { it.id == mid }
+                if (idx >= 0) {
+                    chatHistory = deleteMessagePair(chatHistory, idx)
+                    persist()
+                }
+                pendingDeleteMessageId = null
             },
-            dismissButton = {
-                TextButton(onClick = { pendingDeleteMessageId = null }) { Text("取消") }
-            }
+            dismissText = "取消",
+            onDismissClick = { pendingDeleteMessageId = null }
         )
     }
 
     exportSessionId?.let { sid ->
-        AlertDialog(
-            onDismissRequest = { exportSessionId = null },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("导出会话") },
+        PocoAlertDialog(
+            onDismiss = { exportSessionId = null },
+            title = "导出会话",
             text = { Text("导出内容是否包含工具调用与工具返回？") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val s = SessionStore.load(context, sid)
-                    if (s == null) {
-                        notifyToast(context, "会话已不存在")
-                    } else {
-                        val f = SessionStore.exportMarkdown(context, s, hideToolMessages = false)
-                        notifyToast(context, if (f != null) "已导出到：${f.absolutePath}" else "导出失败")
-                    }
-                    exportSessionId = null
-                }) { Text("包含") }
-            },
-            dismissButton = {
-                Row {
-                    TextButton(onClick = {
-                        val s = SessionStore.load(context, sid)
-                        if (s == null) {
-                            notifyToast(context, "会话已不存在")
-                        } else {
-                            val f = SessionStore.exportMarkdown(context, s, hideToolMessages = true)
-                            notifyToast(context, if (f != null) "已导出到：${f.absolutePath}" else "导出失败")
-                        }
-                        exportSessionId = null
-                    }) { Text("不包含") }
-                    TextButton(onClick = { exportSessionId = null }) { Text("取消") }
+            confirmText = "包含",
+            onConfirm = {
+                val s = SessionStore.load(context, sid)
+                if (s == null) {
+                    notifyToast(context, "会话已不存在")
+                } else {
+                    val f = SessionStore.exportMarkdown(context, s, hideToolMessages = false)
+                    notifyToast(context, if (f != null) "已导出到：${f.absolutePath}" else "导出失败")
                 }
-            }
+                exportSessionId = null
+            },
+            extraDismissText = "不包含",
+            onExtraDismissClick = {
+                val s = SessionStore.load(context, sid)
+                if (s == null) {
+                    notifyToast(context, "会话已不存在")
+                } else {
+                    val f = SessionStore.exportMarkdown(context, s, hideToolMessages = true)
+                    notifyToast(context, if (f != null) "已导出到：${f.absolutePath}" else "导出失败")
+                }
+                exportSessionId = null
+            },
+            dismissText = "取消",
+            onDismissClick = { exportSessionId = null }
         )
     }
 
+    // 内置文件预览：文本阅读器 / Python 执行器（由修改文件卡片点击分发打开）
+    fileTextPath?.let { p ->
+        AndroidTextFileDialog(path = p, onDismiss = { fileTextPath = null })
+    }
+    filePyPath?.let { p ->
+        AndroidPyRunDialog(path = p, onDismiss = { filePyPath = null })
+    }
+
     if (showAbout) {
-        AlertDialog(
-            onDismissRequest = { showAbout = false },
-            shape = RoundedCornerShape(28.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = { Text("关于我们") },
+        PocoAlertDialog(
+            onDismiss = { showAbout = false },
+            title = "关于我们",
             text = {
                 Column {
                     Text("FurAgent By Xinkong", fontWeight = FontWeight.Bold, fontSize = 16.sp)
@@ -1360,23 +1559,21 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     )
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    try {
-                        context.startActivity(
-                            Intent(Intent.ACTION_VIEW, "https://space.bilibili.com/454325752".toUri())
-                        )
-                    } catch (e: Exception) {
-                        AgentLogger.log(
-                            "ERR",
-                            "打开 Bilibili 失败：${e.javaClass.simpleName}: ${e.message}"
-                        )
-                    }
-                }) { Text("访问 Bilibili") }
+            confirmText = "访问 Bilibili",
+            onConfirm = {
+                try {
+                    context.startActivity(
+                        Intent(Intent.ACTION_VIEW, "https://space.bilibili.com/454325752".toUri())
+                    )
+                } catch (e: Exception) {
+                    AgentLogger.log(
+                        "ERR",
+                        "打开 Bilibili 失败：${e.javaClass.simpleName}: ${e.message}"
+                    )
+                }
             },
-            dismissButton = {
-                TextButton(onClick = { showAbout = false }) { Text("关闭") }
-            }
+            dismissText = "关闭",
+            onDismissClick = { showAbout = false }
         )
     }
 
@@ -1387,7 +1584,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             sheetState = morePanelSheetState,
             containerColor = glassSheetBg(),
             scrimColor = Color.Black.copy(alpha = 0.15f),
-            shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+            shape = RoundedCornerShape(topStart = AppRadius.XL, topEnd = AppRadius.XL),
             dragHandle = { GlassDragHandle() }
         ) {
             Box(modifier = Modifier.fillMaxWidth()) {
@@ -1467,7 +1664,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         val cur = sessionList.firstOrNull { it.id == id }?.title ?: ""
         InputDialog("重命名会话", cur, { renamingSession = null }) { newTitle ->
             SessionStore.rename(context, id, newTitle)
-            sessionList = SessionStore.list(context)
+            sessionList = SessionStore.list(context).filter { it.parentId == null }
             renamingSession = null
         }
     }
@@ -1540,25 +1737,42 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     val currentProfileName = currentProfileValue?.name ?: "未配置"
 
+    // 【手机端优化】子代理 / 修改历史弹窗开关（入口在顶栏图标）
+    var subListOpen by remember { mutableStateOf(false) }
+    var historyOpen by remember { mutableStateOf(false) }
+
     viewingImage?.let { path ->
         ImageViewerDialog(path = path, onDismiss = { viewingImage = null })
     }
 
-    // ============================================================
+    // 【手机端优化】子代理 / 修改历史弹窗（入口在顶栏图标）
+    if (historyOpen) AndroidBackupHistoryDialog(onDismiss = { historyOpen = false })
+    if (subListOpen) AndroidSubSessionListDialog(onDismiss = { subListOpen = false })
+
+    // 【P1-1】会话专用提示词编辑弹窗
+    val sessionPromptTarget = currentSessionId
+    if (showSessionPrompt && sessionPromptTarget != null) {
+        AndroidSessionPromptDialog(
+            sessionId = sessionPromptTarget,
+            onDismiss = { showSessionPrompt = false },
+            onSaved = { /* 保存后无需额外处理，AgentRunner 每轮实时读盘 */ }
+        )
+    }
+
     // 主结构：抽屉 + 聊天 + Page 浮层 + Onboarding overlay
-    // ============================================================
     Box(Modifier.fillMaxSize()) {
         ModalNavigationDrawer(
             drawerState = drawerState,
             drawerContent = {
                 ModalDrawerSheet(
                     drawerContainerColor = glassSheetBg(),
-                    drawerShape = RoundedCornerShape(topEnd = 24.dp, bottomEnd = 24.dp),
+                    drawerShape = RoundedCornerShape(topEnd = AppRadius.XL, bottomEnd = AppRadius.XL),
                     modifier = Modifier.width(300.dp)
                 ) {
                     SideDrawerContent(
                         progress = drawerContentProgress,
                         currentProfileName = currentProfileName,
+                        currentPage = currentPage,
                         floatingOn = floatingOn,
                         onNewChat = {
                             startNewSession()
@@ -1567,6 +1781,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         onOpenPcHub = { openPageFromDrawer(AppPage.PC_HUB) },
                         onOpenSchedules = { openPageFromDrawer(AppPage.SCHEDULES) },
                         onOpenMcp = { openPageFromDrawer(AppPage.MCP) },
+                        onOpenSkill = { openPageFromDrawer(AppPage.SKILL) },
                         onOpenMemory = { openPageFromDrawer(AppPage.MEMORY) },
                         onOpenAdvancedSettings = { openPageFromDrawer(AppPage.ADVANCED_SETTINGS) },
                         onToggleFloating = {
@@ -1601,8 +1816,26 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         onOpenAbout = {
                             scope.launch {
                                 drawerState.close()
-                                delay(180.milliseconds)
                                 showAbout = true
+                            }
+                        },
+                        // 【手机端排版】从顶栏挪进来的入口
+                        onOpenSubList = {
+                            scope.launch { drawerState.close() }
+                            subListOpen = true
+                        },
+                        onOpenHistory = {
+                            scope.launch { drawerState.close() }
+                            currentPage = AppPage.HISTORY
+                        },
+                        onOpenSessions = { openPageFromDrawer(AppPage.SESSIONS) },
+                        onOpenLog = { openPageFromDrawer(AppPage.LOG) },
+                        // 【P1-1】会话专用提示词入口
+                        onOpenSessionPrompt = {
+                            scope.launch {
+                                drawerState.close()
+                                delay(180.milliseconds)
+                                showSessionPrompt = true
                             }
                         }
                     )
@@ -1626,13 +1859,15 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         letterSpacing = (-0.5).sp,
                                         color = MaterialTheme.colorScheme.onBackground
                                     )
+                                    // 副标题只在「非日常状态」出现：免提 / 工作中。
+                                    // 平时只显示模型名，顶栏保持安静（主流客户端做法）
                                     Crossfade(
                                         targetState = when {
-                                            autoChatMode -> "免提模式 · Token ≈ ${TokenStats.total}"
-                                            isLoading -> "AI 正在工作（后台继续运行）"
-                                            else -> "Token ≈ ${TokenStats.total}  ·  $currentProfileName"
+                                            autoChatMode -> "免提模式"
+                                            isLoading -> "正在工作"
+                                            else -> currentProfileName
                                         },
-                                        animationSpec = tween(300),
+                                        animationSpec = tween(200),
                                         label = "subtitle"
                                     ) { subtitle ->
                                         Text(
@@ -1646,10 +1881,36 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 }
                             },
                             actions = {
-                                IconButton(onClick = { currentPage = AppPage.LOG }) {
+                                // 【子会话出口】在子会话里直接给一个返回按钮，
+                                // 不用再拉开抽屉找「子代理」列表，也不用按返回键退应用。
+                                if (inSubSessionForBack) {
+                                    IconButton(onClick = {
+                                        val back = SubSessionNavigator.originId
+                                        if (back != null) {
+                                            SubSessionNavigator.open?.invoke(back)
+                                        } else {
+                                            val main = sessionList.firstOrNull { !it.id.startsWith("sub_") }
+                                            if (main != null) {
+                                                currentSessionId = main.id
+                                                chatHistory = SessionStore.load(context, main.id)?.messages
+                                                    ?: emptyList()
+                                                currentSessionCreatedAt = main.createdAt
+                                            }
+                                        }
+                                    }) {
+                                        Icon(
+                                            Icons.AutoMirrored.Filled.ArrowBack,
+                                            contentDescription = "返回母会话",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                // 【手机端排版】顶栏只留搜索 / 会话列表 / 设置，避免窄屏把标题挤成竖排。
+                                // 子代理 / 修改历史 / 日志 收进侧边抽屉。
+                                IconButton(onClick = { showSearch = !showSearch; if (!showSearch) searchQuery = "" }) {
                                     Icon(
-                                        Icons.Default.Terminal,
-                                        contentDescription = "日志",
+                                        if (showSearch) Icons.Default.Close else Icons.Default.Search,
+                                        contentDescription = "搜索",
                                         tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
@@ -1673,6 +1934,42 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 titleContentColor = MaterialTheme.colorScheme.onBackground
                             )
                         )
+                        if (showSearch) {
+                            // 复用项目表单标准组件 OutlinedTextField（Dialogs / 编辑对话框同款），
+                            val matchCount = if (searchQuery.isNotBlank()) chatItems.count { item ->
+                                when (item) {
+                                    is ChatListItem.Single -> item.msg.content.contains(searchQuery, ignoreCase = true)
+                                    is ChatListItem.ToolsGroup -> item.items.any { it.content.contains(searchQuery, ignoreCase = true) }
+                                    is ChatListItem.WorkProcess -> item.items.any { it.content.contains(searchQuery, ignoreCase = true) }
+                                    is ChatListItem.DateSeparator -> item.displayText.contains(searchQuery, ignoreCase = true)
+                                }
+                            } else 0
+                            OutlinedTextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                singleLine = true,
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                },
+                                placeholder = { Text("搜索对话内容...") },
+                                trailingIcon = if (searchQuery.isNotBlank()) {
+                                    {
+                                        Text(
+                                            "$matchCount 条",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                } else null,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                            )
+                        }
                         Box(
                             Modifier
                                 .fillMaxWidth()
@@ -1688,37 +1985,73 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = padding.calculateTopPadding())
+                        // 【修复：输入框被键盘盖住】
+                        // imePadding 必须加在外层 Box 上：Column（列表）和输入框 Box
+                        // 都是它的子元素，这样两者一起随键盘上移。
+                        // 之前加在 Column 上，输入框不在 Column 内，所以没被顶上去。
+                        .imePadding()
                 ) {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = 12.dp, end = 12.dp, top = 8.dp,
-                            bottom = dynamicBottomPadding
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Column(
+                        Modifier
+                            .fillMaxSize()
                     ) {
-                        if (chatItems.isEmpty() &&
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(
+                                start = 16.dp, end = 16.dp, top = 12.dp,
+                                bottom = dynamicBottomPadding
+                            ),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                        if (isSwitchingSession) {
+                            item(key = "switching") {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().height(200.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(32.dp),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                        } else if (chatItems.isEmpty() &&
                             currentThinking.isEmpty() &&
                             streamingText.isEmpty()
                         ) {
-                            item(key = "empty", contentType = "empty") { EmptyStatePlaceholder() }
+                            item(key = "empty", contentType = "empty") {
+                                EmptyStatePlaceholder(
+                                    hasApiKey = currentProfileValue != null && currentProfileValue.apiKey.isNotBlank(),
+                                    onOpenSettings = { currentPage = AppPage.SETTINGS },
+                                    onPromptClick = { userInput = it }
+                                )
+                            }
                         }
-                        items(
+                        itemsIndexed(
                             items = chatItems,
-                            key = { it.key },
-                            contentType = { item ->
+                            key = { _, it -> it.key },
+                            contentType = { _, item ->
                                 when (item) {
                                     is ChatListItem.ToolsGroup -> "tools_group"
+                                    is ChatListItem.WorkProcess -> "work_process"
                                     is ChatListItem.Single -> item.msg.type
+                                    is ChatListItem.DateSeparator -> "date_sep"
                                 }
                             }
-                        ) { item ->
+                        ) { index, item ->
+                            // 新消息淡入 + 位移动画（参考主流 AI 客户端）
+                            Box(Modifier.animateItem()) {
                             when (item) {
                                 is ChatListItem.Single -> {
                                     val msg = item.msg
+                                    // 同一分钟内只显示最后一条气泡的时间（与桌面端一致）
+                                    val prevBubble = chatItems.getOrNull(index - 1)
+                                    val showTime = prevBubble !is ChatListItem.Single ||
+                                        prevBubble.msg.timestamp / 60_000L != msg.timestamp / 60_000L
                                     ChatBubble(
                                         message = msg,
+                                        showTime = showTime,
                                         onLongPress = {
                                             if (msg.type != "system_note") selectedMessage = msg
                                         },
@@ -1734,16 +2067,76 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         onImageClick = { path -> viewingImage = path }
                                     )
                                 }
+                                is ChatListItem.WorkProcess -> {
+                                    WorkProcessBubble(
+                                        group = item,
+                                        onMessageLongPress = { msg ->
+                                            if (msg.type != "system_note") selectedMessage = msg
+                                        },
+                                        onImageClick = { path -> viewingImage = path },
+                                        // 【实时思考归位】运行中把流式思考挂到最后一条工作过程里（
+                                        // 即最后一个工具调用之后），在它内部展开显示。
+                                        // 之前是丢在气泡外面单独一行、只显示最后一行，
+                                        // 既看不出上下文也看不到完整思考。
+                                        liveReasoning = if (isLoading &&
+                                            item === chatItems.lastOrNull() &&
+                                            streamingText.isEmpty()
+                                        ) currentReasoning else ""
+                                    )
+                                }
+                                is ChatListItem.DateSeparator -> {
+                                    DateSeparatorChip(item.displayText)
+                                }
+                            }
                             }
                         }
-                        if (currentReasoning.isNotEmpty()) {
-                            item(key = "reasoning_panel", contentType = "reasoning") {
-                                ReasoningPanel(text = currentReasoning)
+                        // 任务完成结果卡：本次会话编辑过的文件（功能强制常开）
+                        if (!isLoading && modifiedFiles.isNotEmpty()) {
+                            item(key = "modified_files_result", contentType = "modified_files") {
+                                AndroidModifiedFilesCard(
+                                    modifiedFiles,
+                                    onOpenPath = { openModifiedFile(it) }
+                                )
                             }
                         }
-                        if (currentThinking.isNotEmpty() && streamingText.isEmpty()) {
+                        // 底部状态栏（强制常开）：轮次/步数/token/上下文 + 修改历史入口
+                        if (!isLoading && chatHistory.isNotEmpty()) {
+                            item(key = "token_status_bar", contentType = "token_bar") {
+                                AndroidTokenStatusBar(chatHistory)
+                            }
+                        }
+                        // 【深度思考直显】还没出现工作过程气泡时（第一次工具调用之前），
+                        // 流式思考没有宿主可挂；而下面的 thinking 气泡又只在 reasoning 为空时显示，
+                        // 结果开了深度思考后，从发消息到第一次工具调用之间思考过程完全看不到。
+                        val liveReasoningHost = chatItems.lastOrNull() is ChatListItem.WorkProcess
+                        if (isLoading && currentReasoning.isNotBlank() && streamingText.isEmpty() && !liveReasoningHost) {
+                            item(key = "live_reasoning_standalone", contentType = "thinking") {
+                                LiveReasoningStep(currentReasoning)
+                            }
+                        }
+                        // 【实时思考】已归位到工作过程末尾（见 WorkProcessBubble 的 liveReasoning），
+                        // 不再在气泡外面单独画一行「深度思考」。
+                        if (currentThinking.isNotEmpty() && streamingText.isEmpty() &&
+                            currentReasoning.isBlank()
+                        ) {
                             item(key = "thinking_indicator", contentType = "thinking") {
                                 ThinkingBubble(text = currentThinking)
+                            }
+                        }
+                        // 【错误状态气泡】与「重试中」同款样式，不是 AI 聊天气泡。
+                        // 任务结束后仍保留（onFinish 只清 thinking，不清 error），
+                        // 直到用户下次发消息、点重试、手动关闭或切换模型才清。
+                        if (currentError.isNotEmpty() && streamingText.isEmpty()) {
+                            item(key = "error_indicator", contentType = "error") {
+                                ErrorBubble(text = currentError, onRetry = {
+                                    // 重新发送最后一条用户消息
+                                    val lastUserMsg = chatHistory.lastOrNull { it.role == "user" }?.content
+                                    if (!lastUserMsg.isNullOrBlank()) {
+                                        startAgent(chatHistory + ChatMessage(role = "user", content = lastUserMsg))
+                                    }
+                                }, onDismiss = {
+                                    AgentRunner.clearError()
+                                })
                             }
                         }
                         if (streamingText.isNotEmpty()) {
@@ -1755,6 +2148,30 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         isStreaming = true
                                     ),
                                     onLongPress = { }
+                                )
+                            }
+                        }
+                    }
+                    }
+
+                    // 【P1-14】MiniMap（长会话时显示右侧色块导航，点击跳转）
+                    if (chatItems.size >= 15) {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxHeight()
+                                    .padding(
+                                        end = 4.dp,
+                                        top = 24.dp,
+                                        bottom = dynamicBottomPadding + 16.dp
+                                    )
+                            ) {
+                                MiniMap(
+                                    listState = listState,
+                                    chatItems = chatItems
                                 )
                             }
                         }
@@ -1776,25 +2193,36 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
-                                .padding(end = 24.dp, bottom = 132.dp)
+                                // 【固定位置修正】之前写死 132dp，但输入卡片高度是变的
+                                // （多行输入 / 图片预览 / 彩盘切换），卡片一高 FAB 就被压上去。
+                                // 直接用实测的 inputBar 高度 + 余量。
+                                .padding(end = 24.dp, bottom = dynamicBottomPadding + 12.dp)
                         )
                     }
 
-                    // ============================================================
                     // 底部输入卡片（28dp 圆角 + 半透明 + 阴影）
                     // 这是输入框专用形状，不属于"卡片"，不套 PocoCard。
-                    // ============================================================
                     val shadowColor = glassShadowColor()
+                    // 【子代理页面不渲染输入框】不是禁用，是整块不画。
+                    // 子会话是 AI 派发的任务上下文，用户没有发消息的场景。
+                    if (currentSessionId?.startsWith("sub_") != true) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
+                            // 【关键修正：尺寸量在 padding 外层】
+                            // modifier 链从左到右「由外到内」，
+                            // onSizeChanged 之前挂在 .padding(vertical = 12.dp) 后面，
+                            // 量到的是扣掉上下 padding 和导航栏后的内层高度，
+                            // 比真实高度小了一截，所以 LazyColumn 底部留白不够，
+                            // 最后一条（token 状态栏）被输入框压住。
+                            // 现在提到 padding 之前，量到的就是占地面积的完整高度。
+                            .onSizeChanged { inputBarHeightPx = it.height }
                             .padding(horizontal = 16.dp, vertical = 12.dp)
                             .align(Alignment.BottomCenter)
-                            .imePadding()
                             .navigationBarsPadding()
                             .shadow(
-                                elevation = 16.dp,
-                                shape = RoundedCornerShape(28.dp),
+                                elevation = 12.dp,
+                                shape = RoundedCornerShape(AppRadius.XL),
                                 clip = false,
                                 ambientColor = shadowColor,
                                 spotColor = shadowColor
@@ -1802,10 +2230,10 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     ) {
                         Surface(
                             color = glassFloatingBg(),
-                            shape = RoundedCornerShape(28.dp),
+                            shape = RoundedCornerShape(AppRadius.XL),
                             border = BorderStroke(
                                 0.5.dp,
-                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
                             ),
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -1817,7 +2245,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 ) {
                                     Surface(
                                         color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f),
-                                        shape = RoundedCornerShape(20.dp),
+                                        shape = RoundedCornerShape(AppRadius.LG),
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1868,7 +2296,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 ) {
                                     Surface(
                                         color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f),
-                                        shape = RoundedCornerShape(20.dp),
+                                        shape = RoundedCornerShape(AppRadius.LG),
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(horizontal = 12.dp, vertical = 6.dp)
@@ -1928,7 +2356,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                                         contentDescription = null,
                                                         modifier = Modifier
                                                             .size(52.dp)
-                                                            .clip(RoundedCornerShape(8.dp))
+                                                            .clip(RoundedCornerShape(AppRadius.XS))
                                                             .clickable { viewingImage = path },
                                                         contentScale = ContentScale.Crop
                                                     )
@@ -1937,7 +2365,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                                         contentDescription = "移除",
                                                         tint = Color.White,
                                                         modifier = Modifier
-                                                            .size(16.dp)
+                                                            .size(24.dp)
                                                             .align(Alignment.TopEnd)
                                                             .background(Color.Black.copy(alpha = 0.5f), CircleShape)
                                                             .clickable {
@@ -1950,283 +2378,268 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                     }
                                 }
 
-                                // 输入框顶部工具行：深度思考开关 + 模型快捷选择（左上角）
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 12.dp, end = 12.dp, top = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (currentProfileValue?.supportsThinking != false) {
-                                        val thinkingOn = settings.enableThinking
-                                        Surface(
-                                            color = if (thinkingOn)
-                                                MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                                            else glassInputBg(),
-                                            shape = RoundedCornerShape(16.dp),
-                                            border = BorderStroke(
-                                                1.dp,
-                                                if (thinkingOn)
-                                                    MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
-                                                else glassInputBorder()
-                                            ),
-                                            modifier = Modifier.clickable {
-                                                val newSettings = settings.copy(enableThinking = !thinkingOn)
-                                                settings = newSettings
-                                                SettingsStore.save(prefs, newSettings)
-                                            }
-                                        ) {
+                                    // 【DeepSeek 式布局】一个圆角容器：
+                                    //   上：输入区（占满宽度，多行）
+                                    //   下：左 = 深度思考 / 模型选择 chip，右 = 语音/附件/发送
+                                    // chip 在容器内部，不再飘在外面占额外一行。
+                                    // 【融合式】输入区不自带底色/边框，直接坐在外层玻璃容器上；
+                                    // 聚焦时仅轻微提亮底色，避免"卡中卡"的割裂感。
+                                    // 【子代理只读】子会话是 AI 派发的任务上下文，用户不能直接发消息，
+                                    // 否则会污染子代理的上下文（AI 追问走 run_sub_session 的 session_id）。
+                                    // 输入框直接禁用，而不是等你敲完一大段再告诉你“只读”。
+                                    val inSubSession = currentSessionId?.startsWith("sub_") == true
+                                    OutlinedTextField(
+                                        value = userInput,
+                                        onValueChange = { if (!inSubSession) userInput = it },
+                                        enabled = !inSubSession,
+                                        placeholder = {
                                             Text(
-                                                "深度思考",
-                                                fontSize = 12.sp,
-                                                fontWeight = if (thinkingOn) FontWeight.Medium else FontWeight.Normal,
-                                                color = if (thinkingOn)
-                                                    MaterialTheme.colorScheme.primary
-                                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                                                if (inSubSession) "子代理会话（只读）—— 由 AI 派发与追问"
+                                                else if (autoChatMode) "免提模式 · 直接说话即可"
+                                                else "发消息…",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    .copy(alpha = 0.6f)
                                             )
-                                        }
-                                        Spacer(Modifier.width(8.dp))
-                                    }
-                                    var modelMenuOpen by remember { mutableStateOf(false) }
-                                    Box {
-                                        Surface(
-                                            color = glassInputBg(),
-                                            shape = RoundedCornerShape(16.dp),
-                                            border = BorderStroke(1.dp, glassInputBorder()),
-                                            modifier = Modifier.clickable { modelMenuOpen = true }
-                                        ) {
-                                            Row(
-                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Text(
-                                                    currentProfileValue?.name ?: "未配置",
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Medium,
-                                                    color = MaterialTheme.colorScheme.onSurface,
-                                                    maxLines = 1,
-                                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                                    modifier = Modifier.widthIn(max = 160.dp)
-                                                )
-                                                Spacer(Modifier.width(4.dp))
-                                                Icon(
-                                                    Icons.Default.ArrowDropDown,
-                                                    contentDescription = null,
-                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                    modifier = Modifier.size(16.dp)
-                                                )
-                                            }
-                                        }
-                                        DropdownMenu(
-                                            expanded = modelMenuOpen,
-                                            onDismissRequest = { modelMenuOpen = false }
-                                        ) {
-                                            settings.chatProfiles().forEach { p ->
-                                                DropdownMenuItem(
-                                                    text = {
-                                                        Text(
-                                                            p.name,
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                            color = if (p.id == settings.currentProfileId)
-                                                                MaterialTheme.colorScheme.primary
-                                                            else MaterialTheme.colorScheme.onSurface,
-                                                            fontWeight = if (p.id == settings.currentProfileId)
-                                                                FontWeight.SemiBold else FontWeight.Normal
-                                                        )
-                                                    },
-                                                    onClick = {
-                                                        modelMenuOpen = false
-                                                        val newSettings = settings.copy(currentProfileId = p.id)
-                                                        settings = newSettings
-                                                        SettingsStore.save(prefs, newSettings)
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(start = 8.dp, end = 6.dp, top = 2.dp, bottom = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    var inputFocused by remember { mutableStateOf(false) }
-                                    val inputBorderColor by animateColorAsState(
-                                        targetValue = if (inputFocused) {
-                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                                        } else glassInputBorder(),
-                                        animationSpec = tween(durationMillis = 180),
-                                        label = "inputBorder"
-                                    )
-                                    Box(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .heightIn(min = 46.dp, max = 140.dp)
-                                            .clip(RoundedCornerShape(23.dp))
-                                            .background(glassInputBg())
-                                            .border(
-                                                width = 1.dp,
-                                                color = inputBorderColor,
-                                                shape = RoundedCornerShape(23.dp)
-                                            ),
-                                        contentAlignment = Alignment.CenterStart
-                                    ) {
-                                        BasicTextField(
-                                            value = userInput,
-                                            onValueChange = { userInput = it },
-                                            textStyle = MaterialTheme.typography.bodyMedium.copy(
-                                                color = MaterialTheme.colorScheme.onSurface,
-                                                lineHeight = 20.sp
-                                            ),
-                                            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                                            // 软键盘 Enter 必须"按一次换一行"。
-                                            //
-                                            // 旧实现没设 keyboardOptions，BasicTextField 默认
-                                            // imeAction = ImeAction.Default。部分国产输入法会把
-                                            // 它当成"完成/发送"，第一次按只收起键盘，要按两次才换行。
-                                            //
-                                            // 显式声明 ImeAction.Default + singleLine = false，
-                                            // 让软键盘显示"换行"键并直接插入 \n。
-                                            keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
-                                                imeAction = androidx.compose.ui.text.input.ImeAction.Default
-                                            ),
-                                            singleLine = false,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .padding(horizontal = 16.dp, vertical = 13.dp)
-                                                .onFocusChanged { inputFocused = it.isFocused },
-                                            maxLines = 5,
-                                            decorationBox = { innerTextField ->
-                                                Box {
-                                                    if (userInput.isEmpty()) {
-                                                        Text(
-                                                            if (autoChatMode) "免提模式 · 直接说话即可"
-                                                            else "发消息…",
-                                                            style = MaterialTheme.typography.bodyMedium,
-                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                                .copy(alpha = 0.6f)
-                                                        )
-                                                    }
-                                                    innerTextField()
-                                                }
-                                            }
-                                        )
-                                    }
-
-                                    Spacer(Modifier.width(2.dp))
-
-                                    if (!autoChatMode) {
-                                        IconButton(
-                                            onClick = { startVoiceInput() },
-                                            enabled = !isLoading,
-                                            modifier = Modifier.size(34.dp)
-                                        ) {
-                                            Icon(
-                                                Icons.Default.Mic,
-                                                contentDescription = "语音输入",
-                                                modifier = Modifier.size(18.dp),
-                                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-
-                                    IconButton(
-                                        onClick = {
-                                            keyboardController?.hide()
-                                            showMorePanel = true
                                         },
-                                        enabled = !isLoading,
-                                        modifier = Modifier.size(34.dp)
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Add,
-                                            contentDescription = "更多功能",
-                                            modifier = Modifier.size(20.dp),
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            lineHeight = 21.sp
+                                        ),
+                                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                                            imeAction = androidx.compose.ui.text.input.ImeAction.Default
+                                        ),
+                                        singleLine = false,
+                                        maxLines = 8,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .heightIn(min = 46.dp, max = 100.dp),
+                                        shape = RoundedCornerShape(AppRadius.XL),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            // 永不变色：聚焦/未聚焦都是透明，直接坐在外层玻璃容器上
+                                            focusedContainerColor = Color.Transparent,
+                                            unfocusedContainerColor = Color.Transparent,
+                                            focusedBorderColor = Color.Transparent,
+                                            unfocusedBorderColor = Color.Transparent,
+                                            cursorColor = MaterialTheme.colorScheme.primary
                                         )
-                                    }
+                                    )
 
-                                    Spacer(Modifier.width(2.dp))
-
-                                    if (isLoading) {
-                                        FilledIconButton(
-                                            onClick = { stopAgent() },
-                                            modifier = Modifier.size(40.dp),
-                                            shape = CircleShape,
-                                            colors = IconButtonDefaults.filledIconButtonColors(
-                                                containerColor = MaterialTheme.colorScheme.error,
-                                                contentColor = MaterialTheme.colorScheme.onError
-                                            )
+                                        // 底部工具行：左 chip，右按钮
+                                        Row(
+                                            Modifier.fillMaxWidth()
+                                                .padding(start = 10.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(
-                                                Icons.Default.Stop,
-                                                contentDescription = "停止生成",
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                    } else {
-                                        FilledIconButton(
-                                            onClick = {
-                                                if (userInput.isBlank() && pendingPickedImages.isEmpty()) {
-                                                    return@FilledIconButton
+                                            // 模型胶囊：点开弹面板（模型选择 + 推理强度滑块）
+                                            ModelSettingsButton(
+                                                modelName = currentProfileValue?.name ?: "未配置",
+                                                profiles = settings.chatProfiles().map { it.id to it.name },
+                                                currentProfileId = settings.currentProfileId,
+                                                onSelectProfile = { id ->
+                                                    val newSettings = settings.copy(currentProfileId = id)
+                                                    settings = newSettings
+                                                    SettingsStore.save(prefs, newSettings)
+                                                    // 换模型 = 开始新尝试：上一次针对旧配置的错误不再挂着
+                                                    AgentRunner.clearError()
+                                                },
+                                                thinkingLevel = settings.thinkingLevel,
+                                                supportsThinking = currentProfileValue?.supportsThinking != false,
+                                                onThinkingLevelChange = { level ->
+                                                    val newSettings = settings.copy(thinkingLevel = level)
+                                                    settings = newSettings
+                                                    SettingsStore.save(prefs, newSettings)
                                                 }
-                                                sendMessageInternal(userInput, pendingPickedImages)
-                                            },
-                                            enabled = userInput.isNotBlank() || pendingPickedImages.isNotEmpty(),
-                                            modifier = Modifier.size(40.dp),
-                                            shape = CircleShape,
-                                            colors = IconButtonDefaults.filledIconButtonColors(
-                                                containerColor = MaterialTheme.colorScheme.primary,
-                                                contentColor = MaterialTheme.colorScheme.onPrimary,
-                                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
-                                        ) {
-                                            Icon(
-                                                Icons.AutoMirrored.Filled.Send,
-                                                contentDescription = "发送",
-                                                modifier = Modifier.size(18.dp)
-                                            )
+
+                                            Spacer(Modifier.weight(1f))
+
+                                            if (!autoChatMode) {
+                                                IconButton(
+                                                    onClick = { startVoiceInput() },
+                                                    enabled = !isLoading,
+                                                    modifier = Modifier.size(34.dp)
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Mic,
+                                                        contentDescription = "语音输入",
+                                                        modifier = Modifier.size(18.dp),
+                                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+
+                                            IconButton(
+                                                onClick = {
+                                                    keyboardController?.hide()
+                                                    showMorePanel = true
+                                                },
+                                                enabled = !isLoading,
+                                                modifier = Modifier.size(34.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Add,
+                                                    contentDescription = "更多功能",
+                                                    modifier = Modifier.size(20.dp),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+
+                                            Spacer(Modifier.width(2.dp))
+
+                                            if (isLoading) {
+                                                FilledIconButton(
+                                                    onClick = { stopAgent() },
+                                                    modifier = Modifier.size(38.dp),
+                                                    shape = CircleShape,
+                                                    colors = IconButtonDefaults.filledIconButtonColors(
+                                                        containerColor = MaterialTheme.colorScheme.error,
+                                                        contentColor = MaterialTheme.colorScheme.onError
+                                                    )
+                                                ) {
+                                                    Icon(
+                                                        Icons.Default.Stop,
+                                                        contentDescription = "停止生成",
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            } else {
+                                                val canSend = userInput.isNotBlank() || pendingPickedImages.isNotEmpty()
+                                                // 渐变淡入：从「不可发」到「可发」时不会硬切
+                                                val sendGradAlpha by animateFloatAsState(
+                                                    targetValue = if (canSend) 1f else 0f,
+                                                    animationSpec = tween(200),
+                                                    label = "sendButtonGradient"
+                                                )
+                                                Box(
+                                                    Modifier
+                                                        .size(38.dp)
+                                                        .clip(CircleShape)
+                                                        .background(
+                                                            SolidColor(
+                                                                MaterialTheme.colorScheme.surfaceVariant
+                                                            )
+                                                        )
+                                                        .background(FluidGradient.diagonal(alpha = sendGradAlpha))
+                                                        .clickable(enabled = canSend) {
+                                                            sendMessageInternal(userInput, pendingPickedImages)
+                                                        },
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Icon(
+                                                        Icons.AutoMirrored.Filled.Send,
+                                                        contentDescription = "发送",
+                                                        tint = if (canSend) Color.White
+                                                               else MaterialTheme.colorScheme.onSurfaceVariant,
+                                                        modifier = Modifier.size(18.dp)
+                                                    )
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    }
                 }
             }
-        }
 
-        // ============================================================
+        // 【P1-13】全局轻提示浮层（右上角），在 Page 浮层之下、Onboarding 之上
+        ToastHost(
+            alignment = Alignment.TopEnd,
+            modifier = Modifier
+                .statusBarsPadding()
+                .padding(top = 8.dp, end = 16.dp)
+        )
+
         // 整屏 Page 浮层
-        // ============================================================
         AnimatedContent(
             targetState = currentPage,
             transitionSpec = {
+                // 标准水平平移（iOS / Material 通用）：
+                // 进入：新页从右整屏滑入，旧页左移 1/4
+                // 退出：旧页右滑整屏离场，下层从 -1/4 归位
+                // 不做淡入淡出，纯位移最稳、最不抢戏
                 if (targetState != null) {
-                    // 进入 Page：从右滑入
-                    (slideInHorizontally(
+                    slideInHorizontally(
                         animationSpec = tween(300, easing = FastOutSlowInEasing),
                         initialOffsetX = { it }
-                    ) + fadeIn(tween(260))) togetherWith
-                            fadeOut(tween(200))
+                    ) togetherWith
+                            slideOutHorizontally(
+                                animationSpec = tween(300, easing = FastOutSlowInEasing),
+                                targetOffsetX = { -it / 4 }
+                            )
                 } else {
-                    // 退出 Page：向右滑出
-                    fadeIn(tween(260)) togetherWith
-                            (slideOutHorizontally(
-                                animationSpec = tween(280, easing = FastOutSlowInEasing),
+                    slideInHorizontally(
+                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                        initialOffsetX = { -it / 4 }
+                    ) togetherWith
+                            slideOutHorizontally(
+                                animationSpec = tween(300, easing = FastOutSlowInEasing),
                                 targetOffsetX = { it }
-                            ) + fadeOut(tween(200)))
+                            )
                 }
             },
             label = "pageTransition",
             modifier = Modifier.fillMaxSize()
         ) { page ->
             if (page != null) {
+                // 滑动返回手势：从左边缘向右滑动关闭页面
+                val swipeOffset = remember { androidx.compose.animation.core.Animatable(0f) }
+                val density = LocalDensity.current
+                val edgeThresholdPx = with(density) { 24.dp.toPx() }
+                val dismissThresholdPx = with(density) { 120.dp.toPx() }
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .offset { IntOffset(swipeOffset.value.toInt(), 0) }
+                        .pointerInput(page) {
+                            // 网页预览页：横滑手势全部让给网页（页面内拖拽/横滑不再被
+                            // 外层"右滑返回"抢走），关闭页面交给页内返回键与 BackHandler
+                            if (page == AppPage.WEBVIEW) return@pointerInput
+                            detectHorizontalDragGestures(
+                                onDragStart = { /* 不限制起点，整个页面都可以右滑返回 */ },
+                                onDragEnd = {
+                                    scope.launch {
+                                        if (swipeOffset.value > dismissThresholdPx) {
+                                            // 过阈值直接交棒退出动画：AnimatedContent 的 slideOut+fadeOut
+                                            // 从手势当前位置无缝续接。不能先 animateTo 屏外再置 null——
+                                            // 那会让退出动画从原点重播（内容弹回再飞），出现"拽着跑"的鬼畜
+                                            currentPage = null
+                                        } else {
+                                            swipeOffset.animateTo(
+                                                targetValue = 0f,
+                                                animationSpec = tween(200)
+                                            )
+                                        }
+                                    }
+                                },
+                                onDragCancel = {
+                                    scope.launch {
+                                        swipeOffset.animateTo(
+                                            targetValue = 0f,
+                                            animationSpec = tween(200)
+                                        )
+                                    }
+                                },
+                                onHorizontalDrag = { change, dragAmount ->
+                                    change.consume()
+                                    scope.launch {
+                                        val newOffset =
+                                            (swipeOffset.value + dragAmount).coerceIn(0f, size.width.toFloat())
+                                        swipeOffset.snapTo(newOffset)
+                                    }
+                                }
+                            )
+                        }
+                ) {
                 when (page) {
+                    AppPage.WEBVIEW -> AndroidWebViewerPage(
+                        url = webViewerUrl,
+                        onBack = { currentPage = null }
+                    )
+
                     AppPage.MEMORY -> MemoryPage(onBack = { currentPage = null })
 
                     AppPage.PERMISSIONS -> PermissionsPage(onBack = { currentPage = null })
@@ -2335,6 +2748,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
                     AppPage.ENV_STORE -> EnvStorePage(onBack = { currentPage = null })
 
+                    AppPage.SKILL -> SkillPage(onBack = { currentPage = null })
+
                     AppPage.PC_HUB -> PcHubPage(
                         settings = settings,
                         onSettingsChanged = { newSettings ->
@@ -2349,13 +2764,14 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         },
                         onBack = { currentPage = null }
                     )
+
+                    AppPage.HISTORY -> HistoryPage(onBack = { currentPage = null })
                 }
+                } // Box (swipe gesture)
             }
         }
 
-        // ============================================================
         // 【新增】Onboarding overlay（最外层，盖住抽屉 + Page + 输入框）
-        // ============================================================
         when (onboardingStage) {
             "permissions" -> OnboardingPermissionsFlow(
                 onFinished = {
@@ -2374,243 +2790,5 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             else -> Unit
         }
     }
-}
 
-// ============================================================
-// 更多功能面板项
-// ============================================================
-//
-// 【UI 统一】图标容器圆角保留 18dp（面板内专用尺寸）。
-// 高亮态走 primary，常态走 surfaceVariant。
-
-@Composable
-private fun MoreActionItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    highlighted: Boolean = false,
-    enabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled) 0.94f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f, stiffness = 500f),
-        label = "moreActionScale"
-    )
-    val alpha = if (enabled) 1f else 0.4f
-
-    Column(
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .scale(scale)
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                enabled = enabled,
-                onClick = onClick
-            )
-            .padding(horizontal = 8.dp, vertical = 8.dp)
-            .graphicsLayer { this.alpha = alpha },
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Surface(
-            color = when {
-                highlighted -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-            },
-            shape = RoundedCornerShape(18.dp),
-            modifier = Modifier.size(56.dp)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    icon,
-                    contentDescription = null,
-                    tint = if (highlighted) MaterialTheme.colorScheme.onPrimary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(26.dp)
-                )
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodySmall,
-            color = if (highlighted) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 1
-        )
-    }
-}
-
-// ============================================================
-// 侧边抽屉内容
-// ============================================================
-//
-// 【UI 统一】抽屉背景走 glassSheetBg（ModalDrawerSheet 传入）。
-// 项颜色走 colorScheme。
-
-@Composable
-private fun SideDrawerContent(
-    progress: Float,
-    currentProfileName: String,
-    floatingOn: Boolean,
-    onNewChat: () -> Unit,
-    onOpenPcHub: () -> Unit,
-    onOpenSchedules: () -> Unit,
-    onOpenMcp: () -> Unit,
-    onOpenMemory: () -> Unit,
-    onOpenAdvancedSettings: () -> Unit,
-    onToggleFloating: () -> Unit,
-    onOpenAbout: () -> Unit
-) {
-    val density = LocalDensity.current
-    val offsetPx = with(density) { 28.dp.toPx() }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 12.dp)
-            .graphicsLayer {
-                val p = progress.coerceIn(0f, 1f)
-                alpha = 0.35f + 0.65f * p
-                translationX = -offsetPx * (1f - p)
-            }
-    ) {
-        Spacer(Modifier.height(28.dp))
-        Text(
-            "FurAgent",
-            fontWeight = FontWeight.Black,
-            fontSize = 22.sp,
-            letterSpacing = (-0.5).sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-        )
-        Spacer(Modifier.height(20.dp))
-        Surface(
-            color = MaterialTheme.colorScheme.primary,
-            shape = RoundedCornerShape(14.dp),
-            modifier = Modifier.fillMaxWidth().clickable { onNewChat() }
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Add, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "新对话", color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.SemiBold, fontSize = 15.sp
-                )
-            }
-        }
-        Spacer(Modifier.height(20.dp))
-
-        DrawerItem(Icons.Default.Devices, "电脑互联", onOpenPcHub)
-        DrawerItem(Icons.Default.Schedule, "定时任务", onOpenSchedules)
-        DrawerItem(Icons.Default.Extension, "MCP 服务器", onOpenMcp)
-        DrawerItem(Icons.Default.Psychology, "长期记忆", onOpenMemory)
-        DrawerItem(Icons.Default.Tune, "高级设置", onOpenAdvancedSettings)
-        DrawerItem(
-            Icons.Default.BubbleChart,
-            if (floatingOn) "关闭悬浮助手" else "开启悬浮助手",
-            onToggleFloating
-        )
-
-        Spacer(Modifier.weight(1f))
-
-        DrawerItem(Icons.Default.Favorite, "关于我们", onOpenAbout)
-        Spacer(Modifier.height(20.dp))
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 20.dp)
-        ) {
-            Text(
-                "当前模型",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                currentProfileName,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "Token 累计 ≈ ${TokenStats.total}",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "FurAgent v1.0",
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun DrawerItem(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    onClick: () -> Unit
-) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.97f else 1f,
-        animationSpec = spring(dampingRatio = 0.65f, stiffness = 500f),
-        label = "drawerItemScale"
-    )
-    val bg = if (pressed) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-    else Color.Transparent
-    Surface(
-        color = bg,
-        shape = RoundedCornerShape(12.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp)
-            .scale(scale)
-            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                icon, contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(14.dp))
-            Text(label, fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-        }
-    }
-}
-
-// ============================================================
-// 消息删除辅助
-// ============================================================
-
-fun deleteMessagePair(history: List<ChatMessage>, index: Int): List<ChatMessage> {
-    val msg = history.getOrNull(index) ?: return history
-    val newList = history.toMutableList()
-    if (msg.role == "user" && msg.type == "text") {
-        var end = index + 1
-        while (end < newList.size) {
-            val m = newList[end]
-            if (m.role == "user" && m.type == "text") break
-            end++
-        }
-        for (i in (end - 1) downTo index) newList.removeAt(i)
-    } else {
-        newList.removeAt(index)
-    }
-    return newList
-}
+/** 子代理入口 + 修改历史对话框 → 已拆到 ui/AndroidDialogs.kt */

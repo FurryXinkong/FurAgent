@@ -7,10 +7,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.CallSplit
-import androidx.compose.material.icons.automirrored.filled.Help
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,9 +24,7 @@ import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import java.util.*
 
-// ============================================================
 // 统一 OutlinedTextField 配色（批次 17 色板统一）
-// ============================================================
 // 输入框配色统一到 FurColors，不再混用 M3 colorScheme，
 // 与 GlassTextField 的配色逻辑保持一致。
 
@@ -75,7 +70,7 @@ fun WorkflowEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(Radius.MD),
+        shape = RoundedCornerShape(Radius.DIALOG),
         containerColor = MaterialTheme.colorScheme.surface,
         title = { Text(if (initial == null) "新建工作流" else "编辑工作流") },
         text = {
@@ -214,9 +209,7 @@ fun WorkflowEditorDialog(
     }
 }
 
-// ============================================================
 // 步骤卡片
-// ============================================================
 
 @Composable
 private fun StepCard(
@@ -316,7 +309,7 @@ private fun describeStep(step: WorkflowStep): StepInfo {
     return when (step.stepType) {
         "call" -> StepInfo(
             Icons.Default.Build,
-            Color(0xFF3B82F6),
+            Color(0xFF6E7CFA),
             "${DesktopTools.displayName(step.toolName)}（${step.argsTemplate.size} 参数）"
         )
         "condition" -> StepInfo(
@@ -356,9 +349,7 @@ private fun stepTypeLabel(type: String): String = when (type) {
     else -> type
 }
 
-// ============================================================
 // 步骤编辑器
-// ============================================================
 
 @Composable
 fun StepEditorDialog(
@@ -387,7 +378,7 @@ fun StepEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(Radius.MD),
+        shape = RoundedCornerShape(Radius.DIALOG),
         containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("编辑步骤") },
         text = {
@@ -651,9 +642,7 @@ fun StepEditorDialog(
     }
 }
 
-// ============================================================
 // StepTypeChip（统一 12dp 圆角）
-// ============================================================
 
 @Composable
 private fun RowScope.StepTypeChip(
@@ -682,9 +671,7 @@ private fun RowScope.StepTypeChip(
     }
 }
 
-// ============================================================
 // 分支编辑器
-// ============================================================
 
 @Composable
 private fun BranchEditor(
@@ -716,18 +703,18 @@ private fun BranchEditor(
                 IconButton(
                     onClick = { onMoveUp(i) },
                     enabled = i > 0,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(14.dp))
                 }
                 IconButton(
                     onClick = { onMoveDown(i) },
                     enabled = i < steps.size - 1,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(28.dp)
                 ) {
                     Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(14.dp))
                 }
-                IconButton(onClick = { onDelete(i) }, modifier = Modifier.size(24.dp)) {
+                IconButton(onClick = { onDelete(i) }, modifier = Modifier.size(28.dp)) {
                     Icon(
                         Icons.Default.Close,
                         null,
@@ -745,9 +732,7 @@ private fun BranchEditor(
     }
 }
 
-// ============================================================
 // 调用工具表单
-// ============================================================
 
 @Composable
 private fun CallStepForm(

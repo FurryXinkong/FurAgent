@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.data.*
 import net.xinkong.furagent.shared.*
+import net.xinkong.furagent.shared.util.FileNaming
 import net.xinkong.furagent.shared.util.formatFileSize
 import net.xinkong.furagent.shared.util.isToolFailure
 import net.xinkong.furagent.tools.ToolRegistry
@@ -54,7 +55,7 @@ object PcBridgeClient {
     private val pendingPings = AtomicLong(0)
 
     /**
-     * 【F9】连接建立后必须稳定存活超过这个阈值才重置退避。
+     * 连接建立后必须稳定存活超过这个阈值才重置退避。
      *
      * 背景：某些场景（网络切换、旧连接未清理、中间设备干扰）会出现
      * "连上 1~2 秒就断，断了立刻重连"的循环。旧代码只要有 `onOpen`
@@ -253,14 +254,14 @@ object PcBridgeClient {
         val openedSignal = CompletableDeferred<Boolean>()
 
         val listener = object : WebSocketListener() {
-            override fun onOpen(ws: WebSocket, response: Response) {
+            override fun onOpen(webSocket: WebSocket, response: Response) {
                 if (myToken != connectionToken) {
                     AgentLogger.log(
                         "BRIDGE",
                         "旧 socket onOpen（token 已过期，立即关闭）：$url"
                     )
                     try {
-                        ws.close(1000, "stale")
+                        webSocket.close(1000, "stale")
                     } catch (e: Exception) {
                         AgentLogger.log(
                             "BRIDGE",
@@ -272,7 +273,7 @@ object PcBridgeClient {
                 }
                 val elapsed = System.currentTimeMillis() - startMs
                 AgentLogger.log("BRIDGE", "已连接 $url（握手 ${elapsed}ms）")
-                webSocket = ws
+                this@PcBridgeClient.webSocket = webSocket
                 _status.value = Status.CONNECTED
                 _lastError.value = ""
                 pendingPings.set(0)
@@ -288,7 +289,7 @@ object PcBridgeClient {
                         httpToken = ht,
                         mac = getLocalMac()
                     )
-                    ws.send(hello.encodeToString())
+                    webSocket.send(hello.encodeToString())
                 } catch (e: Exception) {
                     AgentLogger.log(
                         "BRIDGE",
@@ -301,17 +302,17 @@ object PcBridgeClient {
                 openedSignal.complete(true)
             }
 
-            override fun onMessage(ws: WebSocket, text: String) {
+            override fun onMessage(webSocket: WebSocket, text: String) {
                 if (myToken != connectionToken) return
-                handleIncoming(ws, text)
+                handleIncoming(webSocket, text)
             }
 
-            override fun onClosing(ws: WebSocket, code: Int, reason: String) {
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 AgentLogger.log("BRIDGE", "对端关闭中：$url code=$code reason=$reason")
-                ws.close(1000, null)
+                webSocket.close(1000, null)
             }
 
-            override fun onClosed(ws: WebSocket, code: Int, reason: String) {
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 if (myToken != connectionToken) {
                     AgentLogger.log(
                         "BRIDGE",
@@ -328,7 +329,7 @@ object PcBridgeClient {
                 if (!openedSignal.isCompleted) openedSignal.complete(false)
             }
 
-            override fun onFailure(ws: WebSocket, t: Throwable, response: Response?) {
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 if (myToken != connectionToken) {
                     AgentLogger.log(
                         "BRIDGE",
@@ -375,7 +376,7 @@ object PcBridgeClient {
             while (true) {
                 delay(BridgeConfig.HEARTBEAT_INTERVAL_MS.milliseconds)
 
-                // 【F9】阈值从 BridgeConfig 读（5），比旧值（3）更抗丢包
+                // 阈值从 BridgeConfig 读（5），比旧值（3）更抗丢包
                 if (pendingPings.get() >= BridgeConfig.MAX_PENDING_PINGS) {
                     AgentLogger.log(
                         "BRIDGE",
@@ -529,9 +530,7 @@ object PcBridgeClient {
         }
     }
 
-    // ============================================================
     // Relay 相关
-    // ============================================================
 
     private fun handleIncomingRelayFile(ws: WebSocket, msg: BridgeMessage) {
         val relayId = msg.payload["relayId"] ?: return
@@ -554,7 +553,7 @@ object PcBridgeClient {
 
         val prefs = ctx.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE)
         val settings = SettingsStore.load(prefs)
-        val target = resolveReceiveFile(settings.pcReceiveDir, fileName)
+        val target = FileNaming.resolveReceiveFile(settings.pcReceiveDir, fileName)
 
         val url = "http://$currentHost:$hp/download" +
                 "?token=${encode(ht)}" +
@@ -565,14 +564,14 @@ object PcBridgeClient {
             val req = Request.Builder().url(url).get().build()
             val resp = httpClient.newCall(req).execute()
             if (!resp.isSuccessful) {
-                val body = resp.use { it.body?.string() ?: "" }
+                val body = resp.use { it.body.string() }
                 replyRelayResult(ws, msg, sourceClient, relayId, false, "HTTP ${resp.code}：${body.take(100)}")
                 return
             }
             target.parentFile?.mkdirs()
             val tmp = File(target.parentFile, target.name + ".part")
             resp.use {
-                it.body?.byteStream()?.use { input ->
+                it.body.byteStream().use { input ->
                     tmp.outputStream().use { output ->
                         input.copyTo(output, 128 * 1024)
                     }
@@ -626,42 +625,70 @@ object PcBridgeClient {
         }
     }
 
+    /**
+     * 上传文件到电脑的 HTTP 服务。
+     *
+     * 原来 PcHubPage.uploadFileViaHttp 和 sendRelayFile 各写了一份 OkHttp 上传逻辑，
+     * 现统一到这里。
+     *
+     * @param dir 可选，目标子目录（相对电脑 receiveDir）。为空则落 receiveDir 根。
+     * @return Pair(是否成功, 提示文本)
+     */
+    suspend fun uploadFileToPc(
+        localFile: File,
+        dir: String = ""
+    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val hp = _httpPort.value
+        val ht = _httpToken.value
+        if (hp <= 0 || ht.isBlank()) return@withContext false to "HTTP 通道未就绪"
+        if (!localFile.exists() || !localFile.isFile) {
+            return@withContext false to "文件不存在：${localFile.absolutePath}"
+        }
+
+        val url = buildString {
+            append("http://$currentHost:$hp/upload")
+            append("?token=").append(encode(ht))
+            append("&path=").append(encode(localFile.name))
+            if (dir.isNotBlank()) append("&dir=").append(encode(dir))
+        }
+
+        try {
+            AgentLogger.log(
+                "BRIDGE",
+                "上传开始：${localFile.name}（${formatFileSize(localFile.length())}）→ $url"
+            )
+            val body = localFile.asRequestBody("application/octet-stream".toMediaType())
+            val req = Request.Builder().url(url).post(body).build()
+            httpClient.newCall(req).execute().use { resp ->
+                val text = resp.body.string()
+                if (resp.isSuccessful) {
+                    AgentLogger.log("BRIDGE", "上传成功：${localFile.name}")
+                    true to "已上传：${localFile.name}（${formatFileSize(localFile.length())}）"
+                } else {
+                    AgentLogger.log("BRIDGE", "上传失败 HTTP ${resp.code}：${text.take(200)}")
+                    false to "HTTP ${resp.code}：${text.take(100)}"
+                }
+            }
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "BRIDGE",
+                "上传异常：${e.javaClass.simpleName}: ${e.message}"
+            )
+            false to "上传失败：${e.message}"
+        }
+    }
+
     suspend fun sendRelayFile(targetClientId: String, localFile: File): String {
         val ws = webSocket ?: throw RuntimeException("未连接到电脑")
         if (_status.value != Status.CONNECTED) throw RuntimeException("连接状态异常")
-
-        val hp = _httpPort.value
-        val ht = _httpToken.value
-        if (hp <= 0 || ht.isBlank()) throw RuntimeException("HTTP 通道未就绪")
-        if (!localFile.exists() || !localFile.isFile) {
-            throw RuntimeException("文件不存在：${localFile.absolutePath}")
-        }
 
         val relayId = UUID.randomUUID().toString().replace("-", "").take(16)
         val relayDir = "relay/$relayId"
         val fileName = localFile.name
 
-        val uploadUrl = "http://$currentHost:$hp/upload" +
-                "?token=${encode(ht)}" +
-                "&path=${encode(fileName)}" +
-                "&dir=${encode(relayDir)}"
-
-        val uploaded = withContext(Dispatchers.IO) {
-            try {
-                val body = localFile.asRequestBody("application/octet-stream".toMediaType())
-                val req = Request.Builder().url(uploadUrl).post(body).build()
-                httpClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        val text = resp.body?.string() ?: ""
-                        throw RuntimeException("上传失败 HTTP ${resp.code}：${text.take(100)}")
-                    }
-                }
-                true
-            } catch (e: Exception) {
-                throw RuntimeException("上传失败：${e.message}")
-            }
-        }
-        if (!uploaded) throw RuntimeException("上传失败")
+        // 上传逻辑统一走 uploadFileToPc（内部已做 HTTP 通道/文件校验）
+        val (uploaded, uploadMsg) = uploadFileToPc(localFile, relayDir)
+        if (!uploaded) throw RuntimeException(uploadMsg)
 
         val msgId = UUID.randomUUID().toString()
         val relayMsg = BridgeMessage.relayFile(
@@ -676,7 +703,12 @@ object PcBridgeClient {
         )
         try {
             ws.send(relayMsg.encodeToString())
+            AgentLogger.log("BRIDGE", "relay 消息已发送：relayId=$relayId → $targetClientId")
         } catch (e: Exception) {
+            AgentLogger.log(
+                "BRIDGE",
+                "relay 消息发送失败：${e.javaClass.simpleName}: ${e.message}"
+            )
             throw RuntimeException("发送 relay 消息失败：${e.message}")
         }
 
@@ -689,9 +721,7 @@ object PcBridgeClient {
 
     fun getRelayStatus(relayId: String): Pair<Boolean, String>? = _relayStatus.value[relayId]
 
-    // ============================================================
     // Peers
-    // ============================================================
 
     suspend fun listPeers(): List<PeerInfo> {
         val ws = webSocket ?: return emptyList()
@@ -740,9 +770,7 @@ object PcBridgeClient {
         }
     }
 
-    // ============================================================
     // 工具调用
-    // ============================================================
 
     private fun handleToolsList(msg: BridgeMessage) {
         val raw = msg.payload["tools"] ?: return
@@ -842,9 +870,20 @@ object PcBridgeClient {
         if (tool != "write_file") return argsJson
         return try {
             val args = JSONObject(argsJson)
-            val rawPath = args.optString("path", "")
-            val fileName = extractFileName(rawPath)
-            val target = resolveReceiveFile(settings.pcReceiveDir, fileName)
+            val rawPath = args.optString("path", "").trim()
+            if (rawPath.isBlank()) return argsJson
+
+            // 【与桌面端 BridgeServer.rewriteIfWrite 对齐】纯文件名才改写到 receiveDir，
+            // 带路径（含 / 或盘符）的尊重原路径，避免 AI 指定绝对路径被静默改写。
+            val hasSeparator = rawPath.contains('/') ||
+                    Regex("^[A-Za-z]:").containsMatchIn(rawPath)
+            if (hasSeparator) {
+                AgentLogger.log("BRIDGE", "write_file 带路径，按原路径写入：$rawPath")
+                return argsJson
+            }
+
+            val fileName = FileNaming.extractFileName(rawPath)
+            val target = FileNaming.resolveReceiveFile(settings.pcReceiveDir, fileName)
             args.put("path", target.absolutePath)
             args.toString()
         } catch (e: Exception) {
@@ -913,9 +952,45 @@ object PcBridgeClient {
 
     fun isConnected(): Boolean = _status.value == Status.CONNECTED
 
-    // ============================================================
+    /**
+     * 把一条手机通知转发给电脑。
+     *
+     * 单向：手机 → 电脑。未连接时静默丢弃（不报错、不重试），
+     * 因为通知是实时流，积压重发反而会造成风暴。
+     *
+     * @return true 表示已交给 WebSocket 发送队列
+     */
+    fun sendNotification(
+        appName: String,
+        packageName: String,
+        title: String,
+        text: String,
+        postTime: Long,
+        notifKey: String = ""
+    ): Boolean {
+        val ws = webSocket ?: return false
+        if (_status.value != Status.CONNECTED) return false
+        return try {
+            val msg = BridgeMessage.notification(
+                from = EndpointId.PHONE,
+                appName = appName,
+                packageName = packageName,
+                title = title,
+                text = text,
+                postTime = postTime,
+                notifKey = notifKey
+            )
+            ws.send(msg.encodeToString())
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "NOTIFY",
+                "转发通知失败：${e.javaClass.simpleName}: ${e.message}"
+            )
+            false
+        }
+    }
+
     // WOL 唤醒
-    // ============================================================
 
     suspend fun wakeAndReconnect(
         context: Context,

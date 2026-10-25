@@ -191,7 +191,7 @@ object NotificationHelper {
     }
 
     /**
-     * 【B15】接收文件通知：点击打开文件。
+     * 接收文件通知：点击打开文件。
      * 用 FileProvider 生成 content:// URI，让系统各 app 能读。
      */
     fun showFileReceivedNotification(context: Context, file: java.io.File) {

@@ -1,4 +1,5 @@
 package net.xinkong.furagent.ui
+import net.xinkong.furagent.ui.theme.AppRadius
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
@@ -7,10 +8,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.CallSplit
-import androidx.compose.material.icons.automirrored.filled.Help
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -57,7 +55,7 @@ fun WorkflowEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(AppRadius.DIALOG),
         containerColor = MaterialTheme.colorScheme.surface,
         title = { Text(if (initial == null) "新建工作流" else "编辑工作流") },
         text = {
@@ -72,7 +70,7 @@ fun WorkflowEditorDialog(
                     label = { Text("名称") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -85,7 +83,7 @@ fun WorkflowEditorDialog(
                     label = { Text("说明（可选）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -99,7 +97,7 @@ fun WorkflowEditorDialog(
                     placeholder = { Text("例如：app_name, delay") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(AppRadius.SM),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -154,7 +152,7 @@ fun WorkflowEditorDialog(
                                 editingStepIndex = -1
                                 editingStep = WorkflowStep(stepType = "call")
                             },
-                            shape = RoundedCornerShape(12.dp),
+                            shape = RoundedCornerShape(AppRadius.SM),
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -211,9 +209,7 @@ fun WorkflowEditorDialog(
     }
 }
 
-// ============================================================
 // 步骤卡片
-// ============================================================
 
 @Composable
 private fun StepCard(
@@ -229,7 +225,7 @@ private fun StepCard(
 
     Surface(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(AppRadius.SM),
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant),
         modifier = Modifier.fillMaxWidth().clickable { onEdit() }
     ) {
@@ -313,7 +309,7 @@ private fun describeStep(step: WorkflowStep): StepInfo {
     return when (step.stepType) {
         "call" -> StepInfo(
             Icons.Default.Build,
-            Color(0xFF3B82F6),
+            Color(0xFF6E7CFA),
             "${ToolRegistry.displayName(step.toolName)}（${step.argsTemplate.size} 参数）"
         )
         "condition" -> StepInfo(
@@ -353,9 +349,7 @@ private fun stepTypeLabel(type: String): String = when (type) {
     else -> type
 }
 
-// ============================================================
 // 步骤编辑器
-// ============================================================
 
 @Composable
 fun StepEditorDialog(
@@ -384,7 +378,7 @@ fun StepEditorDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(28.dp),
+        shape = RoundedCornerShape(AppRadius.DIALOG),
         containerColor = MaterialTheme.colorScheme.surface,
         title = { Text("编辑步骤") },
         text = {
@@ -417,7 +411,7 @@ fun StepEditorDialog(
                                 placeholder = { Text("例如 contains:成功") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(AppRadius.SM_PLUS),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -502,7 +496,7 @@ fun StepEditorDialog(
                                 placeholder = { Text("例如 item") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(AppRadius.SM_PLUS),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -518,7 +512,7 @@ fun StepEditorDialog(
                                 },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(AppRadius.SM_PLUS),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -566,7 +560,7 @@ fun StepEditorDialog(
                             label = { Text("等待秒数") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(10.dp),
+                            shape = RoundedCornerShape(AppRadius.SM_PLUS),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                 unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -582,7 +576,7 @@ fun StepEditorDialog(
                                 label = { Text("变量名") },
                                 singleLine = true,
                                 modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(AppRadius.SM_PLUS),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -598,7 +592,7 @@ fun StepEditorDialog(
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                                 minLines = 2,
-                                shape = RoundedCornerShape(10.dp),
+                                shape = RoundedCornerShape(AppRadius.SM_PLUS),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                                     unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -678,9 +672,7 @@ fun StepEditorDialog(
     }
 }
 
-// ============================================================
 // StepTypeChip（统一 10dp 圆角）
-// ============================================================
 
 @Composable
 private fun RowScope.StepTypeChip(
@@ -690,7 +682,7 @@ private fun RowScope.StepTypeChip(
     Surface(
         color = if (selected) MaterialTheme.colorScheme.primary
         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        shape = RoundedCornerShape(10.dp),
+        shape = RoundedCornerShape(AppRadius.SM_PLUS),
         modifier = Modifier.weight(1f).clickable { onChange(value) }
     ) {
         Box(
@@ -709,9 +701,7 @@ private fun RowScope.StepTypeChip(
     }
 }
 
-// ============================================================
 // 分支编辑器
-// ============================================================
 
 @Composable
 private fun BranchEditor(
@@ -743,18 +733,18 @@ private fun BranchEditor(
                 IconButton(
                     onClick = { onMoveUp(i) },
                     enabled = i > 0,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.KeyboardArrowUp, null, modifier = Modifier.size(16.dp))
                 }
                 IconButton(
                     onClick = { onMoveDown(i) },
                     enabled = i < steps.size - 1,
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(32.dp)
                 ) {
-                    Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(14.dp))
+                    Icon(Icons.Default.KeyboardArrowDown, null, modifier = Modifier.size(16.dp))
                 }
-                IconButton(onClick = { onDelete(i) }, modifier = Modifier.size(24.dp)) {
+                IconButton(onClick = { onDelete(i) }, modifier = Modifier.size(32.dp)) {
                     Icon(
                         Icons.Default.Close,
                         null,
@@ -772,9 +762,7 @@ private fun BranchEditor(
     }
 }
 
-// ============================================================
 // 调用工具表单
-// ============================================================
 
 @Composable
 private fun CallStepForm(
@@ -795,7 +783,7 @@ private fun CallStepForm(
         Box {
             OutlinedButton(
                 onClick = { expanded = true },
-                shape = RoundedCornerShape(10.dp),
+                shape = RoundedCornerShape(AppRadius.SM_PLUS),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
@@ -840,7 +828,7 @@ private fun CallStepForm(
                     label = { Text("参数名") },
                     singleLine = true,
                     modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(AppRadius.XS),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -856,7 +844,7 @@ private fun CallStepForm(
                     label = { Text("值") },
                     singleLine = true,
                     modifier = Modifier.weight(1.6f),
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(AppRadius.XS),
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                         unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),

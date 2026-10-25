@@ -1,26 +1,19 @@
 package net.xinkong.furagent.desktop.data
 
 import net.xinkong.furagent.desktop.system.DesktopLogger
+import net.xinkong.furagent.shared.util.ConditionEvaluator
+import net.xinkong.furagent.shared.util.ConditionResult
+import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.shared.util.FileRecovery
+import net.xinkong.furagent.shared.util.TaskCondition
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.Inet4Address
-import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
 
-data class TaskCondition(
-    val type: String,
-    val operator: String = "eq",
-    val value: String = "",
-    val value2: String = ""
-)
-
-data class ConditionResult(
-    val met: Boolean,
-    val reason: String = ""
-)
+// TaskCondition / ConditionResult 已移入 shared/util/ConditionEvaluator.kt
 
 data class ScheduledTask(
     val id: String,
@@ -51,7 +44,18 @@ data class ScheduledTask(
      */
     val enabled: Boolean = true,
 
-    val description: String = ""
+    val description: String = "",
+
+    /**
+     * 【能力对齐 Android】run_agent 动作专用：要发给 AI 的 prompt。
+     * action == "run_agent" 时必填。
+     */
+    val prompt: String = "",
+    /**
+     * 【能力对齐 Android】绑定到特定会话 ID。
+     * 非空时 run_agent 结果作为 assistant 消息写回该会话；空时走系统通知。
+     */
+    val sessionId: String = ""
 )
 
 object ScheduleStore {
@@ -61,13 +65,13 @@ object ScheduleStore {
     // （尤其 PowerShell，冷启动 1-2 秒）会拖垮整个 tick 循环
     private const val COND_CACHE_TTL_MS = 10_000L
 
-    const val MIN_INTERVAL_SECONDS = 1
-    const val MAX_INTERVAL_SECONDS = 60 * 60 * 24 * 30
+    // 【P1-10】从 shared 统一常量，双端一致
+    const val MIN_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MIN_INTERVAL_SECONDS
+    const val MAX_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MAX_INTERVAL_SECONDS
 
     private fun file(): File = File(DesktopPaths.rootDir(), FILE_NAME)
 
     private fun atomicWrite(target: File, content: String) {
-        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
 
@@ -125,9 +129,11 @@ object ScheduleStore {
                             conditions = conds,
                             conditionMode = o.optString("conditionMode", "and"),
                             skipIfNotMet = o.optBoolean("skipIfNotMet", true),
-                            // 【F4】缺省 true，兼容旧数据
+                            // 缺省 true，兼容旧数据
                             enabled = o.optBoolean("enabled", true),
-                            description = o.optString("description", "")
+                            description = o.optString("description", ""),
+                            prompt = o.optString("prompt", ""),
+                            sessionId = o.optString("sessionId", "")
                         )
                     )
                 } catch (e: Exception) {
@@ -222,9 +228,11 @@ object ScheduleStore {
                     put("notificationContent", t.notificationContent)
                     put("conditionMode", t.conditionMode)
                     put("skipIfNotMet", t.skipIfNotMet)
-                    // 【F4】序列化 enabled
+                    // 序列化 enabled
                     put("enabled", t.enabled)
                     put("description", t.description)
+                    put("prompt", t.prompt)
+                    put("sessionId", t.sessionId)
                     put("repeatDays", JSONArray().apply {
                         t.repeatDays.forEach { put(it) }
                     })
@@ -304,9 +312,7 @@ object ScheduleStore {
     private fun nextCronTime(expr: String, fromMs: Long): Long? =
         net.xinkong.furagent.shared.util.CronParser.nextCronTime(expr, fromMs)
 
-    // ============================================================
     // 条件评估（与 Android 端对齐）
-    // ============================================================
 
     fun evaluateConditions(task: ScheduledTask): ConditionResult {
         if (task.conditions.isEmpty()) return ConditionResult(true)
@@ -348,86 +354,20 @@ object ScheduleStore {
         }
     }
 
-    private fun evalNumeric(actual: Double, cond: TaskCondition): ConditionResult {
-        val target = cond.value.toDoubleOrNull()
-            ?: return ConditionResult(false, "条件值不是数字：${cond.value}")
-        val ok = when (cond.operator) {
-            "eq" -> actual == target
-            "ne" -> actual != target
-            "gt" -> actual > target
-            "lt" -> actual < target
-            "gte" -> actual >= target
-            "lte" -> actual <= target
-            "between" -> {
-                val target2 = cond.value2.toDoubleOrNull()
-                    ?: return ConditionResult(false, "between 需要 value2")
-                actual in target..target2
-            }
-            else -> return ConditionResult(false, "数值不支持的操作符：${cond.operator}")
-        }
-        return if (ok) ConditionResult(true)
-        else ConditionResult(
-            false,
-            "${cond.type} 当前=$actual，不满足 ${cond.operator} ${cond.value}" +
-                    if (cond.value2.isNotEmpty()) "..${cond.value2}" else ""
-        )
-    }
+    private fun evalNumeric(actual: Double, cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalNumeric(actual, cond)
 
-    private fun evalBool(actual: Boolean, cond: TaskCondition): ConditionResult {
-        val target = cond.value.lowercase() in listOf("true", "1", "yes", "是", "on")
-        val ok = if (cond.operator == "ne") actual != target else actual == target
-        return if (ok) ConditionResult(true)
-        else ConditionResult(
-            false,
-            "${cond.type} 当前=$actual，期望${if (cond.operator == "ne") "不等于" else "等于"} $target"
-        )
-    }
+    private fun evalBool(actual: Boolean, cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalBool(actual, cond)
 
-    private fun evalString(actual: String?, cond: TaskCondition): ConditionResult {
-        val a = actual ?: ""
-        val ok = when (cond.operator) {
-            "eq" -> a == cond.value
-            "ne" -> a != cond.value
-            "contains" -> a.contains(cond.value)
-            "matches" -> try {
-                Regex(cond.value).containsMatchIn(a)
-            } catch (_: Exception) { false }
-            "in" -> cond.value.split(',').map { it.trim() }.contains(a)
-            else -> a == cond.value
-        }
-        return if (ok) ConditionResult(true)
-        else ConditionResult(false, "${cond.type} 当前='$a'，不满足 ${cond.operator} '${cond.value}'")
-    }
+    private fun evalString(actual: String?, cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalString(actual, cond)
 
-    private fun evalTimeBetween(cond: TaskCondition): ConditionResult {
-        val parts = cond.value.split('-').map { it.trim() }
-        if (parts.size != 2) return ConditionResult(false, "time_between 需要 HH:mm-HH:mm")
-        val cal = Calendar.getInstance()
-        val nowMin = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
-        val startMin = parseHm(parts[0]) ?: return ConditionResult(false, "无效起始 ${parts[0]}")
-        val endMin = parseHm(parts[1]) ?: return ConditionResult(false, "无效结束 ${parts[1]}")
-        val ok = if (startMin <= endMin) nowMin in startMin..endMin
-        else nowMin !in (endMin + 1)..<startMin
-        val hh = String.format(Locale.US, "%02d:%02d", nowMin / 60, nowMin % 60)
-        return if (ok) ConditionResult(true)
-        else ConditionResult(false, "当前 $hh 不在 ${cond.value} 内")
-    }
+    private fun evalTimeBetween(cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalTimeBetween(cond)
 
-    private fun parseHm(s: String): Int? {
-        return try {
-            val p = s.split(':')
-            p[0].toInt() * 60 + p[1].toInt()
-        } catch (_: Exception) { null }
-    }
-
-    private fun evalWeekdayIn(cond: TaskCondition): ConditionResult {
-        val today = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
-        val days = cond.value.split(',').mapNotNull { it.trim().toIntOrNull() }
-        val ok = days.contains(today)
-        val names = listOf("日", "一", "二", "三", "四", "五", "六")
-        return if (ok) ConditionResult(true)
-        else ConditionResult(false, "今天是周${names[today]}，不在 ${cond.value} 内")
-    }
+    private fun evalWeekdayIn(cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalWeekdayIn(cond)
 
     private fun evalNetworkAvailable(cond: TaskCondition): ConditionResult {
         val want = cond.value.lowercase() in listOf("true", "1", "yes", "是")
@@ -518,9 +458,7 @@ object ScheduleStore {
         else ConditionResult(false, "命令输出未匹配 /$regex/")
     }
 
-    // ============================================================
     // 环境读取（与 Android 端对齐）
-    // ============================================================
 
     private fun isWin(): Boolean =
         System.getProperty("os.name").lowercase(Locale.ROOT).contains("win")
@@ -695,6 +633,5 @@ object ScheduleStore {
         } catch (_: Exception) { false }
     }
 
-    fun formatTime(ms: Long): String =
-        SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(ms))
+    fun formatTime(ms: Long): String = DateFormats.formatDateTime(ms)
 }

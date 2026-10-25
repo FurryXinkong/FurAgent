@@ -47,5 +47,15 @@ data class ChatMessage(
      * buildHistoryMessages 构建 API 请求时不读此字段。
      * 仅 assistant 消息会填。
      */
-    val reasoning: String = ""
+    val reasoning: String = "",
+    /**
+     * 并行批次标记。同一轮里并行执行的一批工具调用/返回共享同一个值。
+     *
+     * 【为什么需要】UI 上原来分不出哪些工具是并行跑的：
+     * 一批并发执行的工具，结果按完成顺序陆续到达，看起来和串行一模一样。
+     * 有了这个标记，工作过程里可以把同批条目收进一个「并行 N」分组里展示。
+     *
+     * 空字符串表示串行（不在并行批次里）。仅 tool_call / tool_result 会填。
+     */
+    val parallelGroup: String = ""
 )

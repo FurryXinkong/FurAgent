@@ -27,6 +27,11 @@ import java.util.*
  */
 object WolHelper {
 
+    private val RE_NON_HEX = Regex("[^0-9A-Fa-f]")
+
+    // allNetworks 已被 Android 废弃，但同步查 WiFi 网络无等价替代（callback 为异步），
+    // 此处行为仍受支持，压制警告
+    @Suppress("DEPRECATION")
     suspend fun wake(
         mac: String,
         broadcast: String = "",
@@ -138,6 +143,7 @@ object WolHelper {
         else "发送失败：所有广播地址和端口都失败了（最后错误：$lastError）"
     }
 
+    @Suppress("DEPRECATION")
     private fun detectSubnetBroadcast(context: Context?): String? {
         if (context == null) return null
         return try {
@@ -173,7 +179,7 @@ object WolHelper {
     }
 
     private fun parseMac(raw: String): ByteArray? {
-        val hex = raw.replace(Regex("[^0-9A-Fa-f]"), "")
+        val hex = raw.replace(RE_NON_HEX, "")
         if (hex.length != 12) return null
         return try {
             ByteArray(6) { i ->
@@ -183,7 +189,7 @@ object WolHelper {
     }
 
     fun normalizeMac(raw: String): String =
-        raw.replace(Regex("[^0-9A-Fa-f]"), "").uppercase(Locale.ROOT)
+        raw.replace(RE_NON_HEX, "").uppercase(Locale.ROOT)
 
     fun formatMac(raw: String): String {
         val n = normalizeMac(raw)

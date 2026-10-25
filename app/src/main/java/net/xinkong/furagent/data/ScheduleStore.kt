@@ -12,23 +12,17 @@ import android.os.BatteryManager
 import android.os.PowerManager
 import net.xinkong.furagent.TaskReceiver
 import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.shared.util.ConditionEvaluator
+import net.xinkong.furagent.system.ShizukuHelper
+import net.xinkong.furagent.shared.util.ConditionResult
 import net.xinkong.furagent.shared.util.FileRecovery
+import net.xinkong.furagent.shared.util.TaskCondition
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.*
 
-data class TaskCondition(
-    val type: String,
-    val operator: String = "eq",
-    val value: String = "",
-    val value2: String = ""
-)
-
-data class ConditionResult(
-    val met: Boolean,
-    val reason: String = ""
-)
+// TaskCondition / ConditionResult 已移入 shared/util/ConditionEvaluator.kt
 
 data class ScheduledTask(
     val id: String,
@@ -42,9 +36,18 @@ data class ScheduledTask(
     val intervalSeconds: Int = 0,
     /** 标准 5 段 cron："分 时 日 月 周" */
     val cronExpression: String = "",
-    /** open_app / run_cron / send_notification / run_workflow */
+    /**
+     * 统一动作枚举（与桌面端一致）：
+     * notify / run_command / run_workflow / open_app / run_tool / run_agent
+     * 旧数据里的 send_notification / run_cron 读入时自动归一。
+     */
     val action: String = "open_app",
     val command: String = "",
+    /** run_tool 专用：工具名与 JSON 参数（与桌面端字段对齐） */
+    val toolName: String = "",
+    val toolArgs: String = "",
+    /** 桌面端 open_app 用的路径字段；Android 用 packageName，此字段仅保数据互通不丢 */
+    val appPath: String = "",
     val notificationTitle: String = "",
     val notificationContent: String = "",
     val workflowName: String = "",
@@ -58,20 +61,44 @@ data class ScheduledTask(
      * 反序列化缺省 true，兼容旧数据。
      */
     val enabled: Boolean = true,
-    val description: String = ""
+    val description: String = "",
+    /**
+     * 【AI 主动说话】run_agent 动作专用：要发给 AI 的 prompt。
+     * action == "run_agent" 时必填。
+     */
+    val prompt: String = "",
+    /**
+     * 【会话级任务】绑定到特定会话 ID。
+     * 非空时：
+     *   - run_agent 结果写回该会话（作为 assistant 消息）
+     *   - 会话删除时自动清理关联任务
+     * 空时为全局任务，结果走系统通知。
+     */
+    val sessionId: String = ""
 )
 
 object ScheduleStore {
     private const val FILE_NAME = "schedules.json"
 
-    const val MIN_INTERVAL_SECONDS = 1
-    const val MAX_INTERVAL_SECONDS = 60 * 60 * 24 * 30
+    // 【P1-10】从 shared 统一常量，双端一致
+    const val MIN_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MIN_INTERVAL_SECONDS
+    const val MAX_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MAX_INTERVAL_SECONDS
+
+    /** 双端统一动作枚举（数据以桌面端为规范） */
+    val VALID_ACTIONS = listOf(
+        "notify", "run_command", "run_workflow", "open_app", "run_tool", "run_agent"
+    )
+
+    /** 旧动作名 → 统一名（读旧数据 / 旧 intent 兼容；写出一律用统一名） */
+    fun normalizeAction(raw: String): String = when (raw) {
+        "send_notification" -> "notify"
+        "run_cron" -> "run_command"
+        else -> raw
+    }
 
     private fun file(context: Context) = File(context.filesDir, FILE_NAME)
 
-    // ========================================================
     // 序列化
-    // ========================================================
 
     fun list(context: Context): List<ScheduledTask> {
         return try {
@@ -120,17 +147,22 @@ object ScheduleStore {
                             intervalSeconds = o.optInt("intervalSeconds", 0)
                                 .coerceIn(0, MAX_INTERVAL_SECONDS),
                             cronExpression = o.optString("cronExpression", ""),
-                            action = o.optString("action", "open_app"),
+                            action = normalizeAction(o.optString("action", "open_app")),
                             command = o.optString("command", ""),
+                            toolName = o.optString("toolName", ""),
+                            toolArgs = o.optString("toolArgs", ""),
+                            appPath = o.optString("appPath", ""),
                             notificationTitle = o.optString("notificationTitle", ""),
                             notificationContent = o.optString("notificationContent", ""),
                             workflowName = o.optString("workflowName", ""),
                             conditions = conds,
                             conditionMode = o.optString("conditionMode", "and"),
                             skipIfNotMet = o.optBoolean("skipIfNotMet", true),
-                            // 【F4】缺省 true，兼容旧数据
+                            // 缺省 true，兼容旧数据
                             enabled = o.optBoolean("enabled", true),
-                            description = o.optString("description", "")
+                            description = o.optString("description", ""),
+                            prompt = o.optString("prompt", ""),
+                            sessionId = o.optString("sessionId", "")
                         )
                     )
                 } catch (e: Exception) {
@@ -166,6 +198,25 @@ object ScheduleStore {
         val list = list(context).toMutableList()
         list.removeAll { it.id == id }
         save(context, list)
+    }
+
+    /**
+     * 【性能】只更新单个任务的 triggerTime。
+     *
+     * 定时任务每次触发后都要排下次，旧实现走 add() → list() + save()，
+     * 每次都要反序列化 + 序列化整个 schedules.json。任务一多就是 O(n²)。
+     * 这里只改内存里那一条再整体写一次，语义与 add 相同但意图明确，
+     * 且不会因为 add 的 removeAll 逻辑误删同 id 的其他字段。
+     *
+     * @return true 找到并更新，false 任务不存在
+     */
+    fun updateTriggerTime(context: Context, id: String, triggerTime: Long): Boolean {
+        val list = list(context).toMutableList()
+        val idx = list.indexOfFirst { it.id == id }
+        if (idx < 0) return false
+        list[idx] = list[idx].copy(triggerTime = triggerTime)
+        save(context, list)
+        return true
     }
 
     /**
@@ -216,16 +267,21 @@ object ScheduleStore {
                     put("repeatMode", t.repeatMode)
                     put("intervalSeconds", t.intervalSeconds)
                     put("cronExpression", t.cronExpression)
-                    put("action", t.action)
+                    put("action", normalizeAction(t.action))
                     put("command", t.command)
+                    put("toolName", t.toolName)
+                    put("toolArgs", t.toolArgs)
+                    put("appPath", t.appPath)
                     put("notificationTitle", t.notificationTitle)
                     put("notificationContent", t.notificationContent)
                     put("workflowName", t.workflowName)
                     put("conditionMode", t.conditionMode)
                     put("skipIfNotMet", t.skipIfNotMet)
-                    // 【F4】序列化 enabled
+                    // 序列化 enabled
                     put("enabled", t.enabled)
                     put("description", t.description)
+                    put("prompt", t.prompt)
+                    put("sessionId", t.sessionId)
                     put("repeatDays", JSONArray().apply {
                         t.repeatDays.forEach { d -> put(d) }
                     })
@@ -241,7 +297,6 @@ object ScheduleStore {
                     })
                 })
             }
-            // 【冗余清理 Batch 12b】内联 atomicWrite 收口到 shared/util/JsonFile
             net.xinkong.furagent.shared.util.JsonFile.atomicWrite(file(context), arr.toString())
         } catch (e: Exception) {
             AgentLogger.log(
@@ -251,9 +306,7 @@ object ScheduleStore {
         }
     }
 
-    // ========================================================
     // 闹钟注册
-    // ========================================================
 
     fun pruneExpired(context: Context) {
         val now = System.currentTimeMillis()
@@ -265,7 +318,7 @@ object ScheduleStore {
     fun reregisterAll(context: Context) {
         val now = System.currentTimeMillis()
         list(context).forEach { task ->
-            // 【F4】禁用的任务不注册
+            // 禁用的任务不注册
             if (!task.enabled) return@forEach
             if (task.repeatMode == "once" && task.triggerTime <= now) return@forEach
             scheduleAlarm(context, task)
@@ -273,7 +326,7 @@ object ScheduleStore {
     }
 
     fun scheduleAlarm(context: Context, task: ScheduledTask) {
-        // 【F4】兜底：不注册禁用任务的 alarm
+        // 兜底：不注册禁用任务的 alarm
         if (!task.enabled) return
 
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
@@ -364,9 +417,7 @@ object ScheduleStore {
         }
     }
 
-    // ========================================================
     // 下次触发时间
-    // ========================================================
 
     fun calculateNextTrigger(task: ScheduledTask): Long? {
         if (task.repeatMode == "once") return null
@@ -415,9 +466,7 @@ object ScheduleStore {
         else -> "每 $seconds 秒"
     }
 
-    // ========================================================
     // Cron 解析
-    // ========================================================
 
     /**
      * 【冗余清理】cron 解析抽到 shared/util/CronParser。
@@ -426,9 +475,7 @@ object ScheduleStore {
     private fun nextCronTime(expr: String, fromMs: Long): Long? =
         net.xinkong.furagent.shared.util.CronParser.nextCronTime(expr, fromMs)
 
-    // ========================================================
     // 条件评估
-    // ========================================================
 
     fun evaluateConditions(context: Context, task: ScheduledTask): ConditionResult {
         if (task.conditions.isEmpty()) return ConditionResult(true)
@@ -461,6 +508,8 @@ object ScheduleStore {
                 "app_installed" -> evalBool(isAppInstalled(context, cond.value), cond)
                 "network_type" -> evalString(getNetworkType(context), cond)
                 "network_available" -> evalBool(isNetworkAvailable(context), cond)
+                "process_running" -> evalProcessRunning(cond)
+                "command_matches" -> evalCommandMatches(cond)
                 else -> ConditionResult(false, "未知条件类型：${cond.type}")
             }
         } catch (e: Exception) {
@@ -472,90 +521,68 @@ object ScheduleStore {
         }
     }
 
-    private fun evalNumeric(actual: Double, cond: TaskCondition): ConditionResult {
-        val target = cond.value.toDoubleOrNull()
-            ?: return ConditionResult(false, "条件值不是数字：${cond.value}")
-        val ok = when (cond.operator) {
-            "eq" -> actual == target
-            "ne" -> actual != target
-            "gt" -> actual > target
-            "lt" -> actual < target
-            "gte" -> actual >= target
-            "lte" -> actual <= target
-            "between" -> {
-                val target2 = cond.value2.toDoubleOrNull()
-                    ?: return ConditionResult(false, "between 需要 value2")
-                actual in target..target2
-            }
-            else -> return ConditionResult(false, "数值不支持的操作符：${cond.operator}")
+    private fun evalNumeric(actual: Double, cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalNumeric(actual, cond)
+
+    private fun evalBool(actual: Boolean, cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalBool(actual, cond)
+
+    private fun evalString(actual: String?, cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalString(actual, cond)
+
+    private fun evalTimeBetween(cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalTimeBetween(cond)
+
+    private fun evalWeekdayIn(cond: TaskCondition): ConditionResult =
+        ConditionEvaluator.evalWeekdayIn(cond)
+
+    /**
+     * process_running：检查进程是否在运行（需要 Shizuku，非 root 时普通 App 只能看到自己的进程）。
+     * value 是进程名关键词（支持部分匹配，如 "com.tencent"）。
+     */
+    private fun evalProcessRunning(cond: TaskCondition): ConditionResult {
+        val keyword = cond.value.trim()
+        if (keyword.isBlank()) return ConditionResult(false, "process_running 需要进程名")
+        if (!ShizukuHelper.isAvailable() || !ShizukuHelper.hasPermission()) {
+            return ConditionResult(false, "process_running 需要 Shizuku 权限")
         }
-        return if (ok) ConditionResult(true)
-        else ConditionResult(
-            false,
-            "${cond.type} 当前=$actual，不满足 ${cond.operator} ${cond.value}" +
-                    if (cond.value2.isNotEmpty()) "..${cond.value2}" else ""
-        )
-    }
-
-    private fun evalBool(actual: Boolean, cond: TaskCondition): ConditionResult {
-        val target = cond.value.lowercase() in listOf("true", "1", "yes", "是", "on")
-        val ok = if (cond.operator == "ne") actual != target else actual == target
-        return if (ok) ConditionResult(true)
-        else ConditionResult(
-            false,
-            "${cond.type} 当前=$actual，期望${if (cond.operator == "ne") "不等于" else "等于"} $target"
-        )
-    }
-
-    private fun evalString(actual: String?, cond: TaskCondition): ConditionResult {
-        val a = actual ?: ""
-        val ok = when (cond.operator) {
-            "eq" -> a == cond.value
-            "ne" -> a != cond.value
-            "contains" -> a.contains(cond.value)
-            "matches" -> try {
-                Regex(cond.value).containsMatchIn(a)
-            } catch (_: Exception) { false }
-            "in" -> cond.value.split(',').map { it.trim() }.contains(a)
-            else -> a == cond.value
+        return try {
+            val output = ShizukuHelper.executeCommand("ps -A", timeoutSeconds = 10)
+            val found = output.contains(keyword, ignoreCase = true)
+            val ok = if (cond.operator == "ne") !found else found
+            if (ok) ConditionResult(true)
+            else ConditionResult(false, "进程 '$keyword' " + if (found) "在运行" else "未找到")
+        } catch (e: Exception) {
+            AgentLogger.log("ERR", "查询进程失败：${e.message}")
+            ConditionResult(false, "查询进程失败：${e.message}")
         }
-        return if (ok) ConditionResult(true)
-        else ConditionResult(false, "${cond.type} 当前='$a'，不满足 ${cond.operator} '${cond.value}'")
     }
 
-    private fun evalTimeBetween(cond: TaskCondition): ConditionResult {
-        val parts = cond.value.split('-').map { it.trim() }
-        if (parts.size != 2) return ConditionResult(false, "time_between 需要 HH:mm-HH:mm")
-        val cal = Calendar.getInstance()
-        val nowMin = cal.get(Calendar.HOUR_OF_DAY) * 60 + cal.get(Calendar.MINUTE)
-        val startMin = try {
-            val p = parts[0].split(':')
-            p[0].toInt() * 60 + p[1].toInt()
-        } catch (_: Exception) { return ConditionResult(false, "无效起始时间 ${parts[0]}") }
-        val endMin = try {
-            val p = parts[1].split(':')
-            p[0].toInt() * 60 + p[1].toInt()
-        } catch (_: Exception) { return ConditionResult(false, "无效结束时间 ${parts[1]}") }
-
-        val ok = if (startMin <= endMin) nowMin in startMin..endMin
-        else nowMin !in (endMin + 1)..<startMin
-        val hh = String.format(Locale.US, "%02d:%02d", nowMin / 60, nowMin % 60)
-        return if (ok) ConditionResult(true)
-        else ConditionResult(false, "当前时间 $hh 不在 ${cond.value} 内")
+    /**
+     * command_matches：跑一条 shell 命令并匹配输出正则（需要 Shizuku）。
+     * value 格式："命令|正则"。
+     */
+    private fun evalCommandMatches(cond: TaskCondition): ConditionResult {
+        val sep = cond.value.indexOf('|')
+        if (sep <= 0) return ConditionResult(false, "command_matches 需要 命令|正则")
+        val cmd = cond.value.substring(0, sep).trim()
+        val regex = cond.value.substring(sep + 1).trim()
+        if (cmd.isBlank() || regex.isBlank()) return ConditionResult(false, "command_matches 参数为空")
+        if (!ShizukuHelper.isAvailable() || !ShizukuHelper.hasPermission()) {
+            return ConditionResult(false, "command_matches 需要 Shizuku 权限")
+        }
+        return try {
+            val output = ShizukuHelper.executeCommand(cmd, timeoutSeconds = 10)
+            val ok = try { Regex(regex).containsMatchIn(output) } catch (_: Exception) { false }
+            if (ok) ConditionResult(true)
+            else ConditionResult(false, "命令输出未匹配 /$regex/")
+        } catch (e: Exception) {
+            AgentLogger.log("ERR", "command_matches 执行失败：${e.message}")
+            ConditionResult(false, "命令执行失败：${e.message}")
+        }
     }
 
-    private fun evalWeekdayIn(cond: TaskCondition): ConditionResult {
-        val today = Calendar.getInstance().get(Calendar.DAY_OF_WEEK) - 1
-        val days = cond.value.split(',').mapNotNull { it.trim().toIntOrNull() }
-        val ok = days.contains(today)
-        val names = listOf("日", "一", "二", "三", "四", "五", "六")
-        return if (ok) ConditionResult(true)
-        else ConditionResult(false, "今天是周${names[today]}，不在 ${cond.value} 内")
-    }
-
-    // ========================================================
     // 环境读取
-    // ========================================================
 
     private fun getBatteryLevel(context: Context): Int {
         return try {

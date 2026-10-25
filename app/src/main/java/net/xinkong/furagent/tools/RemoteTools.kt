@@ -8,10 +8,16 @@ import net.xinkong.furagent.bridge.PcBridgeClient
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.data.AppSettings
 import net.xinkong.furagent.data.KnownPcStore
-import net.xinkong.furagent.data.extractFileName
+import net.xinkong.furagent.shared.util.FileNaming
 import net.xinkong.furagent.shared.util.formatFileSize
 import org.json.JSONObject
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
+import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
 
 /**
  * 让手机端 AI 能够访问电脑端能力的工具集。
@@ -24,6 +30,16 @@ import java.io.File
 object RemoteTools {
 
     private const val MAX_TRANSFER_BYTES = 10L * 1024 * 1024
+
+    // HTTP 流式传输客户端：文件走电脑 /upload /download 端点，
+    // 分块过网、不整块进内存，没有 base64 通道的大小限制
+    private val httpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
 
     val TOOLS = setOf("pc")
 
@@ -136,11 +152,19 @@ object RemoteTools {
         val file = File(localPath)
         if (!file.exists()) return "失败：本地文件不存在 $localPath"
         if (file.isDirectory) return "失败：这是目录而非文件 $localPath"
-        if (file.length() > MAX_TRANSFER_BYTES) {
-            return "失败：文件过大（${formatFileSize(file.length())}），上限 ${formatFileSize(MAX_TRANSFER_BYTES)}"
-        }
 
         if (!PcBridgeClient.isConnected()) return "失败：未连接到电脑"
+
+        // HTTP 流式优先：body 直接从文件分块读，无大小限制
+        if (PcBridgeClient.getHttpPort() > 0 && PcBridgeClient.getHttpToken().isNotBlank()) {
+            val r = withContext(Dispatchers.IO) { uploadViaPcHttp(file) }
+            if (r != null) return r
+            // HTTP 通道异常 → 回退 base64（受 10MB 限制）
+        }
+
+        if (file.length() > MAX_TRANSFER_BYTES) {
+            return "失败：文件过大（${formatFileSize(file.length())}）。该设备 HTTP 通道未就绪。"
+        }
 
         return withContext(Dispatchers.IO) {
             try {
@@ -168,11 +192,55 @@ object RemoteTools {
         }
     }
 
+    /** HTTP 流式上传到电脑 receiveDir。null = 通道异常，调用方回退 base64。 */
+    private fun uploadViaPcHttp(file: File): String? {
+        return try {
+            val url = "${PcBridgeClient.getBaseUrl()}/upload" +
+                    "?token=${URLEncoder.encode(PcBridgeClient.getHttpToken(), "UTF-8")}" +
+                    "&path=${URLEncoder.encode(file.name, "UTF-8")}"
+            val body = file.asRequestBody("application/octet-stream".toMediaType())
+            httpClient.newCall(Request.Builder().url(url).post(body).build()).execute().use { resp ->
+                if (resp.isSuccessful) {
+                    "已发送到电脑：${file.absolutePath}（${formatFileSize(file.length())}）"
+                } else {
+                    // okhttp 5.x：body 是 non-null，去掉多余的 ?.
+                    "失败：HTTP ${resp.code}：${resp.body.string().take(300)}"
+                }
+            }
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "ERR",
+                "HTTP 上传到电脑失败（${file.name}）：${e.javaClass.simpleName}: ${e.message}"
+            )
+            null
+        }
+    }
+
     private suspend fun doPcReceiveFile(args: JSONObject, settings: AppSettings): String {
         val remotePath = args.optString("remote_path", "").trim()
         if (remotePath.isBlank()) return "失败：未提供 remote_path"
 
         if (!PcBridgeClient.isConnected()) return "失败：未连接到电脑"
+
+        // 落地路径：local_path 显式指定时用它（AI 传了就是想放到那）；
+        // 缺省写接收目录（重名自动加时间戳）
+        val localPathRaw = args.optString("local_path", "").trim()
+        val target: File
+        if (localPathRaw.isNotBlank()) {
+            val p = normalizeAlias(localPathRaw)
+            PathGuard.check(p, settings)?.let { return it }
+            target = File(p)
+        } else {
+            val fileName = FileNaming.extractFileName(remotePath)
+            target = FileNaming.resolveReceiveFile(settings.pcReceiveDir, fileName)
+        }
+
+        // HTTP 流式优先：分块写盘，无大小限制、不整块进内存
+        if (PcBridgeClient.getHttpPort() > 0 && PcBridgeClient.getHttpToken().isNotBlank()) {
+            val r = withContext(Dispatchers.IO) { downloadViaPcHttp(remotePath, target) }
+            if (r != null) return r
+            // HTTP 通道异常 → 回退 base64（电脑端 read_file 有 10MB 上限）
+        }
 
         return withContext(Dispatchers.IO) {
             try {
@@ -186,7 +254,10 @@ object RemoteTools {
                 }
                 val result = doPcCall(callArgs)
                 if (result.startsWith("失败")) {
-                    return@withContext result
+                    // 点破原因：大文件被挡是回退通道的限制，不是网络坏了
+                    return@withContext if (result.contains("文件过大")) {
+                        "$result\n（桥接可用时走 HTTP 流式传输无大小限制；当前回退 base64 通道受 10MB 上限）"
+                    } else result
                 }
                 val base64 = result.trim()
                 if (base64.isBlank()) {
@@ -197,10 +268,7 @@ object RemoteTools {
                     return@withContext "失败：数据过大（${formatFileSize(bytes.size.toLong())}）"
                 }
 
-                val fileName = extractFileName(remotePath)
-                val target = net.xinkong.furagent.data.resolveReceiveFile(
-                    settings.pcReceiveDir, fileName
-                )
+                target.parentFile?.mkdirs()
                 target.writeBytes(bytes)
                 "已接收到：${target.absolutePath}（${formatFileSize(bytes.size.toLong())}）"
             } catch (e: Exception) {
@@ -213,9 +281,44 @@ object RemoteTools {
         }
     }
 
-    // ============================================================
+    /** HTTP 流式下载电脑文件（.part 临时文件 + 改名，避免半成品）。null = 通道异常，调用方回退 base64。 */
+    private fun downloadViaPcHttp(remotePath: String, target: File): String? {
+        return try {
+            val url = "${PcBridgeClient.getBaseUrl()}/download" +
+                    "?token=${URLEncoder.encode(PcBridgeClient.getHttpToken(), "UTF-8")}" +
+                    "&path=${URLEncoder.encode(remotePath, "UTF-8")}"
+            target.parentFile?.mkdirs()
+            httpClient.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    // okhttp 5.x：body 是 non-null，去掉多余的 ?.
+                    return@use "失败：HTTP ${resp.code}：${resp.body.string().take(300)}"
+                }
+                val tmp = File(target.parentFile, ".${target.name}.part")
+                try {
+                    resp.body.byteStream().use { input ->
+                        tmp.outputStream().use { out -> input.copyTo(out, 128 * 1024) }
+                    }
+                    if (target.exists()) target.delete()
+                    if (!tmp.renameTo(target)) {
+                        tmp.copyTo(target, overwrite = true)
+                        tmp.delete()
+                    }
+                } catch (e: Exception) {
+                    tmp.delete()
+                    throw e
+                }
+                "已接收到：${target.absolutePath}（${formatFileSize(target.length())}）"
+            }
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "ERR",
+                "HTTP 下载电脑文件失败（$remotePath）：${e.javaClass.simpleName}: ${e.message}"
+            )
+            null
+        }
+    }
+
     // relay（手机 → 电脑中转 → 手机）
-    // ============================================================
 
     private suspend fun doPcRelay(args: JSONObject, settings: AppSettings): String {
         val target = args.optString("target", "").trim()
@@ -258,9 +361,7 @@ object RemoteTools {
         }
     }
 
-    // ============================================================
     // peers（列出所有在线设备）
-    // ============================================================
 
     private suspend fun doPcPeers(): String {
         if (!PcBridgeClient.isConnected()) {
@@ -286,9 +387,7 @@ object RemoteTools {
         return sb.toString()
     }
 
-    // ============================================================
     // WOL
-    // ============================================================
 
     private suspend fun doPcWake(args: JSONObject, context: Context): String {
         val macRaw = args.optString("mac", "").trim()

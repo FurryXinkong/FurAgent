@@ -1,6 +1,7 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
+import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.Manifest
 import android.content.ComponentName
@@ -18,8 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,9 +47,7 @@ import net.xinkong.furagent.system.ShizukuHelper
 import net.xinkong.furagent.system.notifyToastLong
 import kotlin.time.Duration.Companion.milliseconds
 
-// ============================================================
 // 权限引导
-// ============================================================
 
 private enum class StepType { RUNTIME, SETTINGS }
 
@@ -385,7 +383,7 @@ fun OnboardingPermissionsFlow(onFinished: () -> Unit) {
         ) {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(AppRadius.DIALOG),
                 border = BorderStroke(
                     1.dp,
                     MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
@@ -482,7 +480,7 @@ fun OnboardingPermissionsFlow(onFinished: () -> Unit) {
                                 }
                             },
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(AppRadius.SM)
                         ) {
                             Text(
                                 when (step.type) {
@@ -499,9 +497,7 @@ fun OnboardingPermissionsFlow(onFinished: () -> Unit) {
     }
 }
 
-// ============================================================
 // 功能导览（一页）
-// ============================================================
 
 @Composable
 fun OnboardingGuideDialog(onFinished: () -> Unit) {
@@ -517,7 +513,7 @@ fun OnboardingGuideDialog(onFinished: () -> Unit) {
         ) {
             Surface(
                 color = MaterialTheme.colorScheme.surface,
-                shape = RoundedCornerShape(28.dp),
+                shape = RoundedCornerShape(AppRadius.DIALOG),
                 border = BorderStroke(
                     1.dp,
                     MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
@@ -584,7 +580,7 @@ fun OnboardingGuideDialog(onFinished: () -> Unit) {
                     ) {
                         Button(
                             onClick = onFinished,
-                            shape = RoundedCornerShape(12.dp)
+                            shape = RoundedCornerShape(AppRadius.SM)
                         ) {
                             Text("开始使用", fontWeight = FontWeight.SemiBold)
                         }

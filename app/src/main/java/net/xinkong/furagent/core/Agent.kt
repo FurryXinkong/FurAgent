@@ -1,5 +1,7 @@
 package net.xinkong.furagent.core
 
+import net.xinkong.furagent.shared.util.DateFormats
+import net.xinkong.furagent.shared.ThinkingLevel
 import android.content.Context
 import kotlinx.coroutines.*
 import net.xinkong.furagent.data.*
@@ -16,6 +18,7 @@ import org.json.JSONObject
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.milliseconds
 
 private const val TOOL_FAILURE_STREAK_LIMIT = 3
@@ -53,19 +56,16 @@ object AgentSession {
      * 为什么用代际而不是布尔标志：布尔标志需要「新任务开始时清位」，
      * 一旦漏清就会误判；代际天然单调递增，无需清理。
      */
-    @Volatile private var generation: Long = 0L
+    private val generation = AtomicLong(0L)
 
     /** 新任务开始：代际 +1，返回新代际。 */
-    fun beginTask(): Long {
-        generation++
-        return generation
-    }
+    fun beginTask(): Long = generation.incrementAndGet()
 
     /** 当前代际（不递增）。 */
-    fun currentGeneration(): Long = generation
+    fun currentGeneration(): Long = generation.get()
 
     /** 传入任务开始时的代际，判断是否已被取消。 */
-    fun isCancelled(gen: Long): Boolean = gen != generation
+    fun isCancelled(gen: Long): Boolean = gen != generation.get()
 
     fun setCall(call: Call?) {
         if (call == null) return
@@ -86,7 +86,7 @@ object AgentSession {
 
     fun cancelAll() {
         // 代际 +1：所有旧任务的 isCancelled(gen) 立即返回 true
-        generation++
+        generation.incrementAndGet()
         val snapshot: List<Call>
         synchronized(lock) {
             snapshot = calls.toList()
@@ -103,87 +103,36 @@ object AgentSession {
 
 object Prompts {
     val DEFAULT_SYSTEM = """
-你是 FurAgent，运行在用户的 Android 手机上。当前时间 {TIME}，可访问目录 {PATHS}。
-每个工具的具体用法见其 description。
+你是 FurAgent，运行在用户 Android 手机上。时间 {TIME}，可访问 {PATHS}。工具用法见各 description。
 
-【工具发现（重要）】
-你的 tools 数组只包含"核心工具"和两个元工具 tool_search / tool_load。
-其他工具（文件操作、媒体处理、系统控制、MCP 扩展等）需要按需加载：
-  - 目录已经在 tool_search 的 description 里列出，先扫一眼
-  - 需要某个工具时，调用 tool_search(query="描述") 或 tool_load(name="工具名")
-  - 加载后下一轮就能直接调用，本轮不要重复搜索
-不要因为 tools 数组里没看到某个工具就放弃，先 tool_search 找一下。
+【工具发现】tools 只含核心工具 + tool_search/tool_load。
+缺工具→先看 tool_search 目录，再 tool_load(name=) 或 tool_search(query=)。加载后下轮可用，本轮勿重复搜。
 
-【运行环境】
-真实手机，不是服务器。CPU 是 ARM 芯片，性能远低于桌面；内存有限；电量宝贵；存储有限。
-- 大文件处理前先估算大小和电量
-- 长时间高负载会发热，前台用户可能感知到卡顿
-- 一次只跑一个 FFmpeg 任务，不要并发
+【环境】真实手机非服务器。ARM CPU，性能低，内存/电量/存储有限。大文件先估算；一次只跑一个 FFmpeg。
 
-【基本规则】
-1. 需要执行操作时必须调用工具，禁止用文字声称完成。
-2. 只依据工具返回判断成败。返回以"失败"开头才算失败，成功不得说失败；含"用户已拒绝"时才说被拒绝。
-3. 禁止在正文里书写"[工具调用]""结果：""[工具返回]"等字样。要执行就走 tools 通道，否则用自然语言。
-4. 只有在没有专用工具时才用 execute_shell（需 Shizuku 权限）。
-5. 复杂任务先用编号列出简短计划，再逐步调用工具。
-6. 用户提供 URL 且要求总结或查看内容时，直接抓网页正文，不要只依赖搜索摘要。
-7. 操作别的 App 的界面时优先用 ui 工具（屏幕控制），只有 ui 拿不到信息时才回退到 screenshot。
-8. 需要看本地图片用 view_image，会自动附加到下一轮上下文。需要当前时间用 time(op=now)。
+【规则】
+1 执行操作必须调工具，禁止文字声称完成。
+2 只依据工具返回判断成败；以"失败"开头才算失败；含"用户已拒绝"才算被拒。
+3 禁止在正文写"[工具调用]""结果：""[工具返回]"。
+4 无专用工具时才用 execute_shell（需 Shizuku）。
+5 复杂任务先列编号计划。
+6 用户给 URL 要看内容→直接抓正文。
+7 操作别的 App 界面优先用 ui，拿不到再 screenshot。
+8 看图用 view_image；取时间用 time(op=now)。
 
-【批量操作与并行（省 token 的关键）】
+【批量与并行】互不依赖的操作放同一条消息返回多个 tool_call，系统并行执行。
+可并行：多个 read_file、多个 list_files、多个 file_op(create)。
+必须串行：tool_search/tool_load（改 tools 数组）、有依赖的操作、FFmpeg 转码。
+file_op(op=edit) 是整文件覆盖；改多文件尽量一条消息发多个 file_op。
 
-一条 assistant 消息里可以返回多个 tool_call。系统会并行执行，
-下一轮一次性返回所有结果 —— 这比"调一个等一个"省 N 倍历史重发成本。
+【路径】别名：sdcard/内部存储/根目录→/sdcard；下载→/sdcard/Download；图片→/sdcard/DCIM；文档→/sdcard/Documents；音乐→/sdcard/Music。
+产出目录（/sdcard/FurAgent/）：downloads 下载 / images 生成图 / media 媒体 / temp 临时 / screenshots 截图 / scripts 脚本（无外部存储权限时回退 App 私有目录）。除非用户指定其它路径。
 
-可以并行（互不依赖）：
-- 多个 read_file（同时看多个文件）
-- 多个 list_files / app(op=list) 这类独立查询
-- 多个 file_op(op=create) 创建不同文件
+【工作目录】execute_shell 经 Shizuku 执行，默认 cwd 是 /（根目录），不是 /sdcard 也不是用户目录。相对路径先 cd 或用绝对路径。
 
-不能并行：
-- tool_search / tool_load（会改 tools 数组，系统强制串行）
-- 有依赖的操作（后一步依赖前一步的输出）
-- FFmpeg 转码（按上面【运行环境】约束，一次只跑一个）
+【失败处理】参数错→修正重试一次；权限问题→走权限请求；同工具同参数连失 2 次→停止换思路；连失 3 次系统强制中断。
 
-file_op(op=edit) 是整文件覆盖，不是锚点编辑。
-每次覆盖一个 300 行的文件，就要把 300 行都写一遍，token 成本极高。
-所以：
-- 改多个文件时，尽量在同一条消息里返回多个 file_op（并行执行）
-- 避免"改一个文件 → 看结果 → 再改下一个"这种串行模式
-
-复杂任务先想清楚要改哪些文件、要执行哪些命令，能并行的尽量一条消息发完。
-
-【路径与目录】
-路径别名：
-- sdcard / 内部存储 / 根目录 → /sdcard
-- 下载 → /sdcard/Download
-- 图片 / 相册 / 照片 → /sdcard/DCIM
-- 文档 → /sdcard/Documents
-- 音乐 → /sdcard/Music
-
-FurAgent 自己产出的文件默认放 /sdcard/FurAgent/ 下：
-- 下载的文件 → /sdcard/FurAgent/downloads/
-- 从电脑接收 → /sdcard/FurAgent/received/
-- 生成的媒体 → /sdcard/FurAgent/media/
-- 临时文件 → /sdcard/FurAgent/temp/
-- 截图 → /sdcard/FurAgent/screenshots/
-除非用户明确指定其它路径。
-
-【失败处理】
-工具返回失败时：
-- 参数错误 → 修正参数重试一次
-- 权限问题 → 走权限请求流程
-- 同一工具同一参数连续失败 2 次 → 停止重试，向用户说明原因，换思路
-- 禁止盲目重试同一个调用。连续失败 3 次系统会强制中断。
-
-【主动记忆】
-主动识别值得长期记住的信息，用 memory(op=save) 保存，不要等用户说"记住"。
-值得存：姓名/昵称、职业/身份、偏好/习惯/忌讳、常用路径/应用、用户纠正过你的事实。
-不值得存：一次性临时信息、寒暄。
-每轮最多存一次。需要回忆时用 memory(op=recall)。
-
-【回复规范】
-中文，简洁直接，不用 emoji 或颜文字，代码块用 ```语言 包裹。
+【记忆】主动存：姓名/昵称、职业、偏好/习惯/忌讳、常用路径/应用、用户纠正过的事实。不存：一次性信息、寒暄。取用 memory(op=recall)。
 """.trimIndent()
 }
 
@@ -194,6 +143,11 @@ val httpClient: OkHttpClient = OkHttpClient.Builder()
 
 suspend fun httpWithRetry(
     maxAttempts: Int = 3,
+    /**
+     * 【UI 提示】重试时回调，让界面能显示“服务端繁忙，3s 后重试”。
+     * 之前只写日志，用户看到界面卡住不知道在干什么。
+     */
+    onRetry: ((code: Int, attempt: Int, maxAttempts: Int, waitMs: Long) -> Unit)? = null,
     buildRequest: () -> Request
 ): okhttp3.Response {
     var lastException: Exception? = null
@@ -206,11 +160,19 @@ suspend fun httpWithRetry(
             val resp = call.execute()
             if (resp.isSuccessful) return resp
 
-            val retryable = resp.code == 429 || resp.code == 408 || resp.code in 500..599
+            val retryable = if (resp.code == 429) {
+                val body = try {
+                    resp.peekBody(4096).string()
+                } catch (_: Exception) { "" }
+                ApiErrorInfo.explain(429, body).retryable
+            } else {
+                resp.code == 408 || resp.code in 500..599
+            }
             if (!retryable) return resp
 
             if (attempt < maxAttempts - 1) {
                 AgentLogger.log("SYS", "HTTP ${resp.code}，${delayMs}ms 后重试")
+                onRetry?.invoke(resp.code, attempt + 1, maxAttempts, delayMs)
                 try { resp.close() } catch (_: Exception) { }
                 delay(delayMs.milliseconds); delayMs *= 2
             } else return resp
@@ -219,6 +181,7 @@ suspend fun httpWithRetry(
             lastException = e
             if (attempt < maxAttempts - 1) {
                 AgentLogger.log("SYS", "请求异常：${e.message}，${delayMs}ms 后重试")
+                onRetry?.invoke(0, attempt + 1, maxAttempts, delayMs)
                 delay(delayMs.milliseconds); delayMs *= 2
             }
         }
@@ -263,21 +226,61 @@ suspend fun runAgentTurn(
     context: Context, settings: AppSettings,
     onHistoryChanged: (List<ChatMessage>) -> Unit,
     onThinking: (String) -> Unit,
+    /**
+     * 【错误回调】API 错误（HTTP 错误码 / 网络异常）。
+     *
+     * 与 onThinking 分开的原因：错误要渲染成状态小气泡并保留到下次发消息，
+     * 而 thinking 在任务结束时会被清空。也不走 assistant_text，
+     * 因为那不是 AI 说的话，不该占 AI 聊天气泡。
+     */
+    onError: (String) -> Unit = {},
     onReasoning: (String) -> Unit,
     onStreamChunk: (String) -> Unit,
     onStreamCommit: () -> Unit,
-    onFinish: () -> Unit
+    onFinish: () -> Unit,
+    /**
+     * 【取消代际】调用方（AgentRunner）在任务开始时通过 AgentSession.beginTask() 拿到。
+     * 工具执行前会比对当前代际，不一致就立即中止，不再执行任何工具。
+     *
+     * 【为什么需要】之前只靠协程 cancel()，但工具执行是阻塞调用
+     * （Thread.join / readLine / Process.waitFor），取消不会立即中断。
+     * 结果就是：UI 上显示已停止，但工具已经真实执行了（删文件、发请求）。
+     * 传 0 表示不检查（兼容旧调用）。
+     */
+    cancelGen: Long = 0L,
+    /** 【P0-3】会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
+    sessionPrompt: String = ""
 ) {
     var currentHistory = history
+    // tool_call 发起时间（仅主线程访问），tool_result 据此计算执行耗时
+    val callStartMs = mutableMapOf<String, Long>()
     try {
         withContext(Dispatchers.IO) {
             runAgentLoop(profile, history, maxTurns, context, settings,
+                cancelGen = cancelGen,
+                onError = onError,
+                sessionPrompt = sessionPrompt,
                 onEvent = { event ->
                     mainHandler.post {
                         when (event.type) {
                             "thinking" -> onThinking(event.content)
 
                             "reasoning" -> onReasoning(event.content)
+
+                            "reasoning_msg" -> {
+                                // 本轮思考过程作为独立消息落库
+                                currentHistory = currentHistory + ChatMessage(
+                                    role = "assistant",
+                                    content = event.content,
+                                    type = "reasoning"
+                                )
+                                onHistoryChanged(currentHistory)
+                                // 【清空实时缓冲】思考已落库，运行时缓冲必须清掉，
+                                // 否则最后一条工作过程会把旧思考永远悬在那里，
+                                // 既与已保存的消息重复，又看不到最新内容。
+                                // 此刻助手正文尚未开始流式输出，清空 streaming 无副作用。
+                                onStreamCommit()
+                            }
 
                             "assistant_text" -> {
                                 onThinking("")
@@ -293,22 +296,28 @@ suspend fun runAgentTurn(
 
                             "tool_call" -> {
                                 onThinking("")
-                                // 【缓存关键】把 API 返回的原始 tool_call_id 存进 ChatMessage。
+                                callStartMs[event.callId] = System.currentTimeMillis()
+                                // 把 API 返回的原始 tool_call_id 存进 ChatMessage。
                                 currentHistory = currentHistory + ChatMessage(
                                     role = "tool",
                                     content = event.content,
                                     type = "tool_call",
-                                    toolCallId = event.callId
+                                    toolCallId = event.callId,
+                                    parallelGroup = event.parallelGroup
                                 )
                                 onHistoryChanged(currentHistory)
                             }
 
                             "tool_result" -> {
+                                val durationMs = callStartMs.remove(event.callId)
+                                    ?.let { System.currentTimeMillis() - it } ?: 0L
                                 currentHistory = currentHistory + ChatMessage(
                                     role = "tool",
                                     content = event.content,
                                     type = "tool_result",
-                                    toolCallId = event.callId
+                                    toolCallId = event.callId,
+                                    durationMs = durationMs,
+                                    parallelGroup = event.parallelGroup
                                 )
                                 onHistoryChanged(currentHistory)
                             }
@@ -351,7 +360,8 @@ private fun buildHistoryMessages(
     history: List<ChatMessage>,
     maxTurns: Int,
     messages: JSONArray,
-    supportsVision: Boolean
+    supportsVision: Boolean,
+    budgetKTokens: Int = 0
 ) {
     // 按「完整轮次」截断，绝不从一轮的中间切开。
     // 截断起点计算与桌面端共用（shared.computeTruncateStart）。
@@ -362,7 +372,29 @@ private fun buildHistoryMessages(
         roleOf = { it.role },
         typeOf = { it.type }
     )
-    val recent = history.subList(startIdx, history.size)
+    val byTurns = history.subList(startIdx, history.size)
+    // 【token 预算二次裁剪】轮次截断拦不住工具输出特别大的会话：
+    // 一轮里读十个大文件就能吃掉几万 token。这里再按预算从最旧的工具过程开始丢。
+    val recent = if (budgetKTokens > 0) {
+        trimToolProcessByBudget(
+            history = byTurns,
+            budgetTokens = budgetKTokens * 1000,
+            entryTokens = {
+                TokenEstimator.estimate(it.content) +
+                    it.imagePaths.size * TokenEstimator.PER_IMAGE_TOKENS
+            },
+            isToolEntry = {
+                it.type == "tool_call" || it.type == "tool_result" || it.type == "system_note"
+            },
+            makeElidedNote = { n ->
+                ChatMessage(
+                    role = "assistant",
+                    content = "（此处省略 " + n + " 条工具调用记录，为节省上下文未逐条保留）",
+                    type = "system_note"
+                )
+            }
+        ).kept
+    } else byTurns
 
     var i = 0
     while (i < recent.size) {
@@ -374,8 +406,15 @@ private fun buildHistoryMessages(
                 val toolResultMessages = mutableListOf<JSONObject>()
                 var idx = i
 
+                // 【并行分批】先把这一批连续的 tool_call 收集起来。
+                // 并行执行时它们是一条接一条追加的，结果再按完成顺序陆续追加。
+                val batch = mutableListOf<ChatMessage>()
                 while (idx < recent.size && recent[idx].type == "tool_call") {
-                    val cur = recent[idx]
+                    batch.add(recent[idx])
+                    idx++
+                }
+
+                for (cur in batch) {
                     val firstLine = cur.content.substringBefore('\n').trim()
                     val argsPart = cur.content.substringAfter('\n', "").trim()
 
@@ -404,24 +443,34 @@ private fun buildHistoryMessages(
                         })
                     })
 
-                    val hasResult = idx + 1 < recent.size &&
-                            recent[idx + 1].type == "tool_result"
+                    // 【关键修复】按 toolCallId 配对，不能只看位置相邻。
+                    // 并行跑一批工具时，历史里是「A的call, B的call, C的call,
+                    // B的result, A的result, C的result」这种错开的顺序。
+                    // 旧逻辑只看下一条是不是 tool_result，于是 A 被判成
+                    // “未记录返回结果”，模型以为工具失败 → 重跑一遍（重复读
+                    // 同一个文件、重复跑同一个命令），又慢又浪费钱。
+                    val resultMsg = recent.firstOrNull {
+                        it.type == "tool_result" && it.toolCallId.isNotBlank() &&
+                                it.toolCallId == callId
+                    } ?: run {
+                        // 兼容旧数据（没存 toolCallId）：退回位置相邻判断
+                        val pos = recent.indexOf(cur) + 1
+                        recent.getOrNull(pos)
+                            ?.takeIf { it.type == "tool_result" && it.toolCallId.isBlank() }
+                    }
 
-                    if (hasResult) {
-                        val resultMsg = recent[idx + 1]
+                    if (resultMsg != null) {
                         toolResultMessages.add(JSONObject().apply {
                             put("role", "tool")
                             put("tool_call_id", callId)
                             put("content", resultMsg.content)
                         })
-                        idx += 2
                     } else {
                         toolResultMessages.add(JSONObject().apply {
                             put("role", "tool")
                             put("tool_call_id", callId)
                             put("content", "（该工具调用未记录返回结果，用户可能中断了）")
                         })
-                        idx += 1
                     }
                 }
 
@@ -526,8 +575,17 @@ suspend fun runAgentLoop(
     context: Context, settings: AppSettings,
     onEvent: (AgentEvent) -> Unit,
     onStreamChunk: (String) -> Unit,
-    onReasoning: (String) -> Unit = {}
+    onReasoning: (String) -> Unit = {},
+    /** 【错误回调】API 错误走这里，不走 assistant_text（不占 AI 聊天气泡）。 */
+    onError: (String) -> Unit = {},
+    /** 【取消代际】0 表示不检查。见 runAgentTurn 的说明。 */
+    cancelGen: Long = 0L,
+    /** 【P0-3】会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
+    sessionPrompt: String = ""
 ): String {
+    // 工具执行前调用。代际不一致 = 用户已点停止。
+    fun cancelled(): Boolean = cancelGen != 0L && AgentSession.isCancelled(cancelGen)
+
     AgentLogger.log("SYS", "=== 开始 Agent 循环（${profile.name}） ===")
 
     if (profile.apiKey.isBlank()) {
@@ -545,14 +603,19 @@ suspend fun runAgentLoop(
 
     val supportsVision = profile.supportsVision
 
-    // 【缓存关键】时间戳只到天。
-    val now = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(Date())
+    // 时间戳只到天。
+    val now = DateFormats.formatDate()
     var systemPrompt = Prompts.DEFAULT_SYSTEM
         .replace("{TIME}", now)
         .replace("{PATHS}", settings.allowedPaths.joinToString(", "))
 
     if (settings.customSystemPrompt.isNotBlank()) {
         systemPrompt += "\n\n【用户附加指令】\n" + settings.customSystemPrompt
+    }
+
+    // 【P0-3】会话专用提示词：与桌面端 DesktopAgent.runTurn 的 sessionPrompt 参数对齐
+    if (sessionPrompt.isNotBlank()) {
+        systemPrompt += "\n\n【本会话专用指令】\n" + sessionPrompt
     }
 
     if (settings.enableMemory) {
@@ -571,16 +634,21 @@ suspend fun runAgentLoop(
         put("role", "system")
         put("content", systemPrompt)
     })
-    buildHistoryMessages(history, maxTurns, messages, supportsVision)
+    buildHistoryMessages(
+        history, maxTurns, messages, supportsVision,
+        budgetKTokens = settings.contextTokenBudgetK
+    )
 
-    val shouldDisableThinking = settings.disableThinking && profile.supportsDisableThinking
-    if (settings.disableThinking && !profile.supportsDisableThinking) {
-        AgentLogger.log("SYS", "当前模型 [${profile.name}] 不支持关闭深度思考，已跳过")
+    // 与桌面端一致：thinkingLevel 优先，否则只要模型支持就主动关闭。
+    // 不再依赖 settings.disableThinking（默认 false 会导致什么都不发，
+    // 而 DeepSeek 官方 API 默认开思考，返回 reasoning_content 触发 null 坑）。
+    if (settings.thinkingLevel == ThinkingLevel.OFF && !profile.supportsDisableThinking) {
+        AgentLogger.log("SYS", "当前模型 [${profile.name}] 不支持关闭深度思考，将使用服务端默认行为")
     }
     val toolFailureStreak = mutableMapOf<String, Int>()
     val maxLoops = settings.maxToolCallLoops.coerceAtLeast(1)
 
-    // 【P0】跨轮次累积"已通过 tool_search / tool_load 加载过"的工具名。
+    // 跨轮次累积"已通过 tool_search / tool_load 加载过"的工具名。
     // 每次 API 请求的 tools 数组 = 核心工具 + 已加载工具 + 元工具。
     val loadedToolNames = mutableSetOf<String>()
 
@@ -592,43 +660,60 @@ suspend fun runAgentLoop(
 
         val promptTokens = estimateMessagesTokens(messages)
 
-        // 【P0】每轮重新构建 tools（loadedToolNames 会变化）
+        // 每轮重新构建 tools（loadedToolNames 会变化）
         val availableTools = ToolRegistry.getToolsWithLoaded(settings, loadedToolNames)
 
         val body = JSONObject().apply {
             put("model", profile.model)
             put("messages", messages)
             put("tools", availableTools)
-            // 【可配】温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
+            // 温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
             put("temperature", profile.temperature)
+            // 惩罚参数：只在非默认值时发送。
+            // 很多中转站/本地模型不认这两个字段，无脑发送可能直接 400。
+            if (profile.presencePenalty != 0.0) put("presence_penalty", profile.presencePenalty)
+            if (profile.frequencyPenalty != 0.0) put("frequency_penalty", profile.frequencyPenalty)
             put("stream", true)
         }
-        if (settings.enableThinking) {
-            // 主动开启思考（全局开关），优先级高于全局关闭开关
-            net.xinkong.furagent.shared.util.applyEnableThinking(body, profile.baseUrl)
-        } else if (shouldDisableThinking) {
-            net.xinkong.furagent.shared.util.applyDisableThinking(body, profile.baseUrl)
+        if (settings.thinkingLevel != ThinkingLevel.OFF) {
+            // 主动开启思考（全局设置），优先级高于全局关闭开关
+            applyEnableThinking(body, profile.baseUrl, settings.thinkingLevel)
+        } else if (profile.supportsDisableThinking) {
+            applyDisableThinking(body, profile.baseUrl)
         }
 
         val response: okhttp3.Response
+        var retryCount = 0
         try {
-            response = httpWithRetry(buildRequest = {
-                Request.Builder()
-                    .url(profile.baseUrl)
-                    .addHeader("Authorization", "Bearer ${profile.apiKey}")
-                    .addHeader("Content-Type", "application/json")
-                    .addHeader("Accept", "text/event-stream")
-                    .post(body.toString().toRequestBody("application/json".toMediaType()))
-                    .build()
-            })
+            response = httpWithRetry(
+                onRetry = { code, attempt, maxAttempts, waitMs ->
+                    retryCount = attempt
+                    val hint = if (code == 0) {
+                        "网络异常，${waitMs / 1000}s 后重试（$attempt/$maxAttempts）…"
+                    } else {
+                        ApiErrorInfo
+                            .retryHint(code, attempt, maxAttempts, waitMs)
+                    }
+                    onEvent(AgentEvent("thinking", hint))
+                },
+                buildRequest = {
+                    Request.Builder()
+                        .url(profile.baseUrl)
+                        .addHeader("Authorization", "Bearer ${profile.apiKey}")
+                        .addHeader("Content-Type", "application/json")
+                        .addHeader("Accept", "text/event-stream")
+                        .post(body.toString().toRequestBody("application/json".toMediaType()))
+                        .build()
+                }
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             AgentLogger.log("ERR", "网络请求失败：${e.message}")
             onEvent(AgentEvent("thinking", ""))
-            val msg = "网络请求失败：${e.message ?: "未知错误"}"
-            onEvent(AgentEvent("assistant_text", msg))
-            return msg
+            // 不走 assistant_text，避免占 AI 聊天气泡
+            onError("网络请求失败 · ${e.message ?: "未知错误"}")
+            return ""
         }
 
         if (!response.isSuccessful) {
@@ -636,9 +721,9 @@ suspend fun runAgentLoop(
             val errStr = response.use { it.body.string() }
             AgentLogger.log("ERR", "HTTP ${response.code}: $errStr")
             onEvent(AgentEvent("thinking", ""))
-            val msg = "API 错误 HTTP ${response.code}：${errStr.take(300)}"
-            onEvent(AgentEvent("assistant_text", msg))
-            return msg
+            // 简短文案：`HTTP 429 · 用量配额已用尽`
+            onError(ApiErrorInfo.format(response.code, errStr))
+            return ""
         }
 
         val contentBuilder = StringBuilder()
@@ -711,7 +796,13 @@ suspend fun runAgentLoop(
         }
 
         if (contentStr.isNotBlank()) {
-            onEvent(AgentEvent("assistant_text", contentStr, reasoning = reasoningBuilder.toString()))
+            onEvent(AgentEvent("assistant_text", contentStr))
+        }
+
+        // 本轮 reasoning 作为独立消息落库（先于工具调用）。
+        // 这样历史会话里能看到「思考过程 → 工具调用 → 思考过程 → ...」的完整过程。
+        if (reasoningBuilder.isNotEmpty()) {
+            onEvent(AgentEvent("reasoning_msg", reasoningBuilder.toString()))
         }
 
         // 给每个 tool_call 算一个稳定的 id
@@ -741,26 +832,30 @@ suspend fun runAgentLoop(
         }
         messages.put(cleanAssistant)
 
-        // ============================================================
         // 【并行化改造】工具执行
         //   1. 先按顺序把 tool_call 占位 emit 出去（保持 UI 顺序）
         //   2. 判断是否含元工具：含则整体串行（元工具会改 loadedToolNames）
         //   3. 否则并行执行，用 supervisorScope 保证单个失败不取消整批
         //   4. 结果按 idx 收集后，串行收尾（emit tool_result + 失败计数 + messages.put）
         //   5. vision drain 移到循环外，只做一次
-        // ============================================================
         val sortedCalls = toolCalls.toSortedMap().toList()
         val hasMetaTool = sortedCalls.any {
             it.second.name == "tool_search" || it.second.name == "tool_load"
         }
 
         // 1. 推 tool_call 占位
+        // 【并行可见性】并行批次给同批调用写同一个 parallelGroup，
+        // UI 据此把同批条目収进「并行 N」分组，用户能看出这几个是一起跑的。
+        val parallelTag = if (!hasMetaTool && sortedCalls.size > 1) {
+            "pg_${System.currentTimeMillis()}_$loopIndex"
+        } else ""
         sortedCalls.forEach { (idx, acc) ->
             val stableId = callIds[idx]!!
             val args = try { JSONObject(acc.arguments.toString()) } catch (_: Exception) { JSONObject() }
             val friendlyName = ToolRegistry.displayName(acc.name)
             onEvent(AgentEvent(
-                "tool_call", "$friendlyName\n${args.toString(2)}", acc.name, stableId
+                "tool_call", "$friendlyName\n${args.toString(2)}", acc.name, stableId,
+                parallelGroup = parallelTag
             ))
         }
 
@@ -770,6 +865,11 @@ suspend fun runAgentLoop(
             // 串行路径：含元工具或只有一个工具
             sortedCalls.forEach { (idx, acc) ->
                 currentCoroutineContext().ensureActive()
+                // 用户已点停止就不再执行后续工具
+                if (cancelled()) {
+                    AgentLogger.log("TOOL", "已取消，跳过工具 ${acc.name}")
+                    return@forEach
+                }
                 val args = try { JSONObject(acc.arguments.toString()) } catch (_: Exception) { JSONObject() }
                 AgentLogger.log("TOOL", "调用（串行）：${acc.name}")
                 results[idx] = runOneToolForAgent(acc.name, args, context, settings, loadedToolNames)
@@ -783,6 +883,11 @@ suspend fun runAgentLoop(
             val executed = supervisorScope {
                 sortedCalls.map { (idx, acc) ->
                     async {
+                        // 并行分支也要查，否则点停止后仍会全部跑完
+                        if (cancelled()) {
+                            AgentLogger.log("TOOL", "已取消，跳过工具 ${acc.name}")
+                            return@async idx to "失败：用户已停止"
+                        }
                         val args = try {
                             JSONObject(acc.arguments.toString())
                         } catch (_: Exception) { JSONObject() }
@@ -813,7 +918,7 @@ suspend fun runAgentLoop(
             val friendlyName = ToolRegistry.displayName(acc.name)
             val rawResult = results[idx] ?: "失败：工具未执行"
 
-            onEvent(AgentEvent("tool_result", rawResult, acc.name, stableId))
+            onEvent(AgentEvent("tool_result", rawResult, acc.name, stableId, parallelGroup = parallelTag))
 
             // 失败重试计数（元工具跳过）
             if (acc.name !in setOf("tool_search", "tool_load")) {

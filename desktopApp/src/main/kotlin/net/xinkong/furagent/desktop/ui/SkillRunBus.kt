@@ -4,6 +4,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import net.xinkong.furagent.desktop.data.SkillConfig
 import net.xinkong.furagent.desktop.data.SkillMeta
 import net.xinkong.furagent.desktop.data.SkillStore
 import net.xinkong.furagent.desktop.system.DesktopLogger
@@ -25,8 +26,11 @@ import java.util.concurrent.TimeUnit
  * 因此这里独立实现执行逻辑，但**参数约定与超时行为和 SkillTools 完全一致**，
  * 保证「试运行通过」能代表「AI 调用也能跑通」。
  *
- * 【F3】setEnabled / setEnabledAll 也走这里，因为写盘是 IO 操作，
+ * setEnabled / setEnabledAll 也走这里，因为写盘是 IO 操作，
  * 不能在 Compose 主线程直接调。
+ *
+ * 【配置 2026-10-18】setEnabled / saveConfig 写 scripts/<name>.config.json，
+ * 不再往 settings.json 的 disabledTools 里塞 pytool_xxx。
  */
 object SkillRunBus {
 
@@ -64,7 +68,9 @@ object SkillRunBus {
                 }
 
                 withContext(Dispatchers.Main) { ToastBus.info("开始执行 ${meta.name}…") }
-                val (ok, output) = exec(python, meta, args)
+                val cfg = SkillStore.loadConfig(meta.name)
+                val timeout = SkillStore.effectiveTimeout(meta, cfg)
+                val (ok, output) = exec(meta, args, cfg, timeout)
 
                 DesktopLogger.info(
                     "Skill",
@@ -111,63 +117,15 @@ object SkillRunBus {
         return o
     }
 
-    /** 返回 (是否成功, 输出文本)。逻辑同 SkillTools.runScript。 */
-    private fun exec(python: String, meta: SkillMeta, args: JSONObject): Pair<Boolean, String> {
-        val pb = ProcessBuilder(python, "-u", meta.file.absolutePath)
-        pb.directory(meta.file.parentFile)
-        pb.redirectErrorStream(false)
-        val env = pb.environment()
-        if (env["PYTHONIOENCODING"].isNullOrBlank()) env["PYTHONIOENCODING"] = "utf-8"
-        if (env["PYTHONUTF8"].isNullOrBlank()) env["PYTHONUTF8"] = "1"
-
-        val p = pb.start()
-        try {
-            p.outputStream.bufferedWriter(Charsets.UTF_8).use { w ->
-                w.write(args.toString())
-                w.write("\n")
-            }
-        } catch (e: Exception) {
-            DesktopLogger.warn("Skill", "写脚本 stdin 失败：${e.message}")
-        }
-
-        val out = StringBuilder()
-        val err = StringBuilder()
-        val t1 = Thread {
-            runCatching { p.inputStream.bufferedReader(Charsets.UTF_8).forEachLine { out.append(it).append("\n") } }
-        }
-        val t2 = Thread {
-            runCatching { p.errorStream.bufferedReader(Charsets.UTF_8).forEachLine { err.append(it).append("\n") } }
-        }
-        t1.start(); t2.start()
-
-        val finished = p.waitFor(meta.timeout.toLong(), TimeUnit.SECONDS)
-        if (!finished) {
-            p.destroyForcibly()
-            t1.join(1000); t2.join(1000)
-            return false to "执行超时（超过 ${meta.timeout} 秒），已强制结束"
-        }
-        t1.join(2000); t2.join(2000)
-
-        val exit = p.exitValue()
-        val stdout = out.toString().trim()
-        val stderr = err.toString().trim()
-
-        // 成功判定：退出码为 0，且（若输出了 JSON）ok 字段不为 false
-        if (exit != 0) {
-            return false to (stderr.ifBlank { stdout }.ifBlank { "退出码 $exit" })
-        }
-        if (stdout.isNotEmpty()) {
-            try {
-                val j = JSONObject(stdout)
-                if (j.has("ok") && !j.optBoolean("ok", true)) {
-                    return false to j.optString("error", "脚本返回 ok=false")
-                }
-                if (j.has("result")) return true to j.optString("result", "")
-            } catch (_: Exception) {
-                // 不是 JSON 就直接当文本结果
-            }
-        }
-        return true to stdout.ifBlank { "（无输出）" }
+    /** 返回 (是否成功, 输出文本)。复用 DesktopSkillRuntime，与 AI 调用完全同一套执行逻辑。 */
+    private suspend fun exec(
+        meta: SkillMeta,
+        args: JSONObject,
+        cfg: SkillConfig,
+        timeout: Int
+    ): Pair<Boolean, String> {
+        val r = net.xinkong.furagent.desktop.data.DesktopSkillRuntime.runScript(meta, args, cfg, timeout)
+        return r.success to r.output
     }
 
     /** 删除脚本文件。onDone 在主线程回调，参数为错误信息（成功时为 null）。 */
@@ -215,12 +173,43 @@ object SkillRunBus {
         }
     }
 
-    /** 【B21】从示例创建脚本。onDone 在主线程回调，参数为错误信息（成功时 null）。 */
+    /** 从示例创建脚本。onDone 在主线程回调，参数为错误信息（成功时 null）。 */
     fun createExample(onDone: (String?) -> Unit) {
         scope.launch {
             val err = SkillStore.createExample()
             withContext(Dispatchers.Main) {
                 if (err == null) ToastBus.info("已创建示例脚本 example_hello")
+                else ToastBus.error(err)
+                onDone(err)
+            }
+        }
+    }
+
+    /**
+     * 切换脚本启用状态（写 scripts/<name>.config.json）。
+     * onDone 在主线程回调，参数为错误信息（成功时 null）。
+     */
+    fun setEnabled(name: String, enabled: Boolean, onDone: (String?) -> Unit = {}) {
+        scope.launch {
+            val cur = SkillStore.loadConfig(name)
+            val err = SkillStore.saveConfig(name, cur.copy(enabled = enabled))
+            withContext(Dispatchers.Main) {
+                if (err == null) {
+                    ToastBus.info(if (enabled) "已启用脚本 $name" else "已禁用脚本 $name")
+                } else {
+                    ToastBus.error(err)
+                }
+                onDone(err)
+            }
+        }
+    }
+
+    /** 保存脚本配置（enabled / timeout / values）。onDone 在主线程回调。 */
+    fun saveConfig(name: String, config: SkillConfig, onDone: (String?) -> Unit = {}) {
+        scope.launch {
+            val err = SkillStore.saveConfig(name, config)
+            withContext(Dispatchers.Main) {
+                if (err == null) ToastBus.info("已保存脚本 $name 的配置")
                 else ToastBus.error(err)
                 onDone(err)
             }

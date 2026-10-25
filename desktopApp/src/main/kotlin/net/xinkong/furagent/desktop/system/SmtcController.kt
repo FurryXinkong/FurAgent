@@ -138,9 +138,7 @@ object SmtcController {
             ?.equals("True", ignoreCase = true) == true
     }
 
-    // ============================================================
     // 脚本片段
-    // ============================================================
 
     private fun buildControlScript(call: String): String {
         return $$"$$HEADER\n$$SESSION_BOOTSTRAP\nif (-not $s) { Write-Output \"NO_SESSION\"; exit }\n" +
@@ -230,9 +228,7 @@ try {
   } catch {}
 """ + FOOTER
 
-    // ============================================================
     // 解析
-    // ============================================================
 
     private fun parseNowPlaying(raw: String): NowPlaying {
         var title = ""

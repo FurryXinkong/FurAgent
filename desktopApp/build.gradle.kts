@@ -14,14 +14,17 @@ version = furagentVersion
 
 dependencies {
     implementation(compose.desktop.currentOs)
+    // MiSans 全局字体：compose resources 资源访问器（Res.font.*）
+    implementation(compose.components.resources)
     implementation("org.jetbrains.compose.material3:material3:1.9.0")
-    implementation("org.jetbrains.compose.material:material-icons-extended:1.7.3")
     implementation(project(":shared"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-swing:1.11.0")
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("org.java-websocket:Java-WebSocket:1.6.0")
     implementation("org.json:json:20260814")
+    // 修改历史 SQLite 存储：历史一条表（元数据+patch+改前备份），替代 manifest.jsonl
+    implementation("org.xerial:sqlite-jdbc:3.47.1.0")
 
     // 【文档生成】Apache POI：纯 Java，无外部依赖，同时支持 docx / xlsx / pptx。
     // 仅桌面端引入（Android 端不引，POI 在 Android 上兼容性差且体积大）。
@@ -47,6 +50,7 @@ compose.desktop {
 
             modules(
                 "java.base",
+                "java.sql",
                 "java.logging",
                 "java.desktop",
                 "java.management",
@@ -64,6 +68,10 @@ compose.desktop {
             )
 
             windows {
+                // 安装包 / exe / 快捷方式 / 任务栏图标
+                // 必须是 .ico（jpackage 不支持 png）
+                iconFile.set(project.file("src/main/resources/icon.ico"))
+
                 // 开始菜单
                 menu = true
                 menuGroup = "FurAgent"

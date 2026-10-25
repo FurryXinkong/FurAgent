@@ -1,5 +1,6 @@
 package net.xinkong.furagent.desktop.ui
 
+import net.xinkong.furagent.shared.util.DateFormats
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
@@ -9,11 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Search
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -33,12 +30,14 @@ import java.util.*
 /**
  * 长期记忆 —— 整屏页面。
  *
- * 【F2】每条记忆加 Switch：关闭后不注入 system prompt，但仍留在列表。
+ * 每条记忆加 Switch：关闭后不注入 system prompt，但仍留在列表。
  * 新加的记忆默认开启。
  */
 @Composable
 fun MemoryPage(onOpenSession: (String) -> Unit = {}) {
     var refreshKey by remember { mutableIntStateOf(0) }
+    // 进入记忆页时强制重读：会话被删除后，它的旧摘要不该继续挂在列表里。
+    LaunchedEffect(Unit) { refreshKey++ }
     var searchText by remember { mutableStateOf("") }
     var editingMemory by remember { mutableStateOf<Memory?>(null) }
     var pendingDelete by remember { mutableStateOf<Memory?>(null) }
@@ -71,7 +70,7 @@ fun MemoryPage(onOpenSession: (String) -> Unit = {}) {
             title = "长期记忆",
             subtitle = "${allMemories.size} 条 · $enabledCount 条启用 · 每次对话自动注入",
             actions = {
-                SecondaryButton(text = "添加记忆", icon = Icons.Default.Add) { showAdd = true }
+                PrimaryButton(text = "添加记忆", icon = Icons.Default.Add) { showAdd = true }
                 if (allMemories.isNotEmpty()) {
                     DangerButton(text = "清空全部") { showClearConfirm = true }
                 }
@@ -261,9 +260,7 @@ fun MemoryPage(onOpenSession: (String) -> Unit = {}) {
     }
 }
 
-// ============================================================
 // 页签（【P1-2】全部 / 会话摘要 / 普通记忆）
-// ============================================================
 
 @Composable
 private fun MemoryTab(label: String, count: Int, selected: Boolean, onClick: () -> Unit) {
@@ -292,9 +289,7 @@ private fun MemoryTab(label: String, count: Int, selected: Boolean, onClick: () 
     }
 }
 
-// ============================================================
 // 空状态
-// ============================================================
 
 @Composable
 private fun EmptyMemoryState(isEmpty: Boolean) {
@@ -326,9 +321,7 @@ private fun EmptyMemoryState(isEmpty: Boolean) {
     }
 }
 
-// ============================================================
-// 记忆行（【F2】右侧加 Switch）
-// ============================================================
+// 记忆行
 
 @Composable
 private fun MemoryRow(
@@ -341,7 +334,7 @@ private fun MemoryRow(
     onDelete: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
-    val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(memory.createdAt))
+    val time = DateFormats.formatDateTimeNoSec(memory.createdAt)
     val isSummary = memory.sessionId.isNotBlank()
 
     // 【批次 16 UI 统一】卡片渲染收口到 GlassCard，不再手写 Surface + border + shadow。
@@ -412,13 +405,7 @@ private fun MemoryRow(
             Switch(
                 checked = memory.enabled,
                 onCheckedChange = onToggleEnabled,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = OnAccent(),
-                    checkedTrackColor = AccentColor(),
-                    uncheckedThumbColor = TextSecondary(),
-                    uncheckedTrackColor = CardStrongColor(),
-                    uncheckedBorderColor = BorderColor()
-                )
+                colors = glassSwitchColors()
             )
 
             Box {

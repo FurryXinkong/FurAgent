@@ -5,11 +5,14 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import net.xinkong.furagent.desktop.data.*
+import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
+import net.xinkong.furagent.desktop.data.getSystemHostname
+import net.xinkong.furagent.desktop.data.primaryMacAddress
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.tools.PhoneTools
 import net.xinkong.furagent.shared.*
+import net.xinkong.furagent.shared.util.FileNaming
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
@@ -24,6 +27,8 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration.Companion.milliseconds
 
 object BridgeServer {
+
+    private val RE_DRIVE_LETTER = Regex("^[A-Za-z]:")
 
     enum class Status { STOPPED, STARTING, RUNNING, ERROR }
 
@@ -292,9 +297,7 @@ object BridgeServer {
         }
     }
 
-    // ============================================================
     // relay 中转文件清理
-    // ============================================================
 
     private fun cleanupRelayFile(relayPath: String) {
         try {
@@ -460,6 +463,24 @@ object BridgeServer {
 
             MessageType.LIST_PEERS -> scope.launch { sendPeersList(conn, msg) }
 
+            MessageType.NOTIFICATION -> {
+                // 手机端通知同步：单向 手机 → 电脑
+                val appName = msg.payload["appName"] ?: ""
+                val pkg = msg.payload["packageName"] ?: ""
+                val title = msg.payload["title"] ?: ""
+                val text = msg.payload["text"] ?: ""
+                val postTime = msg.payload["postTime"]?.toLongOrNull() ?: 0L
+                val notifKey = msg.payload["notifKey"] ?: ""
+                DesktopNotificationManager.onNotificationReceived(
+                    appName = appName,
+                    packageName = pkg,
+                    title = title,
+                    text = text,
+                    postTime = postTime,
+                    notifKey = notifKey
+                )
+            }
+
             else -> DesktopLogger.debug("Bridge", "未处理的消息类型：${msg.type}")
         }
     }
@@ -558,7 +579,7 @@ object BridgeServer {
 
             val looksLikeBareName = !rawPath.contains('/') &&
                     !rawPath.contains('\\') &&
-                    !Regex("^[A-Za-z]:").containsMatchIn(rawPath)
+                    !RE_DRIVE_LETTER.containsMatchIn(rawPath)
 
             if (!looksLikeBareName) {
                 // 带路径：尊重原路径，不改写
@@ -566,8 +587,8 @@ object BridgeServer {
                 return argsJson
             }
 
-            val fileName = extractFileName(rawPath)
-            val target = resolveReceiveFile(DesktopSettingsHolder.current.receiveDir, fileName)
+            val fileName = FileNaming.extractFileName(rawPath)
+            val target = FileNaming.resolveReceiveFile(DesktopSettingsHolder.current.receiveDir, fileName)
             args.put("path", target.absolutePath)
             DesktopLogger.info("Bridge", "接收文件 → ${target.absolutePath}")
             args.toString()
@@ -579,7 +600,7 @@ object BridgeServer {
 
     private class ServerImpl(address: InetSocketAddress) : WebSocketServer(address) {
         init {
-            // 【F10】关闭 Java-WebSocket 的协议级连接丢失检测（默认 60s）。
+            // 关闭 Java-WebSocket 的协议级连接丢失检测（默认 60s）。
             // 背景：服务端默认每 60s 发协议级 ping，若 60s 内未收到 pong 就强制
             // 关闭 TCP，手机端表现为 code=1006 Connection reset，约 89s 掉线重连。
             // 本项目已有应用层心跳（手机端每 10s 发 PING，服务端回 PONG），
@@ -604,7 +625,7 @@ object BridgeServer {
             val remote = conn.remoteSocketAddress?.toString() ?: "unknown"
             val newIp = getRemoteIp(conn)
 
-            // 【F9】踢同 IP 的旧连接。
+            // 踢同 IP 的旧连接。
             // 注意：先 remove map 再 close socket，顺序很重要 ——
             //   - remove map 后旧连接的 onClose 即使晚到，oldId 也是 null，
             //     不会再触发一遍清理（有 if (oldId != null) 保护）
@@ -669,7 +690,7 @@ object BridgeServer {
                 connMacMap.remove(id)
                 PhoneTools.removeClientHttp(id)
             }
-            // 【F9】详细日志：close code + reason + 存活时长 + 剩余在线数
+            // 详细日志：close code + reason + 存活时长 + 剩余在线数
             DesktopLogger.info(
                 "Bridge",
                 "客户端断开：id=$id code=$code reason=${reason.ifBlank { "(empty)" }} " +
@@ -700,7 +721,7 @@ object BridgeServer {
         override fun onError(conn: WebSocket?, ex: Exception) {
             val id = conn?.let { connIdMap[it] } ?: "(server)"
             val remote = conn?.remoteSocketAddress?.toString() ?: "(server)"
-            // 【F9】详细日志：区分"单连接出错"和"服务器级出错"
+            // 详细日志：区分"单连接出错"和"服务器级出错"
             DesktopLogger.error(
                 "Bridge",
                 "连接错误：id=$id remote=$remote " +

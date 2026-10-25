@@ -10,8 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -34,7 +33,7 @@ import net.xinkong.furagent.desktop.ui.theme.Shadow
 /**
  * MCP 服务器列表 —— 整屏页面。
  *
- * 【F5】每个 server 展开后，工具列表每项加 Switch。
+ * 每个 server 展开后，工具列表每项加 Switch。
  * 关闭单个工具会把工具全名（`mcp__<id8>__<toolName>`）加入 `disabledTools`，
  * AI 的 tools 数组会在 build 时被过滤掉该工具。
  *
@@ -170,9 +169,7 @@ fun McpPage(
     }
 }
 
-// ============================================================
 // 空状态
-// ============================================================
 
 @Composable
 private fun EmptyMcpState(onAdd: () -> Unit) {
@@ -204,9 +201,7 @@ private fun EmptyMcpState(onAdd: () -> Unit) {
     }
 }
 
-// ============================================================
-// 服务器卡片（【F5】工具列表加 Switch）
-// ============================================================
+// 服务器卡片
 
 @Composable
 private fun McpServerCard(
@@ -353,7 +348,7 @@ private fun McpServerCard(
                     GlassDivider(color = BorderSubtle())
                     Spacer(Modifier.height(10.dp))
 
-                    // 【F5】单工具启用/禁用
+                    // 单工具启用/禁用
                     Text(
                         "工具（关闭后 AI 无法调用）",
                         fontSize = 11.sp,
@@ -416,9 +411,7 @@ private fun McpServerCard(
     }
 }
 
-// ============================================================
 // 编辑对话框（不变）
-// ============================================================
 
 @Composable
 private fun McpEditDialog(
@@ -558,7 +551,6 @@ private fun McpEditDialog(
     )
 }
 
-// 【2026-10-15 去重】实现已抽到 shared CommandLine
 private fun parseArgsLine(cmd: String): List<String> =
     net.xinkong.furagent.shared.util.CommandLine.parse(cmd)
 

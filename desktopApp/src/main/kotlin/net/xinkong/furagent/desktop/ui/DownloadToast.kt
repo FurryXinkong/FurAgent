@@ -22,11 +22,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Error
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Surface
@@ -171,20 +167,26 @@ private fun DownloadToastItem(task: DownloadManager.Task) {
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
                 )
-                IconActionButton(
-                    Icons.Default.Close,
-                    onClick = {
-                        if (status == DownloadManager.Status.PENDING ||
-                            status == DownloadManager.Status.DOWNLOADING
-                        ) {
-                            DownloadManager.cancel(task.id)
-                        } else {
-                            DownloadManager.remove(task.id)
-                        }
-                    },
-                    tint = TextSecondary(),
-                    size = 22.dp
-                )
+                HoverTip(
+                    if (status == DownloadManager.Status.PENDING ||
+                        status == DownloadManager.Status.DOWNLOADING
+                    ) "取消下载" else "移除记录"
+                ) {
+                    IconActionButton(
+                        Icons.Default.Close,
+                        onClick = {
+                            if (status == DownloadManager.Status.PENDING ||
+                                status == DownloadManager.Status.DOWNLOADING
+                            ) {
+                                DownloadManager.cancel(task.id)
+                            } else {
+                                DownloadManager.remove(task.id)
+                            }
+                        },
+                        tint = TextSecondary(),
+                        size = 22.dp
+                    )
+                }
             }
             Spacer(Modifier.height(6.dp))
             when (status) {

@@ -1,10 +1,16 @@
 package net.xinkong.furagent.desktop.tools
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.core.DesktopConfirmation
 import net.xinkong.furagent.desktop.core.TaskRuntime
+import net.xinkong.furagent.desktop.core.DesktopAgent
+import net.xinkong.furagent.desktop.data.DesktopMessage
+import net.xinkong.furagent.desktop.data.DesktopSession
+import net.xinkong.furagent.desktop.data.DesktopSessionStore
 import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
+import net.xinkong.furagent.desktop.data.HistoryStore
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.system.OutputCompressor
 import net.xinkong.furagent.shared.tools.*
@@ -101,9 +107,12 @@ object DesktopTools {
         val download = DownloadTools.TOOLS.map {
             DesktopTool(it.name, it.displayName, it.description, it.paramsSchema)
         }
+        val history = HistoryTools.TOOLS.map {
+            DesktopTool(it.name, it.displayName, it.description, it.paramsSchema)
+        }
 
         common + private + workflow + schedule + system + apps + screenshot +
-                memory + ffmpeg + python + web + screen + codeEdit + skill + dynamicSkills + document + imageGen + download
+                memory + ffmpeg + python + web + screen + codeEdit + skill + dynamicSkills + document + imageGen + download + history
     }
 
     @Volatile private var cachedToolList: List<DesktopTool>? = null
@@ -131,9 +140,7 @@ object DesktopTools {
 
     val TOOLS: List<DesktopTool> get() = getToolList()
 
-    // ============================================================
-    // 【P0】分层工具系统
-    // ============================================================
+    // 分层工具系统
 
     /**
      * 核心工具 + 已加载工具 + 元工具。
@@ -142,6 +149,8 @@ object DesktopTools {
      */
     fun getToolListWithLoaded(loadedNames: Set<String>): List<DesktopTool> {
         val result = mutableListOf<DesktopTool>()
+        // 【脚本配置 2026-10-18】脚本开关已从 disabledTools 迁到各自的 config.json，
+        // dynamicTools() 已按配置过滤，这里不再重复判断。
         getToolList().forEach { t ->
             val isCore = t.name in ToolCategory.CORE_TOOL_NAMES
             val isLoaded = t.name in loadedNames
@@ -296,12 +305,10 @@ object DesktopTools {
         return ToolCatalog.renderToolDetail(tool)
     }
 
-    // ============================================================
     // displayName / findToolNameByDisplay
-    // ============================================================
 
     fun displayName(name: String): String {
-        // 【P0】元工具显式映射（不在 baseTools 里）
+        // 元工具显式映射（不在 baseTools 里）
         when (name) {
             "tool_search" -> return "工具搜索"
             "tool_load" -> return "加载工具"
@@ -323,9 +330,7 @@ object DesktopTools {
         return out
     }
 
-    // ============================================================
     // 执行分发
-    // ============================================================
 
     private val host: ToolHost = DesktopToolHost()
 
@@ -341,11 +346,505 @@ object DesktopTools {
         }
     }
 
+    // 子会话执行进度（聊天页顶部功能区实时展示；按 subId 区分并行子会话，避免互踩）
+    object SubSessionProgress {
+        data class Entry(
+            val title: String = "",
+            val steps: Int = 0,
+            val lastTool: String = "",
+            /** 当前阶段：思考中 / 生成中 / 执行工具 */
+            val phase: String = "",
+            /** 最新一行内容（思考 / 输出 / 工具结果），用户能看到它在干什么 */
+            val snippet: String = "",
+            val startedAt: Long = 0L
+        ) {
+            val elapsedMs: Long get() = if (startedAt > 0) System.currentTimeMillis() - startedAt else 0L
+        }
+
+        data class State(
+            val running: Boolean = false,
+            val activeCount: Int = 0,
+            val title: String = "",
+            val steps: Int = 0,
+            val lastTool: String = "",
+            val phase: String = "",
+            val snippet: String = ""
+        )
+
+        /** 子会话完成事件：回流主对话注入「子代理完成」通知 */
+        data class Completed(
+            val originId: String,
+            val subId: String,
+            val title: String,
+            val msgCount: Int,
+            val summary: String
+        )
+
+        private val entries = LinkedHashMap<String, Entry>()
+        private val _state = kotlinx.coroutines.flow.MutableStateFlow(State())
+        val state: kotlinx.coroutines.flow.StateFlow<State> = _state
+        private val _events =
+            kotlinx.coroutines.flow.MutableSharedFlow<Completed>(extraBufferCapacity = 32)
+        val events: kotlinx.coroutines.flow.SharedFlow<Completed> = _events
+
+        private fun refresh() {
+            val newest = entries.values.lastOrNull()
+            _state.value = State(
+                running = entries.isNotEmpty(),
+                activeCount = entries.size,
+                title = newest?.title ?: "",
+                steps = newest?.steps ?: 0,
+                lastTool = newest?.lastTool ?: "",
+                phase = newest?.phase ?: "",
+                snippet = newest?.snippet ?: ""
+            )
+        }
+
+        @Synchronized fun start(id: String, t: String) {
+            entries[id] = Entry(title = t, startedAt = System.currentTimeMillis())
+            refresh()
+        }
+
+        @Synchronized fun update(id: String, steps: Int, lastTool: String) {
+            val e = entries[id] ?: return
+            entries[id] = e.copy(steps = steps, lastTool = lastTool)
+            refresh()
+        }
+
+        /** 【可见性】子代理正在干什么 —— 阶段 + 最新一行内容 */
+        @Synchronized fun updatePhase(id: String, phase: String, snippet: String) {
+            val e = entries[id] ?: return
+            if (e.phase == phase && e.snippet == snippet) return
+            entries[id] = e.copy(phase = phase, snippet = snippet)
+            refresh()
+        }
+
+        @Synchronized fun lastTool(id: String): String = entries[id]?.lastTool ?: ""
+
+        @Synchronized fun finish(id: String) {
+            entries.remove(id)
+            refresh()
+        }
+
+        @Synchronized fun snapshot(): Map<String, Entry> = LinkedHashMap(entries)
+
+        @Synchronized fun emitCompleted(c: Completed) {
+            _events.tryEmit(c)
+        }
+    }
+
+    // 当前主任务会话 id：子会话完成后回流通知的目标（Main.kt 启动任务时写入）
+    object CurrentTaskSession {
+        @Volatile var id: String = ""
+    }
+
+    // 并行子会话计数（原子操作，杜绝同毫秒并发绕过检查）
+    private val subSessionActive = java.util.concurrent.atomic.AtomicInteger(0)
+    // 【P1-10】从 shared 统一常量，双端一致
+    private const val MAX_PARALLEL_SUB = net.xinkong.furagent.shared.data.SubSessionLimits.MAX_PARALLEL_SUB
+    /**
+     * 【子会话硬上限】子代理最多跑多少轮。
+     *
+     * 为什么不能直接继承 settings.maxToolCallLoops：
+     * 用户把主会话调到 100 轮是为了自己长任务，但主代理可能一口气
+     * 派出好几个子代理，每个都跑 100 轮 → 一次就烧掉整个月的额度。
+     * 【P1-10】从 shared 统一常量，双端一致。
+     */
+    private const val SUB_MAX_LOOPS = net.xinkong.furagent.shared.data.SubSessionLimits.SUB_MAX_LOOPS
+
+    /**
+     * 【截断补总结】子会话被强制截断后，让它自己回头总结一次。
+     *
+     * 为什么只跑 1 轮：再多就是又一次全量上下文请求，
+     * 子代理这时候还在回忆上一轮的工具输出，烧钱而不产出。
+     * 1 轮足够它把「做了什么 / 卡在哪」说清楚。
+     *
+     * 什么时候不补：已经有一段正常的 assistant 文字。
+     * 那说明它自己已经总结过了，再问一次是浪费。
+     */
+    private suspend fun summarizeIfTruncated(
+        history: List<DesktopMessage>,
+        settings: net.xinkong.furagent.desktop.data.DesktopSettings,
+    ): List<DesktopMessage> {
+        val lastText = history.lastOrNull { it.type == "text" && it.role == "assistant" }
+            ?.content?.trim().orEmpty()
+        val truncated = lastText.isBlank() ||
+                lastText.contains("已达到最大工具调用轮数")
+        if (!truncated) return history
+
+        val nudge = DesktopMessage(
+            role = "user",
+            content = "【系统指令】本次任务已被强制中断（轮数上限 / 任务被停止）。\n" +
+                    "请立即用简洁的文字回答整理，不要再调用任何工具：\n" +
+                    "1) 你已经完成了什么（具体改了哪些文件 / 得到了什么结论）\n" +
+                    "2) 当前状态与卡点\n" +
+                    "3) 下一步建议。\n" +
+                    "回答直接给结论，不要客套。",
+            timestamp = System.currentTimeMillis()
+        )
+        return try {
+            DesktopAgent.runTurn(
+                settings = settings,
+                history = history + nudge,
+                maxLoopsOverride = 1,
+                onUpdate = {},
+                onThinking = {},
+                onReasoning = {},
+                onStream = {},
+                onStreamCommit = {}
+            )
+        } catch (_: Throwable) {
+            history
+        }
+    }
+
+    /** 子会话收尾摘要：必须能看出它干了什么、停在哪。 */
+    private fun buildSubSummary(h: List<DesktopMessage>, hitLimit: Boolean): String {
+        val toolCalls = h.filter { it.type == "tool_call" }
+        val lastText = h.lastOrNull { it.type == "text" && it.role == "assistant" }
+            ?.content?.trim().orEmpty()
+        val errs = h.count { it.type == "tool_result" && it.content.startsWith("失败") }
+        val sb = StringBuilder()
+        if (hitLimit) {
+            sb.append("【未完成】子会话达到轮数上限（$SUB_MAX_LOOPS）被截断，下面是它已经做到的部分。\n")
+        }
+        sb.append("工具调用 ${toolCalls.size} 次")
+        if (errs > 0) sb.append("，失败 $errs 次")
+        val tools = toolCalls.mapNotNull {
+            it.content.lineSequence().firstOrNull()?.trim()?.takeIf { n -> n.isNotBlank() }
+        }.distinct().take(8)
+        if (tools.isNotEmpty()) sb.append("：").append(tools.joinToString("、"))
+        sb.append("\n")
+        if (lastText.isNotBlank()) {
+            sb.append(lastText.take(600))
+        } else {
+            sb.append("（子会话没有文本回答——只调了工具，点入子会话看完整过程）")
+        }
+        return sb.toString()
+    }
+
+
+    /**
+     * 【AI 主动终止】正在执行的子会话 Job 表（subId → Job）。
+     * sub_session(op=stop) 据此 cancel 对应协程。
+     */
+    private val subSessionJobs =
+        java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    // 子会话后台执行作用域（独立于主任务，互不阻塞、互不误杀）
+    private val subSessionScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO +
+                // 打上子会话标记：确认弹窗在该协程里会被自动拒绝，避免卡 300 秒
+                kotlinx.coroutines.CoroutineName(
+                    net.xinkong.furagent.desktop.core.DesktopConfirmation.SUBSESSION_COROUTINE_NAME
+                )
+    )
+
+    /**
+     * 子代理：派生一个不携带历史的独立子会话执行 task，后台并行跑完存盘。
+     * tool_result 首行约定 "SUB_SESSION:{subId}"，聊天页据此渲染子会话卡片。
+     *
+     * 【可复用】传 session_id 时复用已有子会话（带上它的历史继续跑），
+     * 不传则新建。这样主代理可以追问同一个子代理，而不是每次都开新的。
+     */
+    private suspend fun runSubSession(args: JSONObject): ToolResult {
+        val task = args.optString("task", "").trim()
+        if (task.isBlank()) return ToolResult.fail("run_sub_session 需要 task 参数")
+        val reuseId = args.optString("session_id", "").trim()
+
+        // ============ 复用已有子会话 ============
+        if (reuseId.isNotEmpty()) {
+            val existing = DesktopSessionStore.load(reuseId)
+                ?: return ToolResult.fail("找不到子会话 $reuseId（可用 sub_session op=list 查看）")
+            if (existing.parentId == null) {
+                return ToolResult.fail("$reuseId 不是子会话，不能复用")
+            }
+            // 正在跑的子会话不能重复派任务
+            if (SubSessionProgress.snapshot().containsKey(reuseId)) {
+                return ToolResult.fail("子会话 $reuseId 正在执行中，请等它完成后再追问")
+            }
+            if (subSessionActive.incrementAndGet() > MAX_PARALLEL_SUB) {
+                subSessionActive.decrementAndGet()
+                return ToolResult.fail("并行子会话已达上限（$MAX_PARALLEL_SUB 个），请等待完成后再派发")
+            }
+
+            val now = System.currentTimeMillis()
+            val parentSessionId = existing.parentId
+            val title = existing.title.removePrefix("↳ ").ifBlank { task.take(30) }
+            // 带上已有历史 + 新任务
+            val initial = existing.messages + DesktopMessage(role = "user", content = task, timestamp = now)
+
+            SubSessionProgress.start(reuseId, title)
+            subSessionScope.launch {
+                // 【并行安全】不再改写全局 CurrentTaskSession.id。
+                // 原来这里把它临时改成 reuseId，多个子会话并行时互相覆盖，
+                // 退出后还原的值可能是另一个子会话的 id，导致后续子代理
+                // 的 parentId 挂错、完成通知也注入到错误的会话里（看起来
+                // 就是“覆盖了原会话”）。复用场景的归属就是 existing.parentId，
+                // 直接用它做回流目标即可，不需要碰全局。
+                var subHistory: List<DesktopMessage> = initial
+                try {
+                    val finalHistory = DesktopAgent.runTurn(
+                        settings = DesktopSettingsHolder.current,
+                        history = initial,
+                        onUpdate = { h ->
+                            subHistory = h
+                            SubSessionProgress.update(
+                                reuseId,
+                                h.count { m -> m.type == "tool_call" },
+                                h.lastOrNull { m -> m.type == "tool_call" }
+                                    ?.content?.lineSequence()?.firstOrNull() ?: ""
+                            )
+                        },
+                        onThinking = {},
+                        onReasoning = {},
+                        onStream = {},
+                        onStreamCommit = {}
+                    )
+                    subHistory = finalHistory
+                } catch (_: Exception) {
+                } finally {
+                    try {
+                        DesktopSessionStore.save(
+                            DesktopSession(
+                                id = reuseId,
+                                title = existing.title,
+                                createdAt = existing.createdAt,
+                                updatedAt = System.currentTimeMillis(),
+                                parentId = parentSessionId,
+                                messages = subHistory
+                            )
+                        )
+                    } catch (_: Exception) { }
+                    SubSessionProgress.finish(reuseId)
+                    subSessionActive.decrementAndGet()
+                    SubSessionProgress.emitCompleted(
+                        SubSessionProgress.Completed(
+                            originId = parentSessionId ?: "",
+                            subId = reuseId,
+                            title = title,
+                            msgCount = subHistory.size,
+                            summary = subHistory.lastOrNull {
+                                it.type == "text" && it.role == "assistant"
+                            }?.content?.take(800) ?: "（子会话未产生文本输出）"
+                        )
+                    )
+                }
+            }
+
+            return ToolResult.ok(
+                "SUB_SESSION:$reuseId\n标题：↳ $title\n" +
+                        "状态：已复用该子会话并在后台继续执行（携带原有 ${existing.messages.size} 条历史）。\n" +
+                        "完成后会自动在主对话注入「子代理完成」通知。\n\n" +
+                        "（后台执行中——完成后完整过程写入该子会话。）"
+            )
+        }
+
+        // ============ 新建子会话 ============
+        val title = args.optString("title", "").trim().ifBlank { task.take(30) }
+
+        // 并行槽位：原子检查+占位，杜绝同毫秒并发绕过检查
+        if (subSessionActive.incrementAndGet() > MAX_PARALLEL_SUB) {
+            subSessionActive.decrementAndGet()
+            return ToolResult.fail("并行子会话已达上限（$MAX_PARALLEL_SUB 个），请等待完成后再派发")
+        }
+
+        // ID：毫秒时间戳 + 4 位随机 hex，并发派发不撞
+        val rndHex = java.lang.String.format(
+            "%04x",
+            java.util.concurrent.ThreadLocalRandom.current().nextInt(65536)
+        )
+        val subId = "sub_${System.currentTimeMillis()}_$rndHex"
+        val now = System.currentTimeMillis()
+        // 母会话快照：归属 + 完成通知回流目标（全局值可能在执行期被其他任务改写，入口即快照）
+        val parentSessionId = CurrentTaskSession.id.ifBlank { null }
+        // 全新上下文：只有这条 task，不带父会话历史
+        val initial = listOf(
+            DesktopMessage(role = "user", content = task, timestamp = now)
+        )
+
+        // 启动即存盘：子会话立刻出现在「子代理」列表，可随时点入
+        try {
+            DesktopSessionStore.save(
+                DesktopSession(
+                    id = subId,
+                    title = "↳ $title",
+                    createdAt = now,
+                    updatedAt = now,
+                    parentId = parentSessionId,
+                    messages = initial
+                )
+            )
+        } catch (e: Exception) {
+            subSessionActive.decrementAndGet()
+            return ToolResult.fail("子会话初始存盘失败：${e.message}")
+        }
+
+        // 后台异步执行：主对话立即返回、互不阻塞；完成后覆盖保存全量过程
+        SubSessionProgress.start(subId, title)
+        val job = subSessionScope.launch {
+            // 【会话隔离】子会话执行期间把 CurrentTaskSession 指向自己的 subId，
+            // 这样它改的文件在修改历史里归属子会话，而不是污染主会话。
+            // 结束后恢复原值（并行子会话各自持有自己的协程，互不影响）。
+            val prevSessionId = CurrentTaskSession.id
+            CurrentTaskSession.id = subId
+            var subHistory: List<DesktopMessage> = initial
+            // 【可见性】持续累积流式内容，让用户能看到它在写什么
+            val streamBuf = StringBuilder()
+            // 【硬上限】子会话不继承用户的高轮数设置
+            val subLoops = minOf(DesktopSettingsHolder.current.maxToolCallLoops, SUB_MAX_LOOPS)
+            try {
+                val finalHistory = DesktopAgent.runTurn(
+                    settings = DesktopSettingsHolder.current,
+                    history = initial,
+                    maxLoopsOverride = subLoops,
+                    onUpdate = { h ->
+                        subHistory = h
+                        SubSessionProgress.update(
+                            subId,
+                            h.count { m -> m.type == "tool_call" },
+                            h.lastOrNull { m -> m.type == "tool_call" }
+                                ?.content?.lineSequence()?.firstOrNull() ?: ""
+                        )
+                    },
+                    onThinking = { t ->
+                        SubSessionProgress.updatePhase(subId, "思考中", t.take(120))
+                    },
+                    onReasoning = { r ->
+                        val line = r.takeLast(400).replace("\n", " ").trim()
+                        if (line.isNotBlank()) {
+                            SubSessionProgress.updatePhase(subId, "推理中", line.takeLast(120))
+                        }
+                    },
+                    onStream = { c ->
+                        streamBuf.append(c)
+                        SubSessionProgress.updatePhase(
+                            subId, "生成中",
+                            streamBuf.toString().takeLast(400).replace("\n", " ").trim().takeLast(120)
+                        )
+                    },
+                    onStreamCommit = { streamBuf.setLength(0) }
+                )
+                subHistory = finalHistory
+                // 【截断补总结】跑到轮数上限也得给个交代，不能只剩一句
+                // 「已达到最大工具调用轮数」就完事
+                subHistory = summarizeIfTruncated(subHistory, DesktopSettingsHolder.current)
+            } catch (e: Exception) {
+                // 异常 / 被主 AI 主动中断（CancellationException）：
+                // 同样要求它把现有结果总结完再存盘。
+                // NonCancellable：父任务已经被 cancel，不加这个请求会立刻被打断。
+                try {
+                    subHistory = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                        summarizeIfTruncated(subHistory, DesktopSettingsHolder.current)
+                    }
+                } catch (_: Throwable) { }
+            } finally {
+                try {
+                    DesktopSessionStore.save(
+                        DesktopSession(
+                            id = subId,
+                            title = "↳ $title",
+                            createdAt = now,
+                            updatedAt = System.currentTimeMillis(),
+                            parentId = parentSessionId,
+                            messages = subHistory
+                        )
+                    )
+                } catch (_: Exception) { }
+                CurrentTaskSession.id = prevSessionId
+                SubSessionProgress.finish(subId)
+                subSessionActive.decrementAndGet()
+                subSessionJobs.remove(subId)
+                // 完成事件回流：主对话收到「子代理完成」通知
+                SubSessionProgress.emitCompleted(
+                    SubSessionProgress.Completed(
+                        originId = parentSessionId ?: "",
+                        subId = subId,
+                        title = title,
+                        msgCount = subHistory.size,
+                        summary = buildSubSummary(
+                            subHistory,
+                            hitLimit = subHistory.size > 0 &&
+                                    subHistory.lastOrNull { it.type == "text" }?.content
+                                        ?.contains("已达到最大工具调用轮数") == true
+                        )
+                    )
+                )
+            }
+        }
+        subSessionJobs[subId] = job
+
+        return ToolResult.ok(
+            "SUB_SESSION:$subId\n标题：↳ $title\n" +
+                    "状态：已在后台启动（可并行最多 $MAX_PARALLEL_SUB 个），主对话继续执行，互不阻塞。\n" +
+                    "完成后系统会自动在主对话注入「子代理完成」通知；也可用 sub_session 工具查询：" +
+                    "op=status 看进度、op=result 配套 id 取结果。\n\n子会话结果摘要：\n" +
+                    "（后台执行中——完成后完整过程写入该子会话。）"
+        )
+    }
+
+    /** sub_session 工具：查询子会话运行状态 / 列表 / 结果（op=status|list|result） */
+    private suspend fun querySubSession(args: JSONObject): ToolResult {
+        val op = args.optString("op", "status").trim().ifBlank { "status" }
+        val id = args.optString("id", "").trim()
+        return when (op) {
+            "status" -> {
+                val snap = SubSessionProgress.snapshot()
+                if (snap.isEmpty()) {
+                    ToolResult.ok("当前没有正在执行的子会话。")
+                } else {
+                    ToolResult.ok(
+                        snap.entries.joinToString("\n") { (sid, e) ->
+                            "$sid | ${e.title} | 已 ${e.steps} 步" +
+                                    if (e.lastTool.isNotEmpty()) " | 当前：${e.lastTool}" else ""
+                        }
+                    )
+                }
+            }
+            "list" -> {
+                val list = DesktopSessionStore.list().filter { it.parentId != null }
+                if (list.isEmpty()) {
+                    ToolResult.ok("暂无子会话记录。")
+                } else {
+                    ToolResult.ok(
+                        list.joinToString("\n") { m ->
+                            val cnt = DesktopSessionStore.load(m.id)?.messages?.size ?: 0
+                            "${m.id} | ${m.title} | $cnt 条消息"
+                        }
+                    )
+                }
+            }
+            "result" -> {
+                if (id.isBlank()) return ToolResult.fail("op=result 需要 id 参数")
+                val s = DesktopSessionStore.load(id)
+                    ?: return ToolResult.fail("找不到子会话 $id（可用 op=list 查看可用 id）")
+                val finalText = s.messages.lastOrNull {
+                    it.type == "text" && it.role == "assistant"
+                }?.content ?: "（子会话未产生文本结果）"
+                ToolResult.ok(
+                    "子会话 $id「${s.title}」共 ${s.messages.size} 条消息。\n最终结果：\n" +
+                            finalText.take(1500)
+                )
+            }
+            "stop" -> {
+                if (id.isBlank()) return ToolResult.fail("op=stop 需要 id 参数")
+                val job = subSessionJobs[id]
+                    ?: return ToolResult.fail("子会话 $id 不在运行中（可能已完成，可用 op=list 查看）")
+                job.cancel()
+                subSessionJobs.remove(id)
+                SubSessionProgress.finish(id)
+                subSessionActive.decrementAndGet()
+                ToolResult.ok("已终止子会话 $id。")
+            }
+            else -> ToolResult.fail("op 取值为 status / list / result / stop")
+        }
+    }
+
     private suspend fun doExecute(name: String, argsJson: String): ToolResult {
         return try {
             val args = if (argsJson.isBlank()) JSONObject() else JSONObject(argsJson)
 
-            // 【P0】元工具拦截（在 disabled / vision 检查之前，避免误拦）
+            // 元工具拦截（在 disabled / vision 检查之前，避免误拦）
             if (name == "tool_search") {
                 val query = args.optString("query", "").trim()
                 if (query.isBlank()) return ToolResult.fail("tool_search 需要 query 参数")
@@ -361,6 +860,15 @@ object DesktopTools {
                 } else {
                     ToolResult.ok(text)
                 }
+            }
+            if (name == "run_sub_session") {
+                return runSubSession(args)
+            }
+            if (name == "sub_session") {
+                return querySubSession(args)
+            }
+            if (name == "history") {
+                return HistoryTools.execute(args, BackupHelper.backupDirFor(host.trashDir()))
             }
 
             if (name in VISION_TOOLS) {
@@ -415,7 +923,7 @@ object DesktopTools {
                 ScreenTools.execute(name, args)?.let { return it }
             }
             if (name == "code_edit") {
-                CodeEditTools.execute(name, args)?.let { return it }
+                return confirmThenEdit(args)
             }
             if (name == "skill" || name == "pytool" || SkillTools.isDynamicTool(name)) {
                 SkillTools.execute(name, args)?.let { return it }
@@ -446,9 +954,7 @@ object DesktopTools {
         }
     }
 
-    // ============================================================
     // write_file 确认
-    // ============================================================
 
     private suspend fun confirmThenWrite(args: JSONObject): ToolResult {
         val pathStr = args.optString("path", "").trim()
@@ -475,13 +981,93 @@ object DesktopTools {
             if (!approved) return ToolResult.fail("用户已拒绝写入操作，文件未改动")
         }
 
-        return CommonTools.execute("write_file", args, host)
+        // 【内置 git】改前内容先读进内存，写入后与改后内容做行级 diff 存进历史。
+        // 备份失败不阻断写入。
+        val target = File(resolved)
+        val oldBytes = try {
+            if (target.exists()) target.readBytes() else null
+        } catch (_: Exception) { null }
+
+        val result = CommonTools.execute("write_file", args, host)
             ?: ToolResult.fail("通用工具未处理")
+
+        if (settings.fileBackupEnabled && result.success) {
+            BackupHelper.backupDirFor(host.trashDir())?.let { dir ->
+                val newBytes = try {
+                    if (target.exists()) target.readBytes() else null
+                } catch (_: Exception) { null }
+                HistoryStore.recordEdit(
+                    dir, resolved, if (append) "append" else "write",
+                    oldBytes, newBytes, "write_file",
+                    sessionId = CurrentTaskSession.id
+                )
+            }
+        }
+        return result
     }
 
-    // ============================================================
+    // code_edit 确认 + 备份
+
+    /**
+     * code_edit 走与 write 同级的确认流（此前直通执行，等于绕过了
+     * 「写入前确认」的防护）：列出本次涉及的文件让用户确认，确认后
+     * 逐个把已存在文件的当前内容备份，再交回 CodeEditTools 执行。
+     */
+    private suspend fun confirmThenEdit(args: JSONObject): ToolResult {
+        val files = args.optJSONArray("files")
+        val paths = mutableListOf<String>()
+        if (files != null) {
+            for (i in 0 until files.length()) {
+                files.optJSONObject(i)?.optString("path", "")?.takeIf { it.isNotBlank() }
+                    ?.let { paths.add(it) }
+            }
+        }
+        if (paths.isEmpty()) return ToolResult.fail("code_edit 未提供 files")
+
+        val settings = DesktopSettingsHolder.current
+        if (settings.requireConfirmWrite) {
+            val list = paths.joinToString("\n") { "· $it" }
+            val approved = DesktopConfirmation.request(
+                "编辑文件确认",
+                "AI 请求编辑 ${paths.size} 个文件：\n$list\n\n是否允许？"
+            )
+            if (!approved) return ToolResult.fail("用户已拒绝编辑操作，文件未改动")
+        }
+
+        // 【内置 git】执行前把旧内容读进内存（执行后原内容就没了），
+        // 执行成功后与改后内容做行级 diff，写入修改历史。
+        val oldMap = LinkedHashMap<String, ByteArray?>()
+        if (settings.fileBackupEnabled) {
+            paths.forEach { p ->
+                val resolved = host.resolvePath(p) ?: return@forEach
+                val f = File(resolved)
+                oldMap[resolved] = try {
+                    if (f.exists()) f.readBytes() else null
+                } catch (_: Exception) { null }
+            }
+        }
+
+        val result = CodeEditTools.execute("code_edit", args)
+            ?: ToolResult.fail("code_edit 工具未处理")
+
+        if (settings.fileBackupEnabled && result.success) {
+            BackupHelper.backupDirFor(host.trashDir())?.let { dir ->
+                oldMap.forEach { (resolved, old) ->
+                    val newBytes = try {
+                        val f = File(resolved)
+                        if (f.exists()) f.readBytes() else null
+                    } catch (_: Exception) { null }
+                    HistoryStore.recordEdit(
+                        dir, resolved, "code_edit", old, newBytes, "code_edit",
+                        sessionId = CurrentTaskSession.id
+                    )
+                }
+            }
+        }
+        return result
+    }
+
     // 私有工具实现
-    // ============================================================
 
     private suspend fun deleteFile(args: JSONObject): ToolResult {
         val pathStr = args.optString("path", "").trim()
@@ -500,7 +1086,7 @@ object DesktopTools {
             if (!approved) return ToolResult.fail("用户已拒绝删除操作，文件未删除")
         }
 
-        // 【安全删除】不真删，移入回收站，由用户决定何时清空。
+        // 不真删，移入回收站，由用户决定何时清空。
         val r = host.moveToTrash(file.absolutePath)
         return if (r.ok) {
             ToolResult.ok("已移入回收站：${file.absolutePath}\n回收站位置：${r.trashPath}")
@@ -517,23 +1103,23 @@ object DesktopTools {
      *
      * 返回 null 表示安全；非 null 是拒绝文案。
      */
+    private val DESTRUCTIVE_CMD_PATTERNS = listOf(
+        Regex("""(^|[\s&|;(])(del|erase)(\s|$)"""),
+        Regex("""(^|[\s&|;(])(rm|rmdir|rd)(\s|$)"""),
+        Regex("""(^|[\s&|;(])remove-item(\s|$)"""),
+        Regex("""(^|[\s&|;(])ri(\s|$)"""),
+        Regex("""shutil\.rmtree"""),
+        Regex("""os\.remove"""),
+        Regex("""os\.unlink"""),
+        Regex("""os\.rmdir"""),
+        Regex("""pathlib.*\.unlink"""),
+        Regex("""files\.delete"""),
+        Regex("""delete-recursively""")
+    )
+
     private fun detectDestructiveCommand(command: String): String? {
         val c = command.lowercase()
-        // 常见删除命令（Windows + Unix + PowerShell + Python）
-        val patterns = listOf(
-            Regex("""(^|[\s&|;(])(del|erase)(\s|$)"""),
-            Regex("""(^|[\s&|;(])(rm|rmdir|rd)(\s|$)"""),
-            Regex("""(^|[\s&|;(])remove-item(\s|$)"""),
-            Regex("""(^|[\s&|;(])ri(\s|$)"""),
-            Regex("""shutil\.rmtree"""),
-            Regex("""os\.remove"""),
-            Regex("""os\.unlink"""),
-            Regex("""os\.rmdir"""),
-            Regex("""pathlib.*\.unlink"""),
-            Regex("""files\.delete"""),
-            Regex("""delete-recursively""")
-        )
-        val hit = patterns.firstOrNull { it.containsMatchIn(c) } ?: return null
+        val hit = DESTRUCTIVE_CMD_PATTERNS.firstOrNull { it.containsMatchIn(c) } ?: return null
         return "已拦截：命令包含删除操作（${hit.pattern}）。\n" +
                 "AI 不得直接删除文件。如需删除，请改用 delete_file 工具，" +
                 "文件会被移入回收站，由用户决定何时清空。"
@@ -544,7 +1130,7 @@ object DesktopTools {
         if (command.isBlank()) return ToolResult.fail("未提供 command")
         val timeout = args.optInt("timeout", 30).coerceIn(1, 300)
 
-        // 【安全删除】拦截命令行里的删除操作。
+        // 拦截命令行里的删除操作。
         // AI 不得以任何方式直接删除文件，包括通过 shell 绕过 delete_file。
         // 命中则拒绝，并引导改用 delete_file（会移入回收站）。
         detectDestructiveCommand(command)?.let { return ToolResult.fail(it) }
@@ -737,9 +1323,7 @@ object DesktopTools {
         ToolResult.ok("已加载图片：$resolved（${host.formatSize(file.length())}）。图片已附加到下一轮对话，AI 能看到。")
     }
 
-    // ============================================================
     // Windows 命令输出智能解码
-    // ============================================================
 
     private fun readLinesSmart(input: java.io.InputStream, onLine: (String) -> Unit) {
         val buf = ByteArrayOutputStream()

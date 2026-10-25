@@ -1,8 +1,10 @@
 package net.xinkong.furagent.desktop.data
 
+import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.*
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.SecretCodec
+import net.xinkong.furagent.shared.ThinkingLevel
 import net.xinkong.furagent.shared.util.FileRecovery
 import org.json.JSONArray
 import org.json.JSONObject
@@ -13,6 +15,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.milliseconds
 
 object DesktopSessionStore {
+
+    private val RE_ILLEGAL_FN = Regex("""[\\/:*?"<>|]""")
 
     private const val MAX_EXPORT_IMAGE_BYTES = 5L * 1024 * 1024
 
@@ -31,17 +35,13 @@ object DesktopSessionStore {
         val error: String? = null
     )
 
-    // ============================================================
     // 索引内存缓存
-    // ============================================================
     private val indexLock = Any()
 
     @Volatile private var cachedIndex: LinkedHashMap<String, JSONObject>? = null
     @Volatile private var cachedIndexMtime: Long = -1L
 
-    // ============================================================
     // 索引写盘节流（500ms）
-    // ============================================================
     @Volatile private var lastIndexWriteAt: Long = 0L
     @Volatile private var indexDirty: Boolean = false
     private val indexWritePending = AtomicBoolean(false)
@@ -53,7 +53,6 @@ object DesktopSessionStore {
     private fun exportsDir(): File = DesktopPaths.exportsDir()
 
     private fun atomicWrite(target: File, content: String) {
-        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
 
@@ -157,7 +156,8 @@ object DesktopSessionStore {
                         title = o.optString("title", "新会话"),
                         createdAt = o.optLong("createdAt"),
                         updatedAt = o.optLong("updatedAt"),
-                        messageCount = o.optInt("messageCount", 0)
+                        messageCount = o.optInt("messageCount", 0),
+                        parentId = o.optString("parentId", "").takeIf { it.isNotBlank() }
                     ))
                 } catch (e: Exception) {
                     DesktopLogger.error(
@@ -181,6 +181,8 @@ object DesktopSessionStore {
                 title = o.optString("title", "新会话"),
                 createdAt = o.optLong("createdAt"),
                 updatedAt = o.optLong("updatedAt"),
+                parentId = o.optString("parentId", "").takeIf { it.isNotBlank() },
+                systemPrompt = if (o.has("systemPrompt")) o.getString("systemPrompt") else null,
                 messages = msgs
             )
         } catch (e: Exception) {
@@ -195,14 +197,25 @@ object DesktopSessionStore {
 
     fun save(session: DesktopSession) {
         try {
+            // parentId 兜底：persist/重命名会重造 Session 对象（不带 parentId），保留磁盘原值
+            val parentId = session.parentId ?: synchronized(indexLock) {
+                runCatching { loadIndexIntoMemory()[session.id]?.optString("parentId", "") }
+                    .getOrNull()?.takeIf { it.isNotBlank() }
+            }
+            // systemPrompt=null 表示未携带（persist 重造对象不带它）：保留磁盘原值，避免被抹掉
+            val systemPrompt = session.systemPrompt ?: runCatching {
+                val f = sessionFile(session.id)
+                if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optString("systemPrompt", "") else ""
+            }.getOrDefault("")
             val o = JSONObject().apply {
                 put("id", session.id)
                 put("title", session.title)
                 put("createdAt", session.createdAt)
                 put("updatedAt", session.updatedAt)
+                if (parentId != null) put("parentId", parentId)
+                put("systemPrompt", systemPrompt)
                 put("messages", JSONArray().apply {
                     session.messages.forEach { m ->
-                        // 【冗余清理 Batch 11b】消息序列化抽到 shared/data/SessionCodec
                         put(net.xinkong.furagent.shared.data.SessionCodec.messageToJson(m))
                     }
                 })
@@ -221,12 +234,16 @@ object DesktopSessionStore {
         synchronized(indexLock) {
             try {
                 val map = loadIndexIntoMemory()
+                // parentId 兜底：调用方未带时保留旧索引值
+                val parentId = session.parentId
+                    ?: map[session.id]?.optString("parentId", "")?.takeIf { it.isNotBlank() }
                 map[session.id] = JSONObject().apply {
                     put("id", session.id)
                     put("title", session.title)
                     put("createdAt", session.createdAt)
                     put("updatedAt", session.updatedAt)
                     put("messageCount", session.messages.size)
+                    if (parentId != null) put("parentId", parentId)
                 }
                 flushIndex(map)
             } catch (e: Exception) {
@@ -239,9 +256,17 @@ object DesktopSessionStore {
     }
 
     fun delete(id: String) {
+        // 级联：母会话删除时，名下子会话（parentId == id）一并删除
+        try {
+            for (c in list()) {
+                if (c.parentId == id) delete(c.id)
+            }
+        } catch (_: Exception) { }
         try {
             sessionFile(id).delete()
             removeIndexEntry(id)
+            // 会话删了，它的长期记忆摘要也必须一起删，否则记忆里留着已删除会话的摘要
+            MemoryStore.removeBySessionId(id)
         } catch (e: Exception) {
             DesktopLogger.error(
                 "Session",
@@ -293,7 +318,6 @@ object DesktopSessionStore {
     /**
      * 从 JSON 反序列化一条 DesktopMessage。
      *
-     * 【2026-10-15 抽公共】原来 parseMessages / importAll / importSingleSession
      * 三处各有一份几乎逐字的反序列化逻辑。现统一到这里。
      *
      * @param importedImagesDir 非 null 时会尝试解码 imageData 里的 base64 图片，
@@ -318,7 +342,7 @@ object DesktopSessionStore {
         val msgs = mutableListOf<DesktopMessage>()
         for (i in 0 until arr.length()) {
             val m = arr.optJSONObject(i) ?: continue
-            // 【2026-10-15 去重】反序列化逻辑抽到 parseDesktopMessageFromJson
+            // 反序列化逻辑抽到 parseDesktopMessageFromJson
             parseDesktopMessageFromJson(m, null)?.let { msgs.add(it) }
         }
         return msgs
@@ -326,10 +350,9 @@ object DesktopSessionStore {
 
     fun exportMarkdown(session: DesktopSession, hideToolMessages: Boolean = false): File? {
         return try {
-            val safeTitle = session.title.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-            val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
+            val safeTitle = session.title.replace(RE_ILLEGAL_FN, "_")
+            val ts = DateFormats.formatFileTs()
             val file = File(exportsDir(), "${safeTitle}_$ts.md")
-            // 【冗余清理 Batch 11b】Markdown 骨架抽到 shared/data/SessionCodec
             val content = net.xinkong.furagent.shared.data.SessionCodec.sessionToMarkdown(
                 session = session,
                 hideToolMessages = hideToolMessages,
@@ -345,11 +368,10 @@ object DesktopSessionStore {
         }
     }
 
-    // 【冗余清理 Batch 11b】tryEmbedImageAsDataUrl 已挪到 shared/data/SessionCodec。
 
     fun exportAll(settings: DesktopSettings): File? {
         return try {
-            val ts = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+            val ts = DateFormats.formatFileTsNoMs()
             val file = File(exportsDir(), "backup_$ts.json")
             val root = JSONObject()
             root.put("version", 2)
@@ -364,7 +386,6 @@ object DesktopSessionStore {
                     put("updatedAt", s.updatedAt)
                     put("messages", JSONArray().apply {
                         s.messages.forEach { m ->
-                            // 【冗余清理 Batch 11b】带图片的消息序列化抽到 shared/data/SessionCodec
                             put(net.xinkong.furagent.shared.data.SessionCodec.messageToJsonWithImages(
                                 m = m,
                                 maxImageBytes = MAX_EXPORT_IMAGE_BYTES,
@@ -393,6 +414,8 @@ object DesktopSessionStore {
                     }
                 })
                 put("currentProfileId", settings.currentProfileId)
+                put("summaryProfileId", settings.summaryProfileId)
+                put("imageProfileId", settings.imageProfileId)
                 put("apiKeySource", settings.apiKeySource)
                 put("maxToolCallLoops", settings.maxToolCallLoops)
                 put("maxTurns", settings.maxTurns)
@@ -400,12 +423,17 @@ object DesktopSessionStore {
                 put("systemPromptAddon", settings.systemPromptAddon)
                 put("systemPromptFull", settings.systemPromptFull)
                 put("autoSpeak", settings.autoSpeak)
+                put("thinkingLevel", settings.thinkingLevel.id)
                 put("port", settings.port)
                 put("requireConfirmWrite", settings.requireConfirmWrite)
                 put("requireConfirmDelete", settings.requireConfirmDelete)
                 put("requireConfirmShell", settings.requireConfirmShell)
                 put("requireConfirmPython", settings.requireConfirmPython)
                 put("requireConfirmSkill", settings.requireConfirmSkill)
+                put("showTokenBar", settings.showTokenBar)
+                put("showModifiedFiles", settings.showModifiedFiles)
+                put("enableNewSessionSuggest", settings.enableNewSessionSuggest)
+                put("fileBackupEnabled", settings.fileBackupEnabled)
                 put("customToolPaths", JSONObject().apply {
                     settings.customToolPaths.forEach { (k, v) -> put(k, v) }
                 })
@@ -492,7 +520,7 @@ object DesktopSessionStore {
                     o.optJSONArray("messages")?.let { mArr ->
                         for (j in 0 until mArr.length()) {
                             val m = mArr.optJSONObject(j) ?: continue
-                            // 【2026-10-15 去重】反序列化逻辑抽到 parseDesktopMessageFromJson
+                            // 反序列化逻辑抽到 parseDesktopMessageFromJson
                             parseDesktopMessageFromJson(m, importedImagesDir)?.let { msgs.add(it) }
                         }
                     }
@@ -584,6 +612,8 @@ object DesktopSessionStore {
                 val new = current.copy(
                     profiles = mergedProfiles,
                     currentProfileId = currentId,
+                    summaryProfileId = s.optString("summaryProfileId", current.summaryProfileId),
+                    imageProfileId = s.optString("imageProfileId", current.imageProfileId),
                     apiKeySource = s.optString("apiKeySource", current.apiKeySource)
                         .takeIf { it in listOf("profile", "env") } ?: current.apiKeySource,
                     maxToolCallLoops = s.optInt("maxToolCallLoops", current.maxToolCallLoops).coerceAtLeast(1),
@@ -593,11 +623,18 @@ object DesktopSessionStore {
                     systemPromptAddon = s.optString("systemPromptAddon", current.systemPromptAddon),
                     systemPromptFull = s.optString("systemPromptFull", current.systemPromptFull),
                     autoSpeak = s.optBoolean("autoSpeak", current.autoSpeak),
+                    thinkingLevel = if (s.has("thinkingLevel"))
+                        ThinkingLevel.fromId(s.optString("thinkingLevel", null))
+                    else ThinkingLevel.fromLegacyBoolean(s.optBoolean("enableThinking", current.thinkingLevel.enabled)),
                     port = s.optInt("port", current.port).coerceIn(1, 65535),
                     requireConfirmWrite = s.optBoolean("requireConfirmWrite", current.requireConfirmWrite),
                     requireConfirmDelete = s.optBoolean("requireConfirmDelete", current.requireConfirmDelete),
                     requireConfirmShell = s.optBoolean("requireConfirmShell", current.requireConfirmShell),
                     requireConfirmPython = s.optBoolean("requireConfirmPython", current.requireConfirmPython),
+                    showTokenBar = s.optBoolean("showTokenBar", current.showTokenBar),
+                    showModifiedFiles = s.optBoolean("showModifiedFiles", current.showModifiedFiles),
+                    enableNewSessionSuggest = s.optBoolean("enableNewSessionSuggest", current.enableNewSessionSuggest),
+                    fileBackupEnabled = s.optBoolean("fileBackupEnabled", current.fileBackupEnabled),
                     customToolPaths = customPaths.ifEmpty { current.customToolPaths },
                     receiveDir = s.optString("receiveDir", current.receiveDir),
                     themeMode = s.optString("themeMode", current.themeMode),
@@ -650,7 +687,7 @@ object DesktopSessionStore {
             if (mArr != null) {
                 for (i in 0 until mArr.length()) {
                     val m = mArr.optJSONObject(i) ?: continue
-                    // 【2026-10-15 去重】反序列化逻辑抽到 parseDesktopMessageFromJson
+                    // 反序列化逻辑抽到 parseDesktopMessageFromJson
                     parseDesktopMessageFromJson(m, importedImagesDir)?.let { msgs.add(it) }
                 }
             }
@@ -700,7 +737,6 @@ object DesktopSessionStore {
     fun importMarkdown(file: File): ImportSingleResult {
         return try {
             val text = file.readText(Charsets.UTF_8)
-            // 【冗余清理 Batch 11c】文本解析抽到 shared/data/SessionCodec
             val parsed = net.xinkong.furagent.shared.data.SessionCodec.parseMarkdownSession(
                 text = text,
                 fallbackTitle = file.nameWithoutExtension

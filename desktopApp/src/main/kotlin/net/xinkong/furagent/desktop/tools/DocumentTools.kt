@@ -130,9 +130,7 @@ object DocumentTools {
         }
     }
 
-    // ============================================================
     // Word (.docx)
-    // ============================================================
 
     private fun createDocx(path: String, args: JSONObject, host: ToolHost): ToolResult {
         val doc = XWPFDocument()
@@ -318,6 +316,8 @@ object DocumentTools {
         } catch (_: Exception) { }
     }
 
+    // POI 旧 addPicture 流式重载已标记废弃但仍为流输入的标准入口，压制警告
+    @Suppress("DEPRECATION")
     private fun addDocxImage(doc: XWPFDocument, block: JSONObject, host: ToolHost) {
         val imgPath = block.optString("path", "").trim()
         if (imgPath.isBlank()) return
@@ -339,9 +339,7 @@ object DocumentTools {
         }
     }
 
-    // ============================================================
     // PowerPoint (.pptx)
-    // ============================================================
 
     private fun createPptx(path: String, args: JSONObject, host: ToolHost): ToolResult {
         val ppt = XMLSlideShow()
@@ -357,7 +355,7 @@ object DocumentTools {
                 val slide = ppt.createSlide()
                 if (cfg.bgColor != null) fillSlideBackground(slide, cfg.bgColor)
                 val box = slide.createTextBox()
-                box.anchor = Rectangle(60, (pageSize.height / 2 - 80).toInt(), pageSize.width - 120, 160)
+                box.anchor = Rectangle(60, pageSize.height / 2 - 80, pageSize.width - 120, 160)
                 val p = box.addNewTextParagraph()
                 p.textAlign = org.apache.poi.sl.usermodel.TextParagraph.TextAlign.CENTER
                 val run = p.addNewTextRun()
@@ -383,7 +381,7 @@ object DocumentTools {
                 when (block.optString("type", "text")) {
                     "title", "heading" -> {
                         currentSlide = newSlide()
-                        val box = currentSlide!!.createTextBox()
+                        val box = currentSlide.createTextBox()
                         box.anchor = Rectangle(60, 40, pageSize.width - 120, 80)
                         val p = box.addNewTextParagraph()
                         val run = p.addNewTextRun()
@@ -530,9 +528,7 @@ object DocumentTools {
         } catch (_: Exception) { null }
     }
 
-    // ============================================================
     // Excel (.xlsx)
-    // ============================================================
 
     private fun createXlsx(path: String, args: JSONObject, host: ToolHost): ToolResult {
         val wb = XSSFWorkbook()
@@ -669,9 +665,7 @@ object DocumentTools {
                 (code in 0xFFE0..0xFFE6)
     }
 
-    // ============================================================
     // 读取
-    // ============================================================
 
     private fun readDocx(path: String): ToolResult {
         val f = File(path)
@@ -714,9 +708,7 @@ object DocumentTools {
         }
     }
 
-    // ============================================================
     // Excel 样式：配置 + 缓存
-    // ============================================================
 
     /**
      * 一个 sheet 的样式配置。
@@ -869,9 +861,7 @@ object DocumentTools {
         }
     }
 
-    // ============================================================
     // Word / PPT 样式配置 + 主题色
-    // ============================================================
 
     /** Word 文档级样式配置。 */
     private data class DocxStyleConfig(

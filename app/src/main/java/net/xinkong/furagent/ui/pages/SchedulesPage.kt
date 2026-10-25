@@ -2,6 +2,7 @@
 
 package net.xinkong.furagent.ui.pages
 
+import net.xinkong.furagent.shared.util.DateFormats
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -11,11 +12,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Schedule
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -32,7 +29,9 @@ import kotlinx.coroutines.delay
 import net.xinkong.furagent.data.ScheduleStore
 import net.xinkong.furagent.data.ScheduledTask
 import net.xinkong.furagent.system.notifyToast
+import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.ui.*
+import net.xinkong.furagent.ui.theme.AppRadius
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
@@ -40,7 +39,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * 定时任务列表 —— 整屏页面。
  *
- * 【F4】每条任务右侧加 Switch：关闭后不注册 alarm（setEnabled 里 cancel），
+ * 每条任务右侧加 Switch：关闭后不注册 alarm（setEnabled 里 cancel），
  * TaskReceiver 触发时也会跳过。任务保留在列表，可随时重开。
  */
 @Composable
@@ -100,7 +99,7 @@ fun SchedulesPage(onBack: () -> Unit) {
                     action = {
                         Button(
                             onClick = { showNewTask = true },
-                            shape = RoundedCornerShape(14.dp)
+                            shape = RoundedCornerShape(AppRadius.MD_MINUS)
                         ) {
                             Icon(Icons.Default.Add, null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(6.dp))
@@ -122,6 +121,7 @@ fun SchedulesPage(onBack: () -> Unit) {
                         }
                         AnimatedVisibility(
                             visible = visible,
+                            modifier = Modifier.animateItem(),
                             enter = fadeIn(tween(200)) + slideInVertically(
                                 animationSpec = tween(240),
                                 initialOffsetY = { it / 3 }
@@ -178,7 +178,7 @@ fun SchedulesPage(onBack: () -> Unit) {
     pendingDeleteId?.let { id ->
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("取消定时任务") },
             text = { Text("确定取消这个任务？") },
@@ -198,11 +198,8 @@ fun SchedulesPage(onBack: () -> Unit) {
     }
 }
 
-// 【批次 20 UI 收口】EmptySchedulesState 已合并到 PocoEmptyState（Glass.kt）。
 
-// ============================================================
-// 定时任务卡片（【F4】加 Switch）
-// ============================================================
+// 定时任务卡片
 
 @Composable
 private fun ScheduleCard(
@@ -212,7 +209,7 @@ private fun ScheduleCard(
     onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date(task.triggerTime))
+    val time = DateFormats.formatDateTime(task.triggerTime)
     val repeatLabel = when (task.repeatMode) {
         "daily" -> "每天"
         "weekly" -> "每周 " + task.repeatDays.sorted().joinToString(" ") { d ->
@@ -222,10 +219,12 @@ private fun ScheduleCard(
         "cron" -> "cron: ${task.cronExpression}"
         else -> "单次"
     }
-    val title = when (task.action) {
-        "run_cron" -> "执行命令：${task.command.take(30)}"
-        "send_notification" -> "通知：${task.notificationTitle.ifBlank { task.description }}"
+    val title = when (ScheduleStore.normalizeAction(task.action)) {
+        "run_command" -> "执行命令：${task.command.take(30)}"
+        "notify" -> "通知：${task.notificationTitle.ifBlank { task.description }}"
         "run_workflow" -> "工作流：${task.workflowName}"
+        "run_tool" -> "工具：${ToolRegistry.displayName(task.toolName)}"
+        "run_agent" -> "AI：${task.prompt.take(30)}"
         else -> "打开 ${task.appName.ifBlank { task.packageName }}"
     }
 
@@ -254,30 +253,29 @@ private fun ScheduleCard(
                         Spacer(Modifier.width(6.dp))
                         Box(
                             Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.surfaceVariant)
-                                .padding(horizontal = 6.dp, vertical = 1.dp)
+                                .clip(RoundedCornerShape(AppRadius.MICRO))
+                                .background(MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.4f))
+                                .padding(horizontal = 7.dp, vertical = 2.dp)
                         ) {
                             Text(
                                 "已禁用",
-                                fontSize = 9.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
                                 fontWeight = FontWeight.Medium
                             )
                         }
                     }
                 }
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(3.dp))
                 Text(
                     time,
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
                     repeatLabel,
-                    fontSize = 11.sp,
+                    style = MaterialTheme.typography.bodySmall,
                     color = if (task.enabled) {
                         MaterialTheme.colorScheme.primary
                     } else {
@@ -288,22 +286,29 @@ private fun ScheduleCard(
                     Spacer(Modifier.height(2.dp))
                     Text(
                         "条件：${task.conditions.size} 个（${if (task.conditionMode == "or") "任意" else "全部"}满足）",
-                        fontSize = 11.sp,
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                // AI 任务：标出是否绑定了会话（绑定才有上下文，回复会写回该会话）
+                if (ScheduleStore.normalizeAction(task.action) == "run_agent") {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        if (task.sessionId.isBlank()) "未绑定会话（无上下文）"
+                        else "已绑定会话（有上下文，回复写回）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                     )
                 }
             }
 
             Spacer(Modifier.width(8.dp))
 
-            // 【F4】启用/禁用开关
+            // 启用/禁用开关
             Switch(
                 checked = task.enabled,
                 onCheckedChange = onToggleEnabled,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary
-                )
+                colors = pocoSwitchColors()
             )
 
             Box {

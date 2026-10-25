@@ -42,24 +42,16 @@ data class TrashResult(
  */
 interface ToolHost {
 
-    // ============================================================
     // 时间
-    // ============================================================
     fun now(): Long
 
-    // ============================================================
     // 路径
-    // ============================================================
     fun resolvePath(input: String): String?
 
-    // ============================================================
     // 日志
-    // ============================================================
     fun log(tag: String, message: String)
 
-    // ============================================================
     // 文件系统
-    // ============================================================
     suspend fun exists(path: String): Boolean
     suspend fun isDirectory(path: String): Boolean
     suspend fun fileSize(path: String): Long
@@ -87,9 +79,7 @@ interface ToolHost {
     suspend fun searchFiles(root: String, keyword: String, maxResults: Int): List<String>
     suspend fun ensureParentDir(path: String): Boolean
 
-    // ============================================================
     // 代码导航：按行区间读 + 搜正文
-    // ============================================================
 
     /**
      * 读取文本文件的指定行区间。
@@ -122,16 +112,12 @@ interface ToolHost {
         contextLines: Int = 0
     ): List<ContentMatch>
 
-    // ============================================================
     // 显示
-    // ============================================================
     fun formatSize(bytes: Long): String
 
-    // ============================================================
     // 键值存储（env_store 用）
     // 两端各持久化到自己的位置：Android 用 SharedPreferences，桌面用 JSON 文件
     // key 会自动加前缀 "env_"，这里不用自己加
-    // ============================================================
     suspend fun kvGet(key: String): String?
     suspend fun kvSet(key: String, value: String)
     suspend fun kvRemove(key: String)

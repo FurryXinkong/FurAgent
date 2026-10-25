@@ -1,8 +1,9 @@
 package net.xinkong.furagent.desktop.tools
 
+import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.desktop.data.ScheduleStore
 import net.xinkong.furagent.desktop.data.ScheduledTask
-import net.xinkong.furagent.desktop.data.TaskCondition
+import net.xinkong.furagent.shared.util.TaskCondition
 import net.xinkong.furagent.shared.tools.ToolResult
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -21,9 +22,9 @@ object ScheduleTools {
         ToolDef(
             name = "schedule",
             displayName = "定时任务",
-            description = "定时任务管理（秒级轮询 / cron / 条件触发）。op=create 创建任务（action 支持 notify/run_tool/run_workflow/open_app/run_command，可带 trigger_time / repeat_mode / interval_seconds / cron_expression / conditions 等）；op=list 列出所有任务；op=cancel 按 task_id 或 keyword 取消。run_tool 可调用任意桌面工具，包括 pc 相关的手机端调用。" +
+            description = "定时任务管理（秒级轮询 / cron / 条件触发）。op=create 创建任务（action 支持 notify/run_tool/run_workflow/open_app/run_command/run_agent，可带 trigger_time / repeat_mode / interval_seconds / cron_expression / conditions 等）；op=list 列出所有任务；op=cancel 按 task_id 或 keyword 取消。run_tool 可调用任意桌面工具，包括 pc 相关的手机端调用。run_agent 让 AI 定时主动说话（prompt 必填，可带 session_id 把回复写回会话）。" +
                     "条件触发类型：time_between / weekday_in / process_running / network_available / command_matches。",
-            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["create","list","cancel"]},"action":{"type":"string"},"description":{"type":"string"},"trigger_time":{"type":"string"},"repeat_mode":{"type":"string"},"interval_seconds":{"type":"integer"},"cron_expression":{"type":"string"},"notification_title":{"type":"string"},"notification_content":{"type":"string"},"tool_name":{"type":"string"},"tool_args":{"type":"string"},"workflow_name":{"type":"string"},"app_path":{"type":"string"},"command":{"type":"string"},"conditions":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"operator":{"type":"string"},"value":{"type":"string"},"value2":{"type":"string"}}}},"condition_mode":{"type":"string"},"skip_if_not_met":{"type":"boolean"},"task_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}"""
+            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["create","list","cancel"]},"action":{"type":"string"},"description":{"type":"string"},"trigger_time":{"type":"string"},"repeat_mode":{"type":"string"},"interval_seconds":{"type":"integer"},"cron_expression":{"type":"string"},"notification_title":{"type":"string"},"notification_content":{"type":"string"},"tool_name":{"type":"string"},"tool_args":{"type":"string"},"workflow_name":{"type":"string"},"app_path":{"type":"string"},"command":{"type":"string"},"prompt":{"type":"string"},"session_id":{"type":"string"},"conditions":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"operator":{"type":"string"},"value":{"type":"string"},"value2":{"type":"string"}}}},"condition_mode":{"type":"string"},"skip_if_not_met":{"type":"boolean"},"task_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}"""
         )
     )
 
@@ -43,12 +44,10 @@ object ScheduleTools {
         }
     }
 
-    // ============================================================
-
     private fun doCreate(args: JSONObject): ToolResult {
         val action = args.optString("action", "").trim()
         val description = args.optString("description", "").trim()
-        if (action !in listOf("notify", "run_tool", "run_workflow", "open_app", "run_command")) {
+        if (action !in listOf("notify", "run_tool", "run_workflow", "open_app", "run_command", "run_agent")) {
             return ToolResult.fail("不支持的 action=$action")
         }
         if (description.isBlank()) return ToolResult.fail("description 不能为空")
@@ -60,7 +59,7 @@ object ScheduleTools {
             return ToolResult.fail("不支持的 repeat_mode=$repeatMode")
         }
 
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf = DateFormats.dateTimeFormatter()
         val triggerStr = args.optString("trigger_time", "").trim()
         val triggerTime: Long = when {
             triggerStr.isNotBlank() -> {
@@ -116,6 +115,12 @@ object ScheduleTools {
             command = args.optString("command", ""),
             notificationTitle = args.optString("notification_title", ""),
             notificationContent = args.optString("notification_content", ""),
+            prompt = args.optString("prompt", ""),
+            // run_agent 未显式指定会话时，自动绑定当前正在聊的会话
+            //（否则回复只能走系统通知，不会出现在聊天里）
+            sessionId = args.optString("session_id", "").ifBlank {
+                if (action == "run_agent") DesktopTools.CurrentTaskSession.id else ""
+            },
             conditions = conds,
             conditionMode = args.optString("condition_mode", "and"),
             skipIfNotMet = args.optBoolean("skip_if_not_met", true),
@@ -134,6 +139,9 @@ object ScheduleTools {
             }
             "run_command" -> if (task.command.isBlank()) {
                 return ToolResult.fail("run_command 需要 command")
+            }
+            "run_agent" -> if (task.prompt.isBlank()) {
+                return ToolResult.fail("run_agent 需要 prompt")
             }
         }
 

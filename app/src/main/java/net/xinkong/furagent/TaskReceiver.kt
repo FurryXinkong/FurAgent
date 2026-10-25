@@ -13,7 +13,7 @@ import net.xinkong.furagent.service.TaskExecutionService
  *  只做"转发"：把 BroadcastReceiver 收到的 Intent 交给 TaskExecutionService。
  *  为什么：
  *    - BroadcastReceiver 的 goAsync() 只有 10 秒（前台）/ 30 秒（后台）窗口
- *    - run_workflow / run_cron 可能跑几分钟到几小时，必然被系统 KILL
+ *    - run_workflow / run_command 可能跑几分钟到几小时，必然被系统 KILL
  *    - 前台服务没有这个限制，且能持 WakeLock
  *
  * 实际执行逻辑全部在 TaskExecutionService 里。

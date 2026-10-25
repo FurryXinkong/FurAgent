@@ -58,6 +58,51 @@ object DownloadManager {
         return id
     }
 
+    /**
+     * 【外部任务旁路登记】DownloadEngine 走的是 shared 里的跨端下载引擎，
+     * 不经过本类的 scope/jobs，但用户希望右下角 DownloadToastBar 也能看到进度。
+     * 这里提供三个方法让调用方自主上报：
+     *   - beginExternal 返回 id，把任务加进 tasks（状态 DOWNLOADING）
+     *   - updateExternal 上报进度
+     *   - finishExternal 标记完成/失败
+     * 外部任务不在 jobs 里，cancel(id) 不会影响它（由调用方自己的取消机制处理）。
+     */
+    fun beginExternal(url: String, savePath: String): String {
+        val id = UUID.randomUUID().toString()
+        val fileName = File(savePath).name
+        val task = Task(
+            id = id,
+            url = url,
+            savePath = savePath,
+            fileName = fileName,
+            status = Status.DOWNLOADING,
+            startedAt = System.currentTimeMillis()
+        )
+        _tasks.value += task
+        return id
+    }
+
+    fun updateExternal(id: String, downloaded: Long, total: Long, speedBps: Long = 0L) {
+        updateTask(id) {
+            it.copy(
+                downloadedBytes = downloaded,
+                totalBytes = if (total > 0) total else it.totalBytes,
+                speedBps = speedBps
+            )
+        }
+    }
+
+    fun finishExternal(id: String, success: Boolean, error: String? = null) {
+        updateTask(id) {
+            it.copy(
+                status = if (success) Status.COMPLETED else Status.FAILED,
+                error = error,
+                finishedAt = System.currentTimeMillis(),
+                speedBps = 0
+            )
+        }
+    }
+
     fun cancel(id: String) {
         jobs[id]?.cancel()
         jobs.remove(id)
@@ -89,7 +134,7 @@ object DownloadManager {
             target.parentFile?.mkdirs()
             val tmp = File(target.parentFile, target.name + ".part")
 
-            val u = URL(task.url)
+            val u = java.net.URI(task.url).toURL()
             conn = u.openConnection() as HttpURLConnection
             conn.connectTimeout = 30_000
             conn.readTimeout = 0

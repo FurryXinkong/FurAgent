@@ -10,8 +10,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,13 +53,15 @@ fun TaskFloatingBar(modifier: Modifier = Modifier) {
 
     AnimatedVisibility(
         visible = hasTasks,
-        enter = fadeIn(tween(200)) + slideInVertically(
-            animationSpec = tween(280, easing = FastOutSlowInEasing),
-            initialOffsetY = { it / 2 }
+        enter = fadeIn(tween(180)) + scaleIn(
+            animationSpec = tween(220, easing = FastOutSlowInEasing),
+            initialScale = 0.94f,
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)
         ),
-        exit = fadeOut(tween(200)) + slideOutVertically(
-            animationSpec = tween(240, easing = FastOutSlowInEasing),
-            targetOffsetY = { it / 2 }
+        exit = fadeOut(tween(140)) + scaleOut(
+            animationSpec = tween(180, easing = FastOutSlowInEasing),
+            targetScale = 0.94f,
+            transformOrigin = androidx.compose.ui.graphics.TransformOrigin(1f, 1f)
         ),
         modifier = modifier
     ) {
@@ -111,7 +112,7 @@ private fun TaskFloatItem(task: TaskRuntime.RunningTask) {
 
     val hasOutput = task.output.isNotBlank()
 
-    GlassFloatingCard(modifier = Modifier.width(620.dp)) {
+    GlassFloatingCard(modifier = Modifier.widthIn(max = 620.dp).fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (task.running) {
@@ -221,7 +222,7 @@ private fun TaskFloatItem(task: TaskRuntime.RunningTask) {
                         Modifier
                             .fillMaxWidth()
                             .heightIn(max = 560.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(Radius.XS))
                             .background(BgColor())
                             .padding(8.dp)
                     ) {
@@ -405,7 +406,7 @@ private fun TaskFullDialog(
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(Radius.XS))
                             .background(BgColor())
                             .padding(12.dp)
                     ) {

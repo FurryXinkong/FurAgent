@@ -1,5 +1,6 @@
 package net.xinkong.furagent.shared.tools
 
+import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -51,8 +52,26 @@ object CommonTools {
     /** 落盘后摘要里保留的行数。 */
     private const val SPILL_PREVIEW_LINES = 30
 
-    /** 只有这三个“大结果工具”才做落盘，其余工具结果小，落盘反而添乱。 */
-    private val SPILL_TOOLS = setOf("grep", "list_files", "read_file")
+    /**
+     * 【大结果工具白名单】这些工具的输出动辄几万行，必须落盘，否则会常驻上下文、
+     * 之后每轮请求都重发一遍，token 成本成倍增加。
+     *
+     * 【为什么从 3 个扩到这么多】原先只有 grep / list_files / read_file，
+     * 结果 execute_command（Gradle 输出、git diff）、web（搜索结果）、ui dump（整棵
+     * 元素树）、sub_session（子会话全量结果）、MCP 工具（PS 的 JSX 返回）全部原样
+     * 进上下文，实测单日 token 消耗冲到 100M+。凡是可能返回大块文本的工具都要落盘。
+     */
+    private val SPILL_TOOLS = setOf(
+        "grep", "list_files", "read_file",
+        "execute_command", "web", "pytool_ds_web",
+        "ui", "sub_session", "run_sub_session",
+        "view_image", "screenshot", "document",
+        "history", "apps", "system"
+    )
+
+    /** MCP 扩展工具（mcp__ 前缀）输出不可控，一律走落盘。 */
+    private fun isSpillTool(name: String): Boolean =
+        name in SPILL_TOOLS || name.startsWith("mcp__") || name.startsWith("pytool_")
 
     /**
      * 落盘文件路径特征：位于 temp 目录且文件名以 tool_ 开头。
@@ -93,11 +112,18 @@ object CommonTools {
             "http_request" -> doHttpRequest(args)
             "env_store" -> doEnvStore(args, host)
             "sleep" -> doSleep(args)
+            // run_sub_session / sub_session 由端侧（ToolRegistry / DesktopTools）拦截实现，这里兜底拒绝
+            "run_sub_session" -> ToolResult.fail(
+                "run_sub_session 需要端侧上下文支持，当前执行环境未接入子会话能力"
+            )
+            "sub_session" -> ToolResult.fail(
+                "sub_session 需要端侧上下文支持，当前执行环境未接入子会话能力"
+            )
             else -> null
         } ?: return null
 
-        // 【大结果落盘】只对三个大结果工具生效；失败静默降级（返回原文）。
-        return if (name in SPILL_TOOLS) maybeSpill(name, args, result, host) else result
+        // 【大结果落盘】大结果工具 + MCP/pytool 前缀；失败静默降级（返回原文）。
+        return if (isSpillTool(name)) maybeSpill(name, args, result, host) else result
     }
 
     /**
@@ -131,7 +157,7 @@ object CommonTools {
 
         return try {
             val dir = host.resolvePath("~/.furagent/temp") ?: return result
-            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.ROOT).format(Date())
+            val stamp = DateFormats.formatFileTs()
             val filePath = "$dir/tool_${toolName}_$stamp.txt"
             if (!host.ensureParentDir(filePath)) return result
             if (!host.writeTextFile(filePath, text)) return result
@@ -155,15 +181,13 @@ object CommonTools {
         }
     }
 
-    // ============================================================
     // 1. time
-    // ============================================================
 
     private fun doTime(args: JSONObject, host: ToolHost): ToolResult {
         return when (val op = args.optString("op", "now").lowercase(Locale.ROOT)) {
             "now" -> {
                 val now = host.now()
-                val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss EEEE", Locale.CHINA)
+                val sdf = DateFormats.dateTimeWeekdayFormatter()
                 val tz = TimeZone.getDefault()
                 ToolResult.ok(
                     buildString {
@@ -180,8 +204,8 @@ object CommonTools {
     }
 
     private fun parseDate(s: String): Date? {
-        val sdf1 = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val sdf2 = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf1 = DateFormats.dateFormatter()
+        val sdf2 = DateFormats.dateTimeFormatter()
         return try {
             sdf2.parse(s) ?: sdf1.parse(s)
         } catch (_: Exception) {
@@ -214,12 +238,12 @@ object CommonTools {
                     time = a
                     add(Calendar.DAY_OF_YEAR, days)
                 }
-                val df = SimpleDateFormat("yyyy-MM-dd EEEE", Locale.CHINA)
+                val df = DateFormats.dateWeekdayFormatter()
                 ToolResult.ok("$date1Str 加 $days 天 = ${df.format(cal.time)}")
             }
             "info" -> {
                 val a = parseDate(date1Str) ?: return ToolResult.fail("无法解析 $date1Str")
-                val df = SimpleDateFormat("yyyy-MM-dd EEEE HH:mm:ss", Locale.CHINA)
+                val df = DateFormats.dateTimeWeekdayCNFormatter()
                 val dayOfYear = SimpleDateFormat("D", Locale.getDefault()).format(a)
                 val weekOfYear = SimpleDateFormat("w", Locale.getDefault()).format(a)
                 ToolResult.ok("日期：${df.format(a)}\n年内第 $dayOfYear 天\n年内第 $weekOfYear 周")
@@ -231,7 +255,7 @@ object CommonTools {
     private fun doTimeTimestampOp(op: String, args: JSONObject): ToolResult {
         val value = args.optString("value", "").trim()
         if (value.isBlank()) return ToolResult.fail("未提供 value")
-        val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val sdf = DateFormats.dateTimeFormatter()
         sdf.timeZone = TimeZone.getDefault()
 
         return when (op) {
@@ -249,9 +273,7 @@ object CommonTools {
         }
     }
 
-    // ============================================================
     // 2. calculate
-    // ============================================================
 
     private fun doCalculate(args: JSONObject): ToolResult {
         val type = args.optString("type", "expr").lowercase(Locale.ROOT)
@@ -393,7 +415,9 @@ object CommonTools {
                 ws()
                 if (i < s.length && s[i] == '^') {
                     i++
-                    val exp = parseUnary()
+                    // 【右结合】递归调用 parsePow 而非 parseUnary，
+                    // 使 2^3^2 = 2^(3^2) = 512，而非 (2^3)^2 = 64。
+                    val exp = parsePow()
                     val expInt = try { exp.intValueExact() } catch (_: Exception) { null }
                     return if (expInt != null && expInt in 0..10000) base.pow(expInt)
                     else BigDecimal(base.toDouble().pow(exp.toDouble()))
@@ -524,9 +548,7 @@ object CommonTools {
         return s.ifEmpty { "0" }
     }
 
-    // ============================================================
     // 3. convert
-    // ============================================================
 
     private fun doConvert(args: JSONObject): ToolResult {
         val type = args.optString("type", "").lowercase(Locale.ROOT)
@@ -720,9 +742,7 @@ object CommonTools {
         return Triple(h, s, l)
     }
 
-    // ============================================================
     // 4. statistics
-    // ============================================================
 
     private fun doStatistics(args: JSONObject): ToolResult {
         val raw = args.optString("numbers", "").trim()
@@ -759,9 +779,7 @@ object CommonTools {
         )
     }
 
-    // ============================================================
     // 5. text
-    // ============================================================
 
     private fun doText(args: JSONObject): ToolResult {
         val op = args.optString("op", "").lowercase(Locale.ROOT)
@@ -841,6 +859,17 @@ object CommonTools {
         val linesB = b.split('\n')
         val m = linesA.size
         val n = linesB.size
+
+        // 【防 OOM】LCS 的 dp 数组是 O(m×n)，两个 10000 行文件 ≈ 400MB。
+        // 超过限制时提示用户缩小范围。
+        val MAX_DIFF_LINES = 5000
+        if (m > MAX_DIFF_LINES || n > MAX_DIFF_LINES) {
+            return ToolResult.fail(
+                "文本过大（${m} 行 vs ${n} 行），LCS 算法需要 O(m×n) 内存。" +
+                        "请用 offset/limit 分段比较，或缩小范围到 ${MAX_DIFF_LINES} 行以内。"
+            )
+        }
+
         val dp = Array(m + 1) { IntArray(n + 1) }
         for (i in 1..m) for (j in 1..n) {
             dp[i][j] = if (linesA[i - 1] == linesB[j - 1]) dp[i - 1][j - 1] + 1
@@ -896,9 +925,7 @@ object CommonTools {
         }
     }
 
-    // ============================================================
     // 6. json
-    // ============================================================
 
     private fun doJson(args: JSONObject): ToolResult {
         val op = args.optString("op", "").lowercase(Locale.ROOT)
@@ -1005,9 +1032,7 @@ object CommonTools {
         }
     }
 
-    // ============================================================
     // 7. hash
-    // ============================================================
 
     private suspend fun doHash(args: JSONObject, host: ToolHost): ToolResult {
         val text = args.optString("text", "")
@@ -1105,9 +1130,7 @@ object CommonTools {
         return maxOf(prefixScore, containScore) * 0.7 + lenScore * 0.3
     }
 
-    // ============================================================
     // 8. list_files
-    // ============================================================
 
     private suspend fun doListFiles(args: JSONObject, host: ToolHost): ToolResult {
         val raw = args.optString("path", "").trim()
@@ -1179,9 +1202,7 @@ object CommonTools {
         return ToolResult.ok(sb.toString().trim())
     }
 
-    // ============================================================
     // 8b. 搜文件正文（grep）
-    // ============================================================
 
     /**
      * 在目录里递归搜正文。
@@ -1326,15 +1347,44 @@ object CommonTools {
         return doContentSearch(args, host, root, keyword, maxResults)
     }
 
-    // ============================================================
     // 9. read_file
-    // ============================================================
 
     private suspend fun doReadFile(args: JSONObject, host: ToolHost): ToolResult {
+        // 【批量读】paths:[...] 一次读多个文件。
+        // 一次调用代替多条 tool_call：省掉每条的包装开销，
+        // 也不会因结果顺序错开而在历史里错配。
+        val pathsArr = args.optJSONArray("paths")
+        if (pathsArr != null && pathsArr.length() > 0) {
+            val sb = StringBuilder()
+            var okCount = 0
+            var failCount = 0
+            for (i in 0 until pathsArr.length()) {
+                val p = pathsArr.optString(i, "").trim()
+                if (p.isBlank()) continue
+                val one = doReadFile(
+                    JSONObject().apply {
+                        put("path", p)
+                        args.keys().forEach { k ->
+                            if (k != "path" && k != "paths") put(k, args.opt(k))
+                        }
+                    },
+                    host
+                )
+                if (one.success) okCount++ else failCount++
+                sb.append("\n========== [").append(i + 1).append('/').append(pathsArr.length())
+                    .append("] ").append(p).append(" ==========\n")
+                sb.append(one.output).append('\n')
+            }
+            sb.append("\n========== 共 ").append(pathsArr.length())
+                .append(" 个文件：成功 ").append(okCount).append("，失败 ").append(failCount)
+                .append(" ==========\n")
+            return if (okCount > 0) ToolResult.ok(sb.toString()) else ToolResult.fail(sb.toString())
+        }
+
         val raw = args.optString("path", "").trim()
         val mode = args.optString("mode", "text").lowercase(Locale.ROOT)
         val length = args.optInt("length", 512).coerceIn(1, 4096)
-        if (raw.isBlank()) return ToolResult.fail("未提供 path")
+        if (raw.isBlank()) return ToolResult.fail("未提供 path（批量读多个文件用 paths:[...]）")
 
         val path = host.resolvePath(raw) ?: return ToolResult.fail("路径不允许访问：$raw")
         if (!host.exists(path)) return ToolResult.fail("文件不存在：$path" + pathHint(path, false, host))
@@ -1449,9 +1499,7 @@ object CommonTools {
         return ToolResult.ok(sb.toString().trimEnd())
     }
 
-    // ============================================================
     // 10. write_file
-    // ============================================================
     private suspend fun doWriteFile(args: JSONObject, host: ToolHost): ToolResult {
         val raw = args.optString("path", "").trim()
         val mode = args.optString("mode", "text").lowercase(Locale.ROOT)
@@ -1504,9 +1552,7 @@ object CommonTools {
         }
     }
 
-    // ============================================================
     // 11. http_request
-    // ============================================================
 
     private suspend fun doHttpRequest(args: JSONObject): ToolResult = withContext(Dispatchers.IO) {
         val url = args.optString("url", "").trim()
@@ -1563,9 +1609,7 @@ object CommonTools {
         }
     }
 
-    // ============================================================
     // 12. env_store
-    // ============================================================
 
     private suspend fun doEnvStore(args: JSONObject, host: ToolHost): ToolResult {
         val op = args.optString("operation", "get").lowercase(Locale.ROOT)
@@ -1609,9 +1653,7 @@ object CommonTools {
         }
     }
 
-    // ============================================================
     // 13. sleep
-    // ============================================================
 
     private suspend fun doSleep(args: JSONObject): ToolResult {
         val seconds = args.optDouble("seconds", -1.0)

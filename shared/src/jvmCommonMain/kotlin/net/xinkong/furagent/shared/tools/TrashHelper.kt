@@ -1,5 +1,6 @@
 package net.xinkong.furagent.shared.tools
 
+import net.xinkong.furagent.shared.util.DateFormats
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -51,11 +52,11 @@ object TrashHelper {
                 return TrashResult(false, message = "无法创建回收站目录：${trashDir.absolutePath}")
             }
 
-            // 【缓存关键】isDirectory 必须在删除前读取（deleteRecursively 之后再读会返回 false）
+            // isDirectory 必须在删除前读取（deleteRecursively 之后再读会返回 false）
             val isDir = src.isDirectory
 
             // 时间戳前缀防重名：20261014_164500_123__原名
-            val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.ROOT).format(Date())
+            val stamp = DateFormats.formatFileTs()
             val safeName = src.name.ifBlank { "unnamed" }
             var dest = File(trashDir, "${stamp}__$safeName")
             var seq = 1

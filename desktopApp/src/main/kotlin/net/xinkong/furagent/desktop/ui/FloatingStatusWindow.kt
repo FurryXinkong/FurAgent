@@ -1,3 +1,4 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
 package net.xinkong.furagent.desktop.ui
 
 import androidx.compose.animation.animateColorAsState
@@ -11,9 +12,7 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Stop
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
@@ -36,6 +35,7 @@ import androidx.compose.ui.window.DialogWindow
 import androidx.compose.ui.window.WindowPosition
 import androidx.compose.ui.window.rememberDialogState
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.isActive
 import net.xinkong.furagent.desktop.core.AgentControlBus
 import net.xinkong.furagent.desktop.core.AgentRuntimeState
@@ -51,14 +51,12 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
-// ============================================================
 // 常量
-// ============================================================
 
-private val CARD_SIZE = DpSize(340.dp, 96.dp)
+private val CARD_SIZE = DpSize(340.dp, 116.dp)
 
-/** 多会话时每多一个运行中的会话，卡片增高多少。 */
-private val EXTRA_ROW_HEIGHT = 18.dp
+/** 多会话时每多一个运行中的会话，卡片增高多少（每个会话两行：任务 + 输出）。 */
+private val EXTRA_ROW_HEIGHT = 34.dp
 
 /** 最多额外显示几行（超出显示 +N）。 */
 private const val MAX_EXTRA_ROWS = 3
@@ -72,12 +70,19 @@ private const val MAX_EXTRA_ROWS = 3
  * (screen.height - h) 会随之变化，freeY 在动画中途被 clamp 到不同值，
  * 表现成"窗口一边缩一边抖"。
  */
-private val STRIP_TALL = DpSize(8.dp, 96.dp)    // LEFT / RIGHT 吸附：与卡片同高
-private val STRIP_LONG = DpSize(340.dp, 8.dp)   // TOP / BOTTOM 吸附：与卡片同宽
+/**
+ * 收起态在屏幕上露出的宽度/高度。
+ *
+ * 【关键修复】不再用「缩小窗口尺寸」的方式做收起，
+ * 改成窗口尺寸恒定为卡片尺寸、只把窗口移到屏幕外。
+ * 原来每帧都调 windowState.size，透明分层窗口每次 resize 都要重建
+ * 渲染表面 → 拉出/拉回时一闪一闪、还掉帧。
+ */
+private val COLLAPSED_PEEK = 8.dp
 
 private const val DOCK_THRESHOLD_PX = 30
 private const val HOT_ZONE_PX = 30
-private const val ANIM_MS = 300
+private const val ANIM_MS = 260
 private const val PERSIST_DEBOUNCE_MS = 600L
 
 private const val AUTO_COLLAPSE_DELAY_MS = 1200L
@@ -85,9 +90,7 @@ private const val HOT_ZONE_POLL_MS = 100L
 
 private val CORNER_SHAPE = RoundedCornerShape(Radius.LG)
 
-// ============================================================
 // 状态
-// ============================================================
 
 private enum class DockSide {
     NONE, LEFT, RIGHT, TOP, BOTTOM;
@@ -104,9 +107,7 @@ private data class PersistedState(
     val dockSide: DockSide,
 )
 
-// ============================================================
 // 持久化
-// ============================================================
 
 private object FloatingWindowStore {
 
@@ -161,9 +162,7 @@ private object FloatingWindowStore {
     }
 }
 
-// ============================================================
 // 屏幕几何
-// ============================================================
 
 private fun screenBoundsContaining(x: Int, y: Int): Rectangle {
     return try {
@@ -223,59 +222,87 @@ private fun detectDockSide(winX: Int, winY: Int, winW: Int, winH: Int): DockSide
     }
 }
 
+/**
+ * 计算窗口应在的位置。
+ *
+ * 窗口尺寸恒定为卡片尺寸；收起时把窗口移到屏幖外，
+ * 只留 [COLLAPSED_PEEK] 那么宽的一条在屏幕内。
+ * 好处：动画过程中窗口尺寸不变，只有位置在动，
+ * 不会触发 Windows 分层窗口的每帧重建，也就不闪了。
+ */
 private fun computeDockPosition(
     side: DockSide,
     freeX: Int,
     freeY: Int,
     size: DpSize,
+    collapsed: Boolean,
 ): Point {
     val w = size.width.value.toInt()
     val h = size.height.value.toInt()
+    val peek = COLLAPSED_PEEK.value.toInt()
     val screen = screenBoundsContaining(freeX + w / 2, freeY + h / 2)
+    val cy = freeY.coerceIn(screen.y, (screen.y + screen.height - h).coerceAtLeast(screen.y))
+    val cx = freeX.coerceIn(screen.x, (screen.x + screen.width - w).coerceAtLeast(screen.x))
     return when (side) {
         DockSide.NONE -> Point(freeX, freeY)
         DockSide.LEFT -> Point(
-            screen.x,
-            freeY.coerceIn(screen.y, (screen.y + screen.height - h).coerceAtLeast(screen.y)),
+            if (collapsed) screen.x - (w - peek) else screen.x, cy
         )
         DockSide.RIGHT -> Point(
-            (screen.x + screen.width - w).coerceAtLeast(screen.x),
-            freeY.coerceIn(screen.y, (screen.y + screen.height - h).coerceAtLeast(screen.y)),
+            if (collapsed) screen.x + screen.width - peek else screen.x + screen.width - w, cy
         )
         DockSide.TOP -> Point(
-            freeX.coerceIn(screen.x, (screen.x + screen.width - w).coerceAtLeast(screen.x)),
-            screen.y,
+            cx, if (collapsed) screen.y - (h - peek) else screen.y
         )
         DockSide.BOTTOM -> Point(
-            freeX.coerceIn(screen.x, (screen.x + screen.width - w).coerceAtLeast(screen.x)),
-            (screen.y + screen.height - h).coerceAtLeast(screen.y),
+            cx, if (collapsed) screen.y + screen.height - peek else screen.y + screen.height - h
         )
     }
 }
 
+/**
+ * 鼠标是否在吸附边的热区里。
+ *
+ * [margin] 是迟滞余量：展开态传 60，收起态传 0。
+ * 这样「展开用 30px 的窄条触发、收起要离开 90px」——鼠标沿着屏幕边缘
+ * 抖动时不会在 30px 边界上反复进出，也就不会反复触发展开/收起动画。
+ */
 private fun isMouseInHotZone(
     mouseX: Int, mouseY: Int,
     side: DockSide,
     winX: Int, winY: Int, winW: Int, winH: Int,
+    margin: Int = 0,
 ): Boolean {
     if (side == DockSide.NONE) return false
     val screen = screenBoundsContaining(winX + winW / 2, winY + winH / 2)
     val extra = 40
+    val zone = HOT_ZONE_PX + margin
     return when (side) {
         DockSide.LEFT ->
-            mouseX in screen.x..(screen.x + HOT_ZONE_PX) &&
+            mouseX in screen.x..(screen.x + zone) &&
                     mouseY in (winY - extra)..(winY + winH + extra)
         DockSide.RIGHT ->
-            mouseX in (screen.x + screen.width - HOT_ZONE_PX)..(screen.x + screen.width) &&
+            mouseX in (screen.x + screen.width - zone)..(screen.x + screen.width) &&
                     mouseY in (winY - extra)..(winY + winH + extra)
         DockSide.TOP ->
-            mouseY in screen.y..(screen.y + HOT_ZONE_PX) &&
+            mouseY in screen.y..(screen.y + zone) &&
                     mouseX in (winX - extra)..(winX + winW + extra)
         DockSide.BOTTOM ->
-            mouseY in (screen.y + screen.height - HOT_ZONE_PX)..(screen.y + screen.height) &&
+            mouseY in (screen.y + screen.height - zone)..(screen.y + screen.height) &&
                     mouseX in (winX - extra)..(winX + winW + extra)
         DockSide.NONE -> false
     }
+}
+
+/** 工具输出的最后一行非空内容（悬浮窗只展示这一行）。 */
+private fun lastOutputLine(s: String): String =
+    s.lineSequence().map { it.trimEnd() }.lastOrNull { it.isNotBlank() } ?: ""
+
+/** 耗时格式化：12.3s / 1:05 */
+private fun formatElapsed(ms: Long): String {
+    val sec = ms / 1000.0
+    return if (sec < 60) "%.1fs".format(sec)
+    else "%d:%02d".format((ms / 60000).toInt(), ((ms / 1000) % 60).toInt())
 }
 
 /**
@@ -299,9 +326,7 @@ private fun contentAlignmentFor(side: DockSide): Alignment = when (side) {
     DockSide.BOTTOM -> Alignment.BottomCenter
 }
 
-// ============================================================
 // 主入口
-// ============================================================
 
 @Composable
 fun FloatingStatusWindow(
@@ -317,7 +342,7 @@ fun FloatingStatusWindow(
 
 @Composable
 private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
-    val runtimeState by AgentRuntimeState.state.collectAsState()
+    val runtimeState by AgentRuntimeState.state.debounce(50).collectAsState(initial = AgentRuntimeState.state.value)
     val taskList by TaskRuntime.tasks.collectAsState()
 
     // 【多会话并发】运行中的会话数决定卡片高度（最多额外 3 行）。
@@ -336,42 +361,32 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
         size = cardSize,
     )
 
-    val targetSize: DpSize = if (collapsed && dockSide != DockSide.NONE) {
-        when (dockSide) {
-            DockSide.LEFT, DockSide.RIGHT -> STRIP_TALL.copy(height = cardSize.height)
-            DockSide.TOP, DockSide.BOTTOM -> STRIP_LONG.copy(width = cardSize.width)
-            DockSide.NONE -> cardSize
-        }
-    } else cardSize
+    // 【修复闪烁】窗口尺寸恒定为卡片尺寸，收起靠移动到屏幖外实现。
+    // 只有会话数变化（多会话 +1 行）才改一次尺寸。
+    val targetSize: DpSize = cardSize
 
-    // ============================================================
     // 位置 + 尺寸动画。
-    //
+
     // 帧同步用 withFrameNanos（Compose 官方 API），不用 delay(16)：
     //   - 每帧只跑一次，不会堆积
     //   - 和 Compose 的渲染循环天然同步
-    //
+
     // 拖动时（isDragging=true）完全不动画，跟随鼠标走。
-    // ============================================================
     LaunchedEffect(dockSide, collapsed, isDragging, cardSize) {
         if (isDragging) return@LaunchedEffect
 
-        val target = computeDockPosition(dockSide, freeX, freeY, targetSize)
+        val target = computeDockPosition(dockSide, freeX, freeY, targetSize, collapsed)
+
+        // 尺寸先一步到位（最多一次 resize），不在动画循环里反复改
+        if (windowState.size != targetSize) windowState.size = targetSize
 
         val sx = windowState.position.x.value
         val sy = windowState.position.y.value
-        val sw = windowState.size.width.value
-        val sh = windowState.size.height.value
-
         val ex = target.x.toFloat()
         val ey = target.y.toFloat()
-        val ew = targetSize.width.value
-        val eh = targetSize.height.value
 
-        if (abs(sx - ex) < 0.5f && abs(sy - ey) < 0.5f &&
-            abs(sw - ew) < 0.5f && abs(sh - eh) < 0.5f
-        ) {
-            if (windowState.size != targetSize) windowState.size = targetSize
+        if (abs(sx - ex) < 0.5f && abs(sy - ey) < 0.5f) {
+            windowState.position = WindowPosition(ex.dp, ey.dp)
             return@LaunchedEffect
         }
 
@@ -386,22 +401,15 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
                     (sx + (ex - sx) * eased).dp,
                     (sy + (ey - sy) * eased).dp,
                 )
-                windowState.size = DpSize(
-                    (sw + (ew - sw) * eased).dp,
-                    (sh + (eh - sh) * eased).dp,
-                )
                 t >= 1f
             }
             if (done) break
         }
 
         windowState.position = WindowPosition(ex.dp, ey.dp)
-        windowState.size = targetSize
     }
 
-    // ============================================================
     // 热区轮询 + 自动收起
-    // ============================================================
     LaunchedEffect(dockSide, isDragging, runtimeState.isRunning) {
         if (dockSide == DockSide.NONE || isDragging) {
             if (collapsed) collapsed = false
@@ -423,7 +431,11 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
             val winY = windowState.position.y.value.roundToInt()
             val winW = windowState.size.width.value.roundToInt()
             val winH = windowState.size.height.value.roundToInt()
-            val inHot = isMouseInHotZone(mouse.x, mouse.y, dockSide, winX, winY, winW, winH)
+            // 已展开时判定范围放大到 90px，避免擦边就收起
+            val inHot = isMouseInHotZone(
+                mouse.x, mouse.y, dockSide, winX, winY, winW, winH,
+                margin = if (collapsed) 0 else 60,
+            )
 
             if (runtimeState.isRunning) {
                 lastInHotZoneAt = System.currentTimeMillis()
@@ -451,18 +463,6 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
         )
     }
 
-    // ============================================================
-    // 【修复】用 DialogWindow 替代 Window
-    //
-    // Window 底层是 JFrame，会出现在任务栏。要让它不出现在任务栏
-    // 需要 setType(UTILITY)，但那个 API 必须在窗口 displayable=false
-    // 时调用，而 Compose Desktop 的渲染时序保证不了 —— 必然抛
-    // IllegalComponentStateException("The window is displayable")。
-    //
-    // DialogWindow 底层是 JDialog，**默认不出现在任务栏**，
-    // 无需任何 setType 调用。功能（alwaysOnTop / undecorated /
-    // transparent / resizable）全部一致。
-    // ============================================================
     DialogWindow(
         onCloseRequest = { /* 禁用关闭，只能从设置里关 */ },
         state = windowState,
@@ -474,13 +474,11 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
     ) {
         val window = this.window
 
-        // ============================================================
         // 窗口级加固
-        //
+
         // 只保留焦点监听 + 定时兜底置顶，删掉：
         //   - setType(UTILITY)：DialogWindow 本身就不在任务栏
         //   - WindowStateListener ICONIFIED 处理：JDialog 无此状态
-        // ============================================================
         DisposableEffect(window) {
             val focusListener = object : java.awt.event.WindowFocusListener {
                 override fun windowGainedFocus(e: java.awt.event.WindowEvent?) { }
@@ -506,9 +504,7 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
             }
         }
 
-        // ============================================================
         // 拖动：用鼠标绝对屏幕坐标算
-        // ============================================================
         val dragStartMouse = remember { arrayOfNulls<Point>(1) }
         val dragStartWindow = remember { arrayOfNulls<Point>(1) }
 
@@ -561,16 +557,10 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
             )
         }
 
-        // ============================================================
         // 内容区
-        //
-        // 【关键】不切换组件树。
-        // 始终渲染 ExpandedCard，用固定 CARD_SIZE 包裹，
-        // 用 contentAlignmentFor(dockSide) 决定贴窗口哪条边。
-        // 窗口小的时候卡片超出部分被自然裁剪，露出贴边的一侧。
-        // 窗口变大时，露出的内容越来越多，视觉上就是"卡片滑出来"。
-        // ============================================================
-        val contentAlign = contentAlignmentFor(dockSide)
+
+        // 窗口尺寸已经等于卡片尺寸，内容始终填满，不需要对齐偏移
+        val contentAlign = Alignment.Center
         Box(Modifier.fillMaxSize()) {
             Box(
                 Modifier
@@ -589,9 +579,7 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
     }
 }
 
-// ============================================================
 // 展开卡片
-// ============================================================
 
 @Composable
 private fun ExpandedCard(
@@ -664,38 +652,53 @@ private fun ExpandedCard(
                 )
             }
 
-            // 【多会话并发】多个会话在跑时，每个会话一行；单会话保持原来的详情行。
+            // 【信息增强】多会话：每个会话两行（会话名 + 当前工具 / 最新输出）
+            //           单会话：「正在执行的任务 + 耗时」+ 「工具最新一行输出」
             val running = runtimeState.sessions.values.toList()
             if (running.size > 1) {
                 val shown = running.take(1 + MAX_EXTRA_ROWS)
                 shown.forEach { s ->
-                    Row(
+                    Column(
                         Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
+                        verticalArrangement = Arrangement.spacedBy(1.dp),
                     ) {
-                        Box(
-                            Modifier
-                                .size(6.dp)
-                                .background(AccentColor(), CircleShape),
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = s.title,
-                            fontSize = 11.sp,
-                            color = TextPrimary(),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                        Spacer(Modifier.width(6.dp))
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(
+                                Modifier
+                                    .size(6.dp)
+                                    .background(AccentColor(), CircleShape),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = s.title,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = TextPrimary(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = if (s.currentToolName.isNotBlank()) s.currentToolName else "生成中…",
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (s.currentToolName.isNotBlank()) WarningColor() else TextMuted(),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         Text(
                             text = sessionProgressText(s),
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontFamily = FontFamily.Monospace,
-                            color = TextSecondary(),
+                            color = TextMuted(),
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1.4f),
+                            modifier = Modifier.fillMaxWidth().padding(start = 12.dp),
                         )
                     }
                 }
@@ -711,15 +714,56 @@ private fun ExpandedCard(
                     )
                 }
             } else {
-                Text(
-                    text = detailText(runtimeState),
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = TextSecondary(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
-                )
+                val task = runningTasks.lastOrNull()
+                if (task != null) {
+                    // 任务行：正在执行什么 + 已经跑了多久
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = task.displayName,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = WarningColor(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = formatElapsed(task.elapsedMs),
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextMuted(),
+                        )
+                    }
+                    // 输出行：工具的最新一行输出（没有就退回 subtitle）
+                    val line = lastOutputLine(task.output).ifBlank {
+                        task.subtitle.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: ""
+                    }
+                    if (line.isNotBlank()) {
+                        Text(
+                            text = line,
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = TextSecondary(),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                } else {
+                    Text(
+                        text = detailText(runtimeState),
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace,
+                        color = TextSecondary(),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
             }
 
             if (runningTasks.isNotEmpty()) {
@@ -742,9 +786,7 @@ private fun ExpandedCard(
     }
 }
 
-// ============================================================
 // 小组件
-// ============================================================
 
 @Composable
 private fun StatusDot(
@@ -795,8 +837,8 @@ private fun SmallButton(
     Box(
         Modifier
             .size(24.dp)
-            .background(bg, RoundedCornerShape(6.dp))
-            .clip(RoundedCornerShape(6.dp))
+            .background(bg, RoundedCornerShape(Radius.TINY))
+            .clip(RoundedCornerShape(Radius.TINY))
             .clickable(
                 interactionSource = interaction,
                 indication = null,
@@ -830,22 +872,20 @@ private fun IndeterminateBar() {
         Modifier
             .fillMaxWidth()
             .height(3.dp)
-            .background(BorderSubtle(), RoundedCornerShape(2.dp))
-            .clip(RoundedCornerShape(2.dp)),
+            .background(BorderSubtle(), RoundedCornerShape(Radius.HAIRLINE))
+            .clip(RoundedCornerShape(Radius.HAIRLINE)),
     ) {
         Box(
             Modifier
                 .fillMaxHeight()
                 .fillMaxWidth(0.4f)
                 .graphicsLayer { translationX = shift * 500f }
-                .background(AccentColor(), RoundedCornerShape(2.dp)),
+                .background(AccentColor(), RoundedCornerShape(Radius.HAIRLINE)),
         )
     }
 }
 
-// ============================================================
 // 文案
-// ============================================================
 
 private fun headerText(state: AgentRuntimeState.State): String {
     return when {
@@ -861,10 +901,11 @@ private fun sessionProgressText(s: AgentRuntimeState.SessionRuntime): String {
     return when {
         s.currentToolName.isNotBlank() -> "调用：${s.currentToolName}"
         s.streamingText.isNotBlank() -> {
-            val preview = s.streamingText.takeLast(40).replace("\n", " ").trim()
+            // 【优化】从 40 字符扩到 120
+            val preview = s.streamingText.takeLast(120).replace("\n", " ").trim()
             preview.ifBlank { "生成中…" }
         }
-        s.thinking.isNotBlank() -> s.thinking.take(40)
+        s.thinking.isNotBlank() -> s.thinking.take(80)
         else -> "处理中…"
     }
 }
@@ -874,10 +915,11 @@ private fun detailText(state: AgentRuntimeState.State): String {
         !state.isRunning -> "空闲"
         state.currentToolName.isNotBlank() -> "正在调用：${state.currentToolName}"
         state.streamingText.isNotBlank() -> {
-            val preview = state.streamingText.takeLast(60).replace("\n", " ").trim()
+            // 【优化】从 60 字符扩到 200，让悬浮窗能看到更多 AI 输出
+            val preview = state.streamingText.takeLast(200).replace("\n", " ").trim()
             preview.ifBlank { "生成中…" }
         }
-        state.thinking.isNotBlank() -> state.thinking.take(60)
+        state.thinking.isNotBlank() -> state.thinking.take(120)
         else -> "处理中…"
     }
 }

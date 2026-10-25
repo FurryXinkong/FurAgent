@@ -1,7 +1,9 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
+import net.xinkong.furagent.ui.theme.AppRadius
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -12,12 +14,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Terminal
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,13 +34,19 @@ import net.xinkong.furagent.data.LogEntry
 import net.xinkong.furagent.data.TokenStats
 import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.ApplyBackgroundBlur
+import net.xinkong.furagent.ui.ChipSurface
 import net.xinkong.furagent.ui.GlassSheen
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.SuccessColor
+import net.xinkong.furagent.ui.WarningColor
 import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 日志控制台 —— 整屏页面。
@@ -62,6 +65,7 @@ fun LogConsolePage(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     ApplyBackgroundBlur(true)
 
     DisposableEffect(Unit) {
@@ -81,12 +85,7 @@ fun LogConsolePage(
     var showClearConfirm by remember { mutableStateOf(false) }
 
     // 【新增】级别多选：默认全部启用
-    //
-    // 【修复】原来过滤直接拿 LogEntry.type 去匹配 {DEBUG, INFO, WARN, ERROR}，
-    // 但 type 是「业务分类」（BRIDGE / TOOL / USER / REQUEST / ...），不是级别，
-    // 导致 BRIDGE / TOOL / RESULT / USER / ERR 等日志永远被过滤掉，
-    // 表现为「日志页一行都看不到」。
-    // 现在改为：先把 type 归类到 4 个级别，再按级别过滤。
+
     val allLevels = remember {
         listOf(
             "DEBUG" to "调试",
@@ -119,7 +118,7 @@ fun LogConsolePage(
                 notifyToast(context, "当前没有可见日志")
                 return
             }
-            val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
+            val fmt = DateFormats.fullMsFormatter()
             val text = displayLogs.joinToString("\n") { e ->
                 "${fmt.format(Date(e.timestamp))} [${e.type}] ${e.content}"
             }
@@ -135,7 +134,7 @@ fun LogConsolePage(
     if (showClearConfirm) {
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = {
                 Text(
@@ -173,7 +172,7 @@ fun LogConsolePage(
     if (showTokenDetail) {
         AlertDialog(
             onDismissRequest = { showTokenDetail = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("Token 明细") },
             text = {
@@ -239,10 +238,10 @@ fun LogConsolePage(
                         .horizontalScroll(rememberScrollState()),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    LogDateChip("实时", selectedDate == null) { selectedDate = null }
+                    ChipSurface("实时", selectedDate == null) { selectedDate = null }
                     availableDates.forEach { date ->
                         Spacer(Modifier.width(6.dp))
-                        LogDateChip(date, selectedDate == date) { selectedDate = date }
+                        ChipSurface(date, selectedDate == date) { selectedDate = date }
                     }
                     if (availableDates.isEmpty()) {
                         Spacer(Modifier.width(8.dp))
@@ -264,9 +263,9 @@ fun LogConsolePage(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     allLevels.forEach { (key, label) ->
-                        LevelToggleChip(
-                            label = label,
-                            selected = key in enabledLevels
+                        ChipSurface(
+                            label,
+                            key in enabledLevels
                         ) {
                             enabledLevels = if (key in enabledLevels) {
                                 enabledLevels - key
@@ -303,7 +302,7 @@ fun LogConsolePage(
                     // 【新增】复制可见
                     OutlinedButton(
                         onClick = { copyVisibleLogs() },
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         enabled = displayLogs.isNotEmpty(),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f)
@@ -313,8 +312,8 @@ fun LogConsolePage(
                         Text("复制可见", maxLines = 1)
                     }
                     OutlinedButton(
-                        onClick = { exportLogs(context, selectedDate, displayLogs) },
-                        shape = RoundedCornerShape(12.dp),
+                        onClick = { scope.launch { exportLogs(context, selectedDate, displayLogs) } },
+                        shape = RoundedCornerShape(AppRadius.SM),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -324,7 +323,7 @@ fun LogConsolePage(
                     }
                     OutlinedButton(
                         onClick = { refreshKey++ },
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
                         modifier = Modifier.weight(1f)
                     ) {
@@ -349,9 +348,7 @@ fun LogConsolePage(
                                     )
                                     if (crashTime > 0) {
                                         Text(
-                                            SimpleDateFormat(
-                                                "MM-dd HH:mm", Locale.getDefault()
-                                            ).format(Date(crashTime)),
+                                            DateFormats.formatShortDateTime(crashTime),
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -411,9 +408,7 @@ fun LogConsolePage(
     }
 }
 
-// ============================================================
 // 空状态
-// ============================================================
 
 @Composable
 private fun EmptyLogsState(
@@ -457,67 +452,7 @@ private fun EmptyLogsState(
     }
 }
 
-// ============================================================
-// 日期 chip
-// ============================================================
-
-@Composable
-private fun LogDateChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Surface(
-        color = if (selected) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        shape = RoundedCornerShape(12.dp),
-        onClick = onClick
-    ) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurface,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-        )
-    }
-}
-
-/**
- * 【新增】级别多选 toggle chip。
- *
- * 语义：
- *   - 选中：primary 高亮 + onPrimary 字，表示"显示该级别"
- *   - 未选：surfaceVariant 灰底 + onSurfaceVariant 字，表示"隐藏该级别"
- */
-@Composable
-private fun LevelToggleChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-            )
-            .border(
-                1.dp,
-                if (selected) Color.Transparent
-                else MaterialTheme.colorScheme.outlineVariant,
-                RoundedCornerShape(10.dp)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            color = if (selected) MaterialTheme.colorScheme.onPrimary
-            else MaterialTheme.colorScheme.onSurfaceVariant,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-        )
-    }
-}
+// 日期 / 级别 chip —— 统一复用公共 ChipSurface（ChatUI.kt），不再本地手搓
 
 @Composable
 private fun InlineTextButton(
@@ -527,7 +462,7 @@ private fun InlineTextButton(
 ) {
     Box(
         Modifier
-            .clip(RoundedCornerShape(6.dp))
+            .clip(RoundedCornerShape(AppRadius.TINY))
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
@@ -541,17 +476,17 @@ private fun InlineTextButton(
     }
 }
 
-// ============================================================
 // 导出（走系统分享）
-// ============================================================
 
-private fun exportLogs(context: Context, date: String?, logs: List<LogEntry>) {
+private suspend fun exportLogs(context: Context, date: String?, logs: List<LogEntry>) {
     try {
-        val text = if (date != null) {
-            AgentLogger.logFileFor(date)?.readText(Charsets.UTF_8) ?: ""
-        } else {
-            val fmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-            logs.joinToString("\n") { "${fmt.format(Date(it.timestamp))} [${it.type}] ${it.content}" }
+        val text = withContext(Dispatchers.IO) {
+            if (date != null) {
+                AgentLogger.logFileFor(date)?.readText(Charsets.UTF_8) ?: ""
+            } else {
+                val fmt = DateFormats.fullMsFormatter()
+                logs.joinToString("\n") { "${fmt.format(Date(it.timestamp))} [${it.type}] ${it.content}" }
+            }
         }
         if (text.isBlank()) {
             notifyToast(context, "没有可导出的日志")
@@ -559,9 +494,11 @@ private fun exportLogs(context: Context, date: String?, logs: List<LogEntry>) {
         }
         val name = if (date != null) "furagent_$date.log"
         else "furagent_live_${System.currentTimeMillis()}.log"
-        val tmp = File(context.cacheDir, name)
-        tmp.writeText(text, Charsets.UTF_8)
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tmp)
+        val uri = withContext(Dispatchers.IO) {
+            val tmp = File(context.cacheDir, name)
+            tmp.writeText(text, Charsets.UTF_8)
+            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", tmp)
+        }
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)
@@ -574,9 +511,7 @@ private fun exportLogs(context: Context, date: String?, logs: List<LogEntry>) {
     }
 }
 
-// ============================================================
 // 日志级别归类
-// ============================================================
 
 /**
  * 把 LogEntry.type（业务分类）归类到 4 个级别之一。
@@ -602,18 +537,16 @@ private fun levelOf(type: String): String = when (type) {
     else -> "INFO"
 }
 
-// ============================================================
 // 单条日志卡片
-// ============================================================
 
 @Composable
 private fun LogEntryCard(entry: LogEntry) {
     val (badgeColor, badgeText) = when (entry.type) {
         "CRASH" -> MaterialTheme.colorScheme.error to "崩溃"
         "ERR" -> MaterialTheme.colorScheme.error to "错误"
-        "WARN" -> Color(0xFFF59E0B) to "警告"
+        "WARN" -> WarningColor() to "警告"
         "DEBUG" -> MaterialTheme.colorScheme.onSurfaceVariant to "调试"
-        "INFO" -> Color(0xFF34C759) to "信息"
+        "INFO" -> SuccessColor() to "信息"
         "USER" -> MaterialTheme.colorScheme.primary to "用户"
         "REQUEST" -> MaterialTheme.colorScheme.tertiary to "请求"
         "RESPONSE" -> MaterialTheme.colorScheme.secondary to "响应"
@@ -624,14 +557,14 @@ private fun LogEntryCard(entry: LogEntry) {
         "BRIDGE" -> MaterialTheme.colorScheme.secondary to "桥接"
         else -> MaterialTheme.colorScheme.outline to "系统"
     }
-    val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(entry.timestamp))
+    val time = DateFormats.formatTime(entry.timestamp)
 
     PocoCard {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     color = badgeColor.copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(8.dp)
+                    shape = RoundedCornerShape(AppRadius.XS)
                 ) {
                     Text(
                         badgeText,

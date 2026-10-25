@@ -5,7 +5,6 @@ import java.security.MessageDigest
 /**
  * HTTP token 短码派生（双端共用）。
  *
- * 【2026-10-15 抽公共】原来 AndroidHttpFileServer / HttpFileServer 各有一份
  * 完全相同的 deriveShortCode 实现（共 2 处）。现统一到这里。
  *
  * 算法：SHA-256(token) 的前 3 字节转 16 进制大写（6 位）。

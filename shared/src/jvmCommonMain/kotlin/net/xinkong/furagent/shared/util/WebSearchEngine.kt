@@ -29,15 +29,15 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 object WebSearchEngine {
 
+    private val RE_WHITESPACE = Regex("""\s+""")
+
     private const val UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
     private const val ACCEPT_HTML =
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     private const val ACCEPT_LANG = "zh-CN,zh;q=0.9,en;q=0.8"
 
-    // ============================================================
     // Cookie 容器
-    // ============================================================
     private val cookieJar = object : CookieJar {
         private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
 
@@ -69,9 +69,7 @@ object WebSearchEngine {
             .build()
     }
 
-    // ============================================================
     // 分域名限速
-    // ============================================================
     private val lastRequestAt = ConcurrentHashMap<String, Long>()
     private val hostMutex = ConcurrentHashMap<String, Mutex>()
 
@@ -88,9 +86,7 @@ object WebSearchEngine {
         }
     }
 
-    // ============================================================
     // 极简请求
-    // ============================================================
     private fun buildRequest(
         url: String,
         referer: String? = null,
@@ -108,9 +104,7 @@ object WebSearchEngine {
 
     data class SearchResult(val title: String, val url: String, val snippet: String)
 
-    // ============================================================
     // 对外入口
-    // ============================================================
 
     /**
      * @param engine 可选：bing / baidu / 360。为空时按"360 → 百度 → 必应"顺序自动回退。
@@ -171,17 +165,13 @@ object WebSearchEngine {
                 "本次不再重试，请直接告知用户网络搜索暂时不可用。"
     }
 
-    // ============================================================
     // 调试日志：只在"未提取到结果"时打，避免污染正常日志
-    // ============================================================
     private fun debugHtmlOnFailure(tag: String, html: String) {
-        val head = html.take(300).replace(Regex("\\s+"), " ")
+        val head = html.take(300).replace(RE_WHITESPACE, " ")
         ToolLogger.log("SEARCH", "[$tag] 未提取到结果，HTML 长度=${html.length} 前 300 字符：$head")
     }
 
-    // ============================================================
     // 源 1：360 搜索
-    // ============================================================
     private suspend fun trySearch360(query: String, page: Int): List<SearchResult>? {
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
@@ -232,7 +222,7 @@ object WebSearchEngine {
                 ) continue
 
                 val titleEl = item.selectFirst("h3 a") ?: item.selectFirst("h3 > a") ?: continue
-                val title = titleEl.text().replace(Regex("\\s+"), " ").trim()
+                val title = titleEl.text().replace(RE_WHITESPACE, " ").trim()
                 if (title.isBlank()) continue
 
                 var link = titleEl.attr("data-mdurl").trim()
@@ -247,7 +237,7 @@ object WebSearchEngine {
                         item.selectFirst("div.summary") ?:
                         item.selectFirst("p")
                         )?.text()
-                    ?.replace(Regex("\\s+"), " ")
+                    ?.replace(RE_WHITESPACE, " ")
                     ?.trim()
                     ?.let { if (it.length > 200) it.take(200) + "..." else it }
                     ?: ""
@@ -292,9 +282,7 @@ object WebSearchEngine {
         }
     }
 
-    // ============================================================
     // 源 2：百度
-    // ============================================================
     private suspend fun trySearchBaidu(query: String, page: Int): List<SearchResult>? {
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
@@ -346,7 +334,7 @@ object WebSearchEngine {
                     ?: item.selectFirst("h3 a")
                     ?: item.selectFirst("h3 > a")
                     ?: continue
-                val title = titleEl.text().replace(Regex("\\s+"), " ").trim()
+                val title = titleEl.text().replace(RE_WHITESPACE, " ").trim()
                 if (title.isBlank()) continue
 
                 var link = titleEl.attr("data-landurl").trim()
@@ -360,7 +348,7 @@ object WebSearchEngine {
                         item.selectFirst("div.c-span-last") ?:
                         item.selectFirst("div.c-row")
                         )?.text()
-                    ?.replace(Regex("\\s+"), " ")
+                    ?.replace(RE_WHITESPACE, " ")
                     ?.trim()
                     ?.let { if (it.length > 200) it.take(200) + "..." else it }
                     ?: ""
@@ -390,9 +378,7 @@ object WebSearchEngine {
         }
     }
 
-    // ============================================================
     // 源 3：必应
-    // ============================================================
     private suspend fun trySearchBing(query: String, page: Int): List<SearchResult>? {
         return try {
             val first = 1 + (page - 1) * 10
@@ -443,7 +429,7 @@ object WebSearchEngine {
                     ?: item.selectFirst(".b_caption")
                     ?: item.selectFirst("p"))
                     ?.text()
-                    ?.replace(Regex("\\s+"), " ")
+                    ?.replace(RE_WHITESPACE, " ")
                     ?.trim()
                     ?.let { if (it.length > 200) it.take(200) + "..." else it }
                     ?: ""
@@ -463,9 +449,7 @@ object WebSearchEngine {
         }
     }
 
-    // ============================================================
     // 结果格式化
-    // ============================================================
     private fun formatResults(
         source: String,
         query: String,
@@ -485,9 +469,7 @@ object WebSearchEngine {
         return sb.toString()
     }
 
-    // ============================================================
     // 网页正文抓取
-    // ============================================================
     /**
      * 抓取网页正文并转成 Markdown。
      *
@@ -540,7 +522,7 @@ object WebSearchEngine {
             val title = doc.title().trim()
 
             // 先备份一份未清理的 body 文本，作为最终兜底
-            val rawBodyText = doc.body().text().replace(Regex("\\s+"), " ").trim()
+            val rawBodyText = doc.body().text().replace(RE_WHITESPACE, " ").trim()
 
             HtmlToMarkdown.cleanDocument(doc)
             val root = HtmlToMarkdown.pickContentRoot(doc)
@@ -561,7 +543,7 @@ object WebSearchEngine {
 
             if (markdown.isBlank()) {
                 // 调试：把 HTML 结构打到日志，便于定位
-                val head = safeHtml.take(3000).replace(Regex("\\s+"), " ")
+                val head = safeHtml.take(3000).replace(RE_WHITESPACE, " ")
                 ToolLogger.log(
                     "FETCH",
                     "提取失败。HTML 长度=${safeHtml.length}，body 文本长度=${rawBodyText.length}，" +

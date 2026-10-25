@@ -31,12 +31,17 @@ data class Memory(
 )
 
 object MemoryStore {
-    private const val MAX_ENTRIES = 200
+    // 原先硬上限 200 条，超出后 takeLast 会静默丢弃最旧的普通记忆。
+    // 记忆是用户资产，改为不设上限（条目本身很小，检索直接读文件）。
 
     private fun file(): File = File(DesktopPaths.rootDir(), "memory.json")
 
+    // 内存缓存：避免每次操作都读盘解析 JSON
+    @Volatile private var cachedMemories: List<Memory>? = null
+    @Volatile private var cachedMtime: Long = -1L
+    private val cacheLock = Any()
+
     private fun atomicWrite(target: File, content: String) {
-        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
 
@@ -44,17 +49,39 @@ object MemoryStore {
      * 读取全部记忆。
      *
      * 【P0 已修】单条容错 + FileRecovery
-     * 【F2】反序列化 enabled，缺省 true
+     * 反序列化 enabled，缺省 true
      *
      * 【缓存关键】按 createdAt 升序（旧→新）。
      * 记忆会注入 system prompt，若顺序不稳定，新增一条就会让
      * 整个对话历史的 prompt 前缀缓存全部失效。
      * 升序 + 追加写入 = 已有记忆位置不变，只有尾部新增部分未命中。
+     *
+     * 【内存缓存】通过文件 mtime 判断是否需要重新读盘。
+     * 命中缓存时直接返回，避免每次都解析 JSON。
      */
     fun list(): List<Memory> {
+        val f = file()
+        if (!f.exists()) {
+            synchronized(cacheLock) { cachedMemories = null; cachedMtime = -1L }
+            return emptyList()
+        }
+        val currentMtime = f.lastModified()
+        synchronized(cacheLock) {
+            val cached = cachedMemories
+            if (cached != null && cachedMtime == currentMtime) return cached
+        }
+        // 缓存未命中或文件已变更，重新读盘
+        val loaded = loadFromDisk(f)
+        synchronized(cacheLock) {
+            cachedMemories = loaded
+            cachedMtime = currentMtime
+        }
+        return loaded
+    }
+
+    /** 实际的磁盘读取逻辑（从原 list() 拆出）。 */
+    private fun loadFromDisk(f: File): List<Memory> {
         return try {
-            val f = file()
-            if (!f.exists()) return emptyList()
             val arr = JSONArray(f.readText(Charsets.UTF_8))
             val out = mutableListOf<Memory>()
             var skipped = 0
@@ -87,7 +114,7 @@ object MemoryStore {
                 "Memory",
                 "读取记忆失败，已备份损坏文件：${e.javaClass.simpleName}: ${e.message}"
             )
-            FileRecovery.backupCorrupted(file())
+            FileRecovery.backupCorrupted(f)
             emptyList()
         }
     }
@@ -99,18 +126,17 @@ object MemoryStore {
 
     fun add(content: String): Memory {
         val current = list().toMutableList()
-        // 【缓存关键】重复内容不删除旧条目，避免已有记忆位置变化。
+        // 重复内容不删除旧条目，避免已有记忆位置变化。
         current.firstOrNull { it.content == content }?.let { return it }
         val m = Memory(
             id = UUID.randomUUID().toString(),
             content = content,
             createdAt = System.currentTimeMillis(),
-            enabled = true   // 【F2】新建默认开启
+            enabled = true // 新建默认开启
         )
-        // 【缓存关键】追加到尾部
+        // 追加到尾部
         current.add(m)
-        val trimmed = if (current.size > MAX_ENTRIES) current.takeLast(MAX_ENTRIES) else current
-        save(trimmed)
+        save(current)
         return m
     }
 
@@ -122,19 +148,18 @@ object MemoryStore {
         for (c in contents) {
             val t = c.trim()
             if (t.isBlank() || t in existing) continue
-            // 【缓存关键】追加到尾部
+            // 追加到尾部
             current.add(Memory(
                 id = UUID.randomUUID().toString(),
                 content = t,
                 createdAt = System.currentTimeMillis(),
-                enabled = true   // 【F2】默认开启
+                enabled = true // 默认开启
             ))
             existing.add(t)
             added++
         }
         if (added > 0) {
-            val trimmed = if (current.size > MAX_ENTRIES) current.takeLast(MAX_ENTRIES) else current
-            save(trimmed)
+            save(current)
         }
         return added
     }
@@ -183,8 +208,7 @@ object MemoryStore {
             summaryDetail = detail
         )
         current.add(m)
-        val trimmed = if (current.size > MAX_ENTRIES) current.takeLast(MAX_ENTRIES) else current
-        save(trimmed)
+        save(current)
         return m
     }
 
@@ -202,6 +226,7 @@ object MemoryStore {
     fun clear() {
         try {
             file().delete()
+            synchronized(cacheLock) { cachedMemories = null; cachedMtime = -1L }
         } catch (e: Exception) {
             DesktopLogger.error(
                 "Memory",
@@ -218,7 +243,7 @@ object MemoryStore {
                     put("id", it.id)
                     put("content", it.content)
                     put("createdAt", it.createdAt)
-                    // 【F2】序列化 enabled
+                    // 序列化 enabled
                     put("enabled", it.enabled)
                     // 【P1-2】序列化 sessionId（普通记忆为空串）
                     if (it.sessionId.isNotBlank()) put("sessionId", it.sessionId)
@@ -227,6 +252,12 @@ object MemoryStore {
                 })
             }
             atomicWrite(file(), arr.toString())
+            // 【缓存同步】写盘成功后立即更新缓存，避免下次 list() 再读盘。
+            // 用写入后的时间戳作为 mtime（atomicWrite 可能跨线程，取当前时间兜底）。
+            synchronized(cacheLock) {
+                cachedMemories = list
+                cachedMtime = file().lastModified().coerceAtLeast(System.currentTimeMillis())
+            }
         } catch (e: Exception) {
             DesktopLogger.error(
                 "Memory",
@@ -236,7 +267,7 @@ object MemoryStore {
     }
 
     /**
-     * 【F2】只注入 enabled=true 的记忆。
+     * 只注入 enabled=true 的记忆。
      *
      * 【缓存关键】取最近 maxEntries 条（list() 已按 createdAt 升序，故取尾部）。
      */

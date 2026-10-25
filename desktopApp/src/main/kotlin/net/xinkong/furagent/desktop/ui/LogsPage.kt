@@ -9,8 +9,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,10 +25,11 @@ import androidx.compose.ui.unit.sp
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.util.DateFormats
 import java.awt.KeyboardFocusManager
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
-import java.text.SimpleDateFormat
 import java.util.*
 
 /**
@@ -157,7 +156,7 @@ fun LogsPage() {
 
     // ---- 全局 Ctrl+C：复制选中日志 ----
     val hasSelection by rememberUpdatedState(selectedIds.isNotEmpty())
-    val copyAction by rememberUpdatedState<() -> Boolean> { copySelected() }
+    val copyAction by rememberUpdatedState { copySelected() }
     DisposableEffect(Unit) {
         val fkm = KeyboardFocusManager.getCurrentKeyboardFocusManager()
         val dispatcher = object : java.awt.KeyEventDispatcher {
@@ -168,8 +167,7 @@ fun LogsPage() {
                 if (!hasSelection) return false
                 // 只在主窗口处于激活状态时接管，避免抢别处的 Ctrl+C
                 val active = fkm.activeWindow
-                if (active == null || active !== MainWindowHolder.currentWindow()) return false
-                return copyAction()
+                return !(active == null || active !== MainWindowHolder.currentWindow()) && copyAction()
             }
         }
         fkm.addKeyEventDispatcher(dispatcher)
@@ -209,9 +207,9 @@ fun LogsPage() {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            LogDateChip("实时", selectedDate == null) { selectedDate = null }
+            GlassChip("实时", selectedDate == null) { selectedDate = null }
             availableDates.forEach { date ->
-                LogDateChip(date, selectedDate == date) { selectedDate = date }
+                GlassChip(date, selectedDate == date) { selectedDate = date }
             }
             if (availableDates.isEmpty()) {
                 Text(
@@ -240,9 +238,9 @@ fun LogsPage() {
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 allLevels.forEach { (key, label) ->
-                    LevelToggleChip(
-                        label = label,
-                        selected = key in enabledLevels
+                    GlassChip(
+                        label,
+                        key in enabledLevels
                     ) {
                         enabledLevels = if (key in enabledLevels) {
                             enabledLevels - key
@@ -339,7 +337,7 @@ fun LogsPage() {
                         ),
                         verticalArrangement = Arrangement.spacedBy(2.dp)
                     ) {
-                        // 【关键】用 count + 索引作为 key。
+                        // 用 count + 索引作为 key。
                         // 同一毫秒内两条完全相同日志会撞 key，加 index 保证 100% 唯一。
                         items(
                             count = filtered.size,
@@ -415,9 +413,7 @@ fun LogsPage() {
     }
 }
 
-// ============================================================
 // 空状态
-// ============================================================
 
 @Composable
 private fun EmptyLogsState(isEmpty: Boolean, allHidden: Boolean = false) {
@@ -446,74 +442,14 @@ private fun EmptyLogsState(isEmpty: Boolean, allHidden: Boolean = false) {
             Spacer(Modifier.height(8.dp))
             Text(
                 "点上方任意级别按钮可重新显示",
-                fontSize = 11.sp,
+                fontSize = 12.sp,
                 color = TextMuted()
             )
         }
     }
 }
 
-// ============================================================
-// Chip 组件
-// ============================================================
-
-@Composable
-private fun LogDateChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(Radius.SM))
-            .background(if (selected) AccentColor() else CardColor())
-            .border(
-                1.dp,
-                if (selected) Color.Transparent else BorderColor(),
-                RoundedCornerShape(Radius.SM)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        Text(
-            label,
-            fontSize = 11.sp,
-            color = if (selected) OnAccent() else TextPrimary(),
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-        )
-    }
-}
-
-/**
- * 多选级别 chip。
- *
- * 语义是"多选开关"：
- *   - 选中：AccentColor 高亮 + 白字，表示"显示该级别"
- *   - 未选：CardColor 灰底 + 灰字，表示"隐藏该级别"
- *   - 点一下就是 toggle
- */
-@Composable
-private fun LevelToggleChip(
-    label: String,
-    selected: Boolean,
-    onClick: () -> Unit
-) {
-    Box(
-        Modifier
-            .clip(RoundedCornerShape(Radius.XS))
-            .background(if (selected) AccentColor() else CardColor())
-            .border(
-                1.dp,
-                if (selected) Color.Transparent else BorderColor(),
-                RoundedCornerShape(Radius.XS)
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
-    ) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            color = if (selected) OnAccent() else TextSecondary(),
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
-        )
-    }
-}
+// Chip 组件 —— 统一复用公共库 GlassChip（Glass.kt），不再本地手搓
 
 @Composable
 private fun TextButtonInline(
@@ -536,9 +472,7 @@ private fun TextButtonInline(
     }
 }
 
-// ============================================================
 // 日志行
-// ============================================================
 
 /**
  * 单行日志。
@@ -556,7 +490,7 @@ private fun LogRow(
     onRightClick: () -> Unit
 ) {
     val time = remember(entry.timestamp) {
-        SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date(entry.timestamp))
+        DateFormats.formatTimeMs(entry.timestamp)
     }
     val (color, levelBg) = when (entry.level) {
         "ERROR" -> ErrorColor() to ErrorColor().copy(alpha = 0.08f)

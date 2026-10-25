@@ -4,8 +4,7 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import net.xinkong.furagent.desktop.data.DesktopPaths
 import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
-import net.xinkong.furagent.desktop.data.extractFileName
-import net.xinkong.furagent.desktop.data.resolveReceiveFile
+import net.xinkong.furagent.shared.util.FileNaming
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.system.DesktopNotifier
 import java.io.File
@@ -32,7 +31,7 @@ object HttpFileServer {
 
     fun start(preferredPort: Int): Pair<Int, String> {
         if (server != null) return port to token
-        // 【B4】token 从持久化文件读，首次生成后不再变
+        // token 从持久化文件读，首次生成后不再变
         token = loadOrCreateToken()
 
         val candidates = listOf(preferredPort, 0)
@@ -134,7 +133,6 @@ object HttpFileServer {
         }
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared HttpTokenCodec
     private fun deriveShortCode(t: String): String =
         net.xinkong.furagent.shared.util.HttpTokenCodec.deriveShortCode(t)
 
@@ -248,7 +246,7 @@ object HttpFileServer {
             val rawPath = params["path"] ?: ""
             val dirParam = params["dir"] ?: ""
 
-            val fileName = extractFileName(rawPath)
+            val fileName = FileNaming.extractFileName(rawPath)
             val receiveDir = DesktopSettingsHolder.current.receiveDir
 
             val targetDir: File = if (dirParam.isNotBlank()) {
@@ -261,7 +259,7 @@ object HttpFileServer {
             }
             if (!targetDir.exists()) targetDir.mkdirs()
 
-            val target = resolveReceiveFile(targetDir.absolutePath, fileName)
+            val target = FileNaming.resolveReceiveFile(targetDir.absolutePath, fileName)
             target.parentFile?.mkdirs()
 
             // 【B1/B3】.part 临时文件落点：
@@ -280,7 +278,7 @@ object HttpFileServer {
                         input.copyTo(out, bufferSize = 128 * 1024)
                     }
                 }
-                // 【B2】renameTo 失败时用流式 copyTo，避免 readBytes() 大文件 OOM。
+                // renameTo 失败时用流式 copyTo，避免 readBytes() 大文件 OOM。
                 if (!tmp.renameTo(target)) {
                     tmp.inputStream().use { input ->
                         target.outputStream().use { out ->
@@ -337,7 +335,7 @@ object HttpFileServer {
                 respond(ex, 404, "not found", "text/plain")
                 return
             }
-            // 【安全删除】不真删，移入回收站（~/.furagent/temp/trash），由用户决定何时清空。
+            // 不真删，移入回收站（~/.furagent/temp/trash），由用户决定何时清空。
             val r = net.xinkong.furagent.shared.tools.TrashHelper.moveToTrash(file)
             DesktopLogger.info(
                 "HttpServer",
@@ -364,7 +362,6 @@ object HttpFileServer {
         return ra != null && ra == rb
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared HttpQuery
     private fun parseQuery(q: String): Map<String, String> =
         net.xinkong.furagent.shared.util.HttpQuery.parse(q)
 
@@ -375,10 +372,7 @@ object HttpFileServer {
         ex.responseBody.use { it.write(bytes) }
     }
 
-    private fun formatSize(bytes: Long): String = when {
-        bytes < 1024 -> "${bytes}B"
-        bytes < 1024 * 1024 -> String.format(Locale.US, "%.1fKB", bytes / 1024.0)
-        bytes < 1024L * 1024 * 1024 -> String.format(Locale.US, "%.1fMB", bytes / 1024.0 / 1024.0)
-        else -> String.format(Locale.US, "%.2fGB", bytes / 1024.0 / 1024.0 / 1024.0)
-    }
+    // 【P1-11】统一到 shared/util/Format.formatFileSize
+    private fun formatSize(bytes: Long): String =
+        net.xinkong.furagent.shared.util.formatFileSize(bytes)
 }

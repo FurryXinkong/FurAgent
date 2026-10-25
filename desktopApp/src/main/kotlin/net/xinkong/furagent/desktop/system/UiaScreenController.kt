@@ -56,9 +56,7 @@ object UiaScreenController : ScreenController {
     /** 探活超时（秒），比常规短一点 */
     private const val PROBE_TIMEOUT_SEC = 12
 
-    // ============================================================
     // 常驻进程状态
-    // ============================================================
 
     private val psScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val psLock = Any()
@@ -74,9 +72,7 @@ object UiaScreenController : ScreenController {
 
     fun getLastError(): String? = initError ?: lastAvailabilityError
 
-    // ============================================================
     // 脚本文件
-    // ============================================================
 
     private fun ensureScript(): File? {
         if (initialized) return scriptFile
@@ -115,9 +111,7 @@ object UiaScreenController : ScreenController {
     private fun isWindows(): Boolean =
         System.getProperty("os.name").lowercase().contains("win")
 
-    // ============================================================
     // 常驻进程生命周期
-    // ============================================================
 
     /**
      * 确保常驻进程在运行；不在运行就启动。
@@ -225,9 +219,7 @@ object UiaScreenController : ScreenController {
         }
     }
 
-    // ============================================================
     // 发一条命令并等响应
-    // ============================================================
 
     /**
      * 通过常驻进程发一条命令并等响应。
@@ -304,9 +296,7 @@ object UiaScreenController : ScreenController {
         } catch (_: Exception) { }
     }
 
-    // ============================================================
     // ScreenController 实现
-    // ============================================================
 
     override fun isAvailable(): Boolean {
         if (!isWindows()) return false
@@ -466,9 +456,7 @@ object UiaScreenController : ScreenController {
         }
     }
 
-    // ============================================================
     // JSON → ScreenDump（树形重建）
-    // ============================================================
 
     private class NodeBuilder(
         val id: String,
@@ -576,9 +564,7 @@ object UiaScreenController : ScreenController {
         )
     }
 
-    // ============================================================
     // 生命周期
-    // ============================================================
 
     fun init() {
         if (!isWindows()) {

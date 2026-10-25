@@ -22,12 +22,10 @@ data class Memory(
 
 object MemoryStore {
     private const val FILE_NAME = "memory.json"
-    private const val MAX_ENTRIES = 200
 
     private fun file(context: Context) = File(context.filesDir, FILE_NAME)
 
     private fun atomicWrite(target: File, content: String) {
-        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
 
@@ -35,7 +33,7 @@ object MemoryStore {
      * 读取全部记忆。
      *
      * 【P0 已修】单条容错 + FileRecovery
-     * 【F2】反序列化 enabled，缺省 true
+     * 反序列化 enabled，缺省 true
      *
      * 【缓存关键】按 createdAt 升序（旧 → 新）。
      * 记忆会拼进 system prompt，顺序稳定才能保住前缀缓存。
@@ -97,19 +95,18 @@ object MemoryStore {
 
     fun add(context: Context, content: String): Memory {
         val current = list(context).toMutableList()
-        // 【缓存关键】重复内容不删除旧条目，避免已有记忆位置变化。
+        // 重复内容不删除旧条目，避免已有记忆位置变化。
         current.firstOrNull { it.content == content }?.let { return it }
         val m = Memory(
             id = UUID.randomUUID().toString(),
             content = content,
             createdAt = System.currentTimeMillis(),
-            enabled = true   // 【F2】新建默认开启
+            enabled = true // 新建默认开启
         )
-        // 【缓存关键】追加到尾部（list() 已按 createdAt 升序）
+        // 追加到尾部（list() 已按 createdAt 升序）
         current.add(m)
-        // 【缓存关键】超限时从头部删（删最旧的），尾部新增不受影响
-        val trimmed = if (current.size > MAX_ENTRIES) current.takeLast(MAX_ENTRIES) else current
-        save(context, trimmed)
+        // 记忆是用户资产，不设上限
+        save(context, current)
         return m
     }
 
@@ -121,19 +118,19 @@ object MemoryStore {
         for (c in contents) {
             val trimmed = c.trim()
             if (trimmed.isBlank() || trimmed in existing) continue
-            // 【缓存关键】追加到尾部
+            // 追加到尾部
             current.add(Memory(
                 id = UUID.randomUUID().toString(),
                 content = trimmed,
                 createdAt = System.currentTimeMillis(),
-                enabled = true   // 【F2】默认开启
+                enabled = true // 默认开启
             ))
             existing.add(trimmed)
             added++
         }
         if (added > 0) {
-            val trimmed = if (current.size > MAX_ENTRIES) current.takeLast(MAX_ENTRIES) else current
-            save(context, trimmed)
+            // 记忆是用户资产，不设上限
+            save(context, current)
         }
         return added
     }
@@ -185,7 +182,7 @@ object MemoryStore {
                     put("id", it.id)
                     put("content", it.content)
                     put("createdAt", it.createdAt)
-                    // 【F2】序列化 enabled
+                    // 序列化 enabled
                     put("enabled", it.enabled)
                 })
             }
@@ -199,7 +196,7 @@ object MemoryStore {
     }
 
     /**
-     * 【F2】只注入 enabled=true 的记忆。
+     * 只注入 enabled=true 的记忆。
      *
      * 【缓存关键】取最近 maxEntries 条（list() 已按 createdAt 升序，故取尾部）。
      * 尾部追加语义：新增记忆只影响末尾，前面已缓存的前缀不受影响。

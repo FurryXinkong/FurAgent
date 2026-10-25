@@ -25,6 +25,8 @@ import java.util.*
  */
 object SpeechHelper {
 
+    private val RE_SENTENCE_SPLIT = Regex("(?<=[。！？\n])")
+
     data class State(
         val speaking: Boolean = false,
         val text: String = "",
@@ -47,11 +49,9 @@ object SpeechHelper {
     private val _isSpeaking = MutableStateFlow(false)
     val isSpeaking: StateFlow<Boolean> = _isSpeaking.asStateFlow()
 
-    // ============================================================
-    // 【B9】分段朗读：把长文本切成句子段，逐段加入 TTS 队列。
+    // 分段朗读：把长文本切成句子段，逐段加入 TTS 队列。
     // 支持 pause() 暂停 / resume() 从上次位置继续。
     // UI 层（浮层 / 消息长按菜单）下一轮补。
-    // ============================================================
     @Volatile private var segments: List<String> = emptyList()
     @Volatile private var currentSegmentIdx: Int = 0
     @Volatile private var paused: Boolean = false
@@ -87,7 +87,7 @@ object SpeechHelper {
                         tts?.setPitch(1.0f)
                         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                             override fun onStart(utteranceId: String?) {
-                                // 【B9】跟踪当前段索引，供 resume() 用
+                                // 跟踪当前段索引，供 resume() 用
                                 if (utteranceId != null && utteranceId.startsWith("seg_")) {
                                     val i = utteranceId.removePrefix("seg_").toIntOrNull()
                                     if (i != null) currentSegmentIdx = i
@@ -169,7 +169,7 @@ object SpeechHelper {
     }
 
     /**
-     * 【B9】分段朗读：把文本按句号 / 感叹号 / 问号 / 换行切段，逐段加入 TTS 队列。
+     * 分段朗读：把文本按句号 / 感叹号 / 问号 / 换行切段，逐段加入 TTS 队列。
      * 长文本可暂停 / 继续。
      */
     fun speakSegmented(text: String): Boolean {
@@ -204,7 +204,7 @@ object SpeechHelper {
         return true
     }
 
-    /** 【B9】暂停：停止当前朗读，记住位置。 */
+    /** 暂停：停止当前朗读，记住位置。 */
     fun pause() {
         if (segments.isEmpty()) {
             stop()
@@ -216,14 +216,14 @@ object SpeechHelper {
         _state.value = _state.value.copy(speaking = false)
     }
 
-    /** 【B9】继续：从上次暂停的位置开始。 */
+    /** 继续：从上次暂停的位置开始。 */
     fun resume(): Boolean {
         if (!paused || segments.isEmpty()) return false
         paused = false
         return speakFrom(currentSegmentIdx)
     }
 
-    /** 【B9】当前是否处于暂停状态。 */
+    /** 当前是否处于暂停状态。 */
     fun isPaused(): Boolean = paused
 
     /** 停止朗读。**不清除 error**。 */
@@ -231,7 +231,7 @@ object SpeechHelper {
         try { tts?.stop() } catch (_: Exception) { }
         _isSpeaking.value = false
         _state.value = _state.value.copy(speaking = false)
-        // 【B9】stop 时清空分段状态
+        // stop 时清空分段状态
         segments = emptyList()
         currentSegmentIdx = 0
         paused = false

@@ -135,9 +135,7 @@ object DownloadEngine {
         }
     }
 
-    // ============================================================
     // HTTP 客户端
-    // ============================================================
 
     private fun buildClient(proxyUrl: String?): OkHttpClient {
         val builder = OkHttpClient.Builder()
@@ -166,9 +164,7 @@ object DownloadEngine {
         return builder.build()
     }
 
-    // ============================================================
     // 探测
-    // ============================================================
 
     private data class Probe(val length: Long, val acceptRanges: Boolean)
 
@@ -207,9 +203,7 @@ object DownloadEngine {
         }
     }
 
-    // ============================================================
     // 单线程下载
-    // ============================================================
 
     /** @return null 表示成功，否则返回错误信息。 */
     private fun downloadSingle(
@@ -265,9 +259,7 @@ object DownloadEngine {
         return null
     }
 
-    // ============================================================
     // 多线程分片下载
-    // ============================================================
 
     /** @return null 表示成功，否则返回错误信息。 */
     private suspend fun downloadMulti(
@@ -370,9 +362,7 @@ object DownloadEngine {
         null
     }
 
-    // ============================================================
     // 工具方法
-    // ============================================================
 
     /** 从 URL 猜文件名（去掉 query/fragment，URL 解码）。 */
     fun guessFileName(url: String): String {

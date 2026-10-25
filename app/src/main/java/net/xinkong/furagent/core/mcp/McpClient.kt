@@ -1,6 +1,8 @@
 package net.xinkong.furagent.core.mcp
 
 import kotlinx.coroutines.*
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -113,17 +115,13 @@ class McpClient(val config: McpServerConfig) {
         scope.cancel()
     }
 
-    // ============================================================
     // http（Streamable HTTP）
-    // ============================================================
     private fun connectHttp() {
         if (config.url.isBlank()) throw RuntimeException("未配置 URL")
         // Streamable HTTP 无需预先建流，握手时按需处理
     }
 
-    // ============================================================
     // sse（旧版 HTTP+SSE）
-    // ============================================================
     private suspend fun connectSse() {
         if (config.url.isBlank()) throw RuntimeException("未配置 URL")
         val req = Request.Builder()
@@ -174,7 +172,7 @@ class McpClient(val config: McpServerConfig) {
      * 多行 data 用 \n 连接。旧实现只取第一个 data: 行，多行 JSON 会解析失败。
      */
     private suspend fun readSseStream(resp: Response, onEvent: (JSONObject) -> Unit) {
-        val source = resp.body!!.source()
+        val source = resp.body.source()
         val dataBuf = StringBuilder()
         while (currentCoroutineContext().isActive) {
             val line = source.readUtf8Line() ?: break
@@ -234,9 +232,7 @@ class McpClient(val config: McpServerConfig) {
         }
     }
 
-    // ============================================================
     // MCP 握手
-    // ============================================================
     private suspend fun initializeHandshake() {
         val params = JSONObject().apply {
             put("protocolVersion", PROTOCOL_VERSION)
@@ -279,9 +275,7 @@ class McpClient(val config: McpServerConfig) {
         _tools.value = list
     }
 
-    // ============================================================
     // 调用工具
-    // ============================================================
     suspend fun callTool(toolName: String, args: JSONObject): ToolResult {
         if (_state.value != State.Ready) {
             return ToolResult.fail("MCP [${config.name}] 未就绪")
@@ -315,9 +309,7 @@ class McpClient(val config: McpServerConfig) {
         }
     }
 
-    // ============================================================
     // JSON-RPC over HTTP
-    // ============================================================
     private suspend fun sendNotification(method: String, params: JSONObject?) {
         try {
             val json = JSONObject().apply {
@@ -332,6 +324,46 @@ class McpClient(val config: McpServerConfig) {
                 "MCP",
                 "[${config.name}] 发送通知 $method 失败：${e.javaClass.simpleName}: ${e.message}"
             )
+        }
+    }
+
+    /**
+     * 可取消的 OkHttp 同步调用。
+     *
+     * OkHttp 的 execute() 是阻塞调用，不响应协程取消。这里用
+     * suspendCancellableCoroutine 包装，协程取消时主动 call.cancel()，
+     * 立即中断阻塞，避免「用户点了停止但工具还在跑」。
+     */
+    private suspend fun executeCancellable(call: okhttp3.Call): Response =
+        withContext(Dispatchers.IO) {
+            suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation { call.cancel() }
+                try {
+                    val resp = call.execute()
+                    if (cont.isActive) cont.resume(resp) else resp.close()
+                } catch (e: Exception) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+            }
+        }
+
+    /**
+     * 用户取消时向 MCP 服务器发送 notifications/cancelled，
+     * 让服务器停止正在执行的长任务（如 PS 脚本）。
+     *
+     * 用独立 scope 异步发送，不阻塞取消路径。
+     */
+    private fun notifyCancelled(requestId: Long, method: String) {
+        scope.launch {
+            try {
+                sendNotification(
+                    "notifications/cancelled",
+                    JSONObject().apply {
+                        put("requestId", requestId)
+                        put("reason", "user cancelled")
+                    }
+                )
+            } catch (_: Exception) { }
         }
     }
 
@@ -375,18 +407,24 @@ class McpClient(val config: McpServerConfig) {
         }
         val req = buildHttpRequest(json.toString())
 
-        val resp = withContext(Dispatchers.IO) { httpClient.newCall(req).execute() }
+        val resp = try {
+            executeCancellable(httpClient.newCall(req))
+        } catch (e: CancellationException) {
+            // 用户取消：中断 HTTP 连接，并通知服务器停止执行
+            notifyCancelled(id, method)
+            throw e
+        }
         resp.use { r ->
             r.header("Mcp-Session-Id")?.takeIf { it.isNotBlank() }?.let { sessionId = it }
 
             if (!r.isSuccessful) {
-                val body = try { r.body?.string() ?: "" } catch (_: Exception) { "" }
+                val body = try { r.body.string() } catch (_: Exception) { "" }
                 throw RuntimeException("HTTP ${r.code}：${body.take(200)}")
             }
 
             val ct = r.header("Content-Type") ?: ""
             if (ct.contains("text/event-stream", ignoreCase = true)) {
-                // 【关键】readSseStream 是阻塞读，服务器可能保持连接不关闭，
+                // readSseStream 是阻塞读，服务器可能保持连接不关闭，
                 // 直接同步调用会永远卡住，withTimeoutOrNull 根本执行不到。
                 // 因此放到独立协程里读，主协程只等 found，超时后取消读取协程。
                 val found = CompletableDeferred<JSONObject>()
@@ -414,7 +452,7 @@ class McpClient(val config: McpServerConfig) {
                 }
             }
 
-            val body = r.body?.string() ?: ""
+            val body = r.body.string()
             if (body.isBlank()) throw RuntimeException("空响应：$method")
             return JSONObject(body.trim())
         }
@@ -437,14 +475,16 @@ class McpClient(val config: McpServerConfig) {
         val req = buildHttpRequest(json.toString())
 
         try {
-            withContext(Dispatchers.IO) {
-                httpClient.newCall(req).execute().use { r ->
-                    if (!r.isSuccessful) {
-                        val body = try { r.body?.string() ?: "" } catch (_: Exception) { "" }
-                        throw RuntimeException("HTTP ${r.code}：${body.take(200)}")
-                    }
+            executeCancellable(httpClient.newCall(req)).use { r ->
+                if (!r.isSuccessful) {
+                    val body = try { r.body.string() } catch (_: Exception) { "" }
+                    throw RuntimeException("HTTP ${r.code}：${body.take(200)}")
                 }
             }
+        } catch (e: CancellationException) {
+            pending.remove(id)
+            notifyCancelled(id, method)
+            throw e
         } catch (e: Exception) {
             pending.remove(id)
             throw e
@@ -453,6 +493,9 @@ class McpClient(val config: McpServerConfig) {
         return try {
             withTimeoutOrNull(60_000L.milliseconds) { deferred.await() }
                 ?: throw RuntimeException("SSE 响应超时：$method")
+        } catch (e: CancellationException) {
+            notifyCancelled(id, method)
+            throw e
         } finally {
             pending.remove(id)
         }

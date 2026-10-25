@@ -1,6 +1,8 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
+import net.xinkong.furagent.ui.GradientSlider
+import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.content.Context
 import androidx.compose.animation.animateContentSize
@@ -16,9 +18,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.KeyboardArrowDown
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,7 +28,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -50,12 +53,30 @@ import net.xinkong.furagent.ui.glassPageBg
 import java.util.*
 
 /**
+ * 设置页可隐藏的分组列表（P1-15）。
+ *
+ * key 与桌面端 DesktopSettings.hiddenSettings 对齐。
+ * "advanced" 自身不在列表内（否则用户无法恢复隐藏的分组）。
+ */
+val HIDDEN_GROUPS: List<Pair<String, String>> = listOf(
+    "appearance" to "外观",
+    "files" to "文件",
+    "model" to "模型",
+    "agent" to "对话",
+    "security" to "安全确认",
+    "image" to "图片压缩",
+    "notification" to "通知与语音",
+    "new_features" to "新功能"
+)
+
+/**
  * 快捷设置 —— 整屏页面。
  *
  * 【UI 统一约定】
  *   - 卡片统一 PocoCard
  *   - 页背景 glassPageBg() + 顶部 GlassSheen
  *   - 主色 / 危险色走 MaterialTheme.colorScheme
+ *   - 【P1-15】分组可在「高级」里隐藏
  */
 @Composable
 fun SettingsPage(
@@ -71,6 +92,8 @@ fun SettingsPage(
     val scope = rememberCoroutineScope()
     var turnsInput by remember { mutableStateOf(maxTurns.toString()) }
     var local by remember { mutableStateOf(settings) }
+    // 【P1-15】用 local.hiddenSettings 判断分组可见性（quickSave 会更新 local）
+    fun isVisible(key: String) = key !in local.hiddenSettings
     var expandedProfileId by remember { mutableStateOf<String?>(null) }
     var editingProfile by remember { mutableStateOf<ModelProfile?>(null) }
     var showAddModel by remember { mutableStateOf(false) }
@@ -153,7 +176,7 @@ fun SettingsPage(
         val p = local.profiles.firstOrNull { it.id == id }
         AlertDialog(
             onDismissRequest = { pendingDeleteProfileId = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("删除模型") },
             text = { Text("确定删除「${p?.name ?: ""}」？") },
@@ -183,7 +206,7 @@ fun SettingsPage(
     testResultText?.let { msg ->
         AlertDialog(
             onDismissRequest = { testResultText = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text(if (testResultOk) "连接成功" else "连接失败") },
             text = {
@@ -226,6 +249,7 @@ fun SettingsPage(
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 // ============ 外观 ============
+                if (isVisible("appearance")) {
                 item { PocoGroupTitle("外观") }
                 item {
                     PocoCard {
@@ -245,8 +269,75 @@ fun SettingsPage(
                     }
                 }
                 item { Spacer(Modifier.height(8.dp)) }
+                }  // isVisible("appearance")
+
+                // ============ 文件 ============
+                if (isVisible("files")) {
+                item { PocoGroupTitle("文件") }
+                item {
+                    PocoCard {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "下载目录",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "电脑推过来的文件、AI 下载的文件都落在这里。留空则用默认目录。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            var dirInput by remember { mutableStateOf(local.pcReceiveDir) }
+                            LaunchedEffect(local.pcReceiveDir) {
+                                if (dirInput != local.pcReceiveDir) dirInput = local.pcReceiveDir
+                            }
+                            OutlinedTextField(
+                                value = dirInput,
+                                onValueChange = { dirInput = it },
+                                placeholder = { Text("/sdcard/FurAgent/downloads") },
+                                singleLine = true,
+                                textStyle = MaterialTheme.typography.bodySmall.copy(
+                                    fontFamily = FontFamily.Monospace
+                                ),
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(AppRadius.SM),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                    unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                                )
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                TextButton(onClick = {
+                                    val v = dirInput.trim().ifBlank { "/sdcard/FurAgent/downloads" }
+                                    dirInput = v
+                                    quickSave(local.copy(pcReceiveDir = v))
+                                    notifyToast(context, "下载目录已保存")
+                                }) { Text("应用") }
+                                TextButton(onClick = {
+                                    val v = "/sdcard/FurAgent/downloads"
+                                    dirInput = v
+                                    quickSave(local.copy(pcReceiveDir = v))
+                                }) { Text("默认") }
+                            }
+                            Text(
+                                "当前：${local.pcReceiveDir}",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
+                }  // isVisible("files")
 
                 // ============ 模型 ============
+                if (isVisible("model")) {
                 item { PocoGroupTitle("模型") }
                 items(local.profiles, key = { it.id }) { profile ->
                     ModelProfileCard(
@@ -280,7 +371,6 @@ fun SettingsPage(
                 item { Spacer(Modifier.height(8.dp)) }
 
                 // ============ 文生图模型选择 ============
-                item { PocoGroupTitle("文生图") }
                 item {
                     PocoCard {
                         Column(modifier = Modifier.padding(16.dp)) {
@@ -303,7 +393,7 @@ fun SettingsPage(
                             Box {
                                 OutlinedButton(
                                     onClick = { imageMenuOpen = true },
-                                    shape = RoundedCornerShape(12.dp)
+                                    shape = RoundedCornerShape(AppRadius.SM)
                                 ) {
                                     Text(imageName)
                                     Icon(
@@ -337,8 +427,10 @@ fun SettingsPage(
                     }
                 }
                 item { Spacer(Modifier.height(8.dp)) }
+                }  // isVisible("model")
 
                 // ============ 对话 ============
+                if (isVisible("agent")) {
                 item { PocoGroupTitle("对话") }
                 item {
                     PocoCard {
@@ -388,7 +480,7 @@ fun SettingsPage(
                                         }
                                     },
                                     singleLine = true,
-                                    shape = RoundedCornerShape(12.dp),
+                                    shape = RoundedCornerShape(AppRadius.SM),
                                     modifier = Modifier.width(120.dp),
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
@@ -404,33 +496,97 @@ fun SettingsPage(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        }
-                    }
-                }
-                item {
-                    val currentProf = local.profiles.firstOrNull { it.id == local.currentProfileId }
-                    val canDisable = currentProf?.supportsDisableThinking ?: true
-                    val isOn = local.disableThinking && canDisable
-                    val subtitle = if (canDisable) {
-                        "直接回答，节省 token"
-                    } else {
-                        "当前模型（${currentProf.name}）不支持关闭"
-                    }
-                    PocoCard {
-                        PocoSwitchRow(
-                            title = "关闭深度思考",
-                            subtitle = subtitle,
-                            checked = isOn,
-                            enabled = canDisable
-                        ) { enabled ->
-                            if (canDisable) quickSave(local.copy(disableThinking = enabled))
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                "上下文 token 上限（千）：超出后从最旧的工具过程开始省略，保留对话内容；0 = 不限制",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                var budgetInput by remember {
+                                    mutableStateOf(local.contextTokenBudgetK.toString())
+                                }
+                                LaunchedEffect(local.contextTokenBudgetK) {
+                                    if (budgetInput != local.contextTokenBudgetK.toString()) {
+                                        budgetInput = local.contextTokenBudgetK.toString()
+                                    }
+                                }
+                                OutlinedTextField(
+                                    value = budgetInput,
+                                    onValueChange = { s ->
+                                        budgetInput = s.filter { it.isDigit() }.take(6)
+                                        val v = budgetInput.toIntOrNull()
+                                        if (v != null) {
+                                            quickSave(local.copy(contextTokenBudgetK = v))
+                                        }
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(AppRadius.SM),
+                                    modifier = Modifier.width(120.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                                    )
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    "当前：${local.contextTokenBudgetK} 千 token",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
                 item { Spacer(Modifier.height(8.dp)) }
+                }  // isVisible("agent")
+
+                // ============ 安全确认（与桌面端对齐） ============
+                if (isVisible("security")) {
+                item {
+                    PocoCard {
+                        PocoSwitchRow(
+                            title = "删除文件前确认",
+                            subtitle = "AI 删除时弹窗",
+                            checked = local.requireConfirmDelete
+                        ) { quickSave(local.copy(requireConfirmDelete = it)) }
+                        PocoDivider(startIndent = 16.dp)
+                        PocoSwitchRow(
+                            title = "写入文件前确认",
+                            subtitle = "覆盖 / 追加时弹窗",
+                            checked = local.requireConfirmWrite
+                        ) { quickSave(local.copy(requireConfirmWrite = it)) }
+                        PocoDivider(startIndent = 16.dp)
+                        PocoSwitchRow(
+                            title = "Shell 命令前确认",
+                            subtitle = "执行系统命令时弹窗",
+                            checked = local.requireConfirmShell
+                        ) { quickSave(local.copy(requireConfirmShell = it)) }
+                        PocoDivider(startIndent = 16.dp)
+                        PocoSwitchRow(
+                            title = "执行 Python 前确认",
+                            subtitle = "运行代码 / 脚本 / 创建删除脚本前弹窗。关掉后 AI 可自动执行",
+                            checked = local.requireConfirmPython
+                        ) { quickSave(local.copy(requireConfirmPython = it)) }
+                        PocoDivider(startIndent = 16.dp)
+                        PocoSwitchRow(
+                            title = "FFmpeg 覆盖前确认",
+                            subtitle = "输出文件已存在时弹窗",
+                            checked = local.requireConfirmFfmpegOverwrite
+                        ) { quickSave(local.copy(requireConfirmFfmpegOverwrite = it)) }
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
+                }  // isVisible("security")
 
                 // ============ 图片压缩 ============
-                item { PocoGroupTitle("图片压缩") }
+                if (isVisible("image")) {
                 item {
                     PocoCard {
                         PocoSwitchRow(
@@ -448,7 +604,7 @@ fun SettingsPage(
                                 else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                             )
                             Spacer(Modifier.height(4.dp))
-                            Slider(
+                            GradientSlider(
                                 value = local.imageCompressQuality.toFloat(),
                                 onValueChange = { v ->
                                     quickSave(local.copy(imageCompressQuality = v.toInt()))
@@ -470,7 +626,7 @@ fun SettingsPage(
                                 else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
                             )
                             Spacer(Modifier.height(4.dp))
-                            Slider(
+                            GradientSlider(
                                 value = local.imageCompressMaxDim.toFloat(),
                                 onValueChange = { v ->
                                     val aligned = ((v / 64).toInt() * 64).coerceIn(320, 4096)
@@ -489,8 +645,10 @@ fun SettingsPage(
                 }
                 item { Spacer(Modifier.height(8.dp)) }
 
+                }  // isVisible("image")
                 // ============ 通知 ============
-                item { PocoGroupTitle("通知") }
+                if (isVisible("notification")) {
+                item { PocoGroupTitle("通知与语音") }
                 item {
                     PocoCard {
                         Column(modifier = Modifier.padding(16.dp).animateContentSize()) {
@@ -531,7 +689,6 @@ fun SettingsPage(
                 item { Spacer(Modifier.height(8.dp)) }
 
                 // ============ 语音 ============
-                item { PocoGroupTitle("语音") }
                 item {
                     PocoCard {
                         PocoSwitchRow(
@@ -541,15 +698,78 @@ fun SettingsPage(
                         ) { quickSave(local.copy(autoSpeakReplies = it)) }
                     }
                 }
+                item { Spacer(Modifier.height(16.dp)) }
+                }  // isVisible("notification")
+
+                // ============ 新功能 ============
+                // 「底部状态栏」「修改文件列表」已移除开关：功能强制常开；
+                // 「AI 建议新对话」已废弃（由子代理 run_sub_session 取代）；
+                // 「修改历史」入口已移到聊天页底栏。
+                if (isVisible("new_features")) {
+                item { PocoGroupTitle("新功能") }
+                item {
+                    PocoCard {
+                        PocoSwitchRow(
+                            "写前备份与回档",
+                            "覆盖已有文件前自动留档，可从聊天页「修改历史」一键回档",
+                            local.fileBackupEnabled
+                        ) { quickSave(local.copy(fileBackupEnabled = it)) }
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
+                }  // isVisible("new_features")
+
+                // ============ 高级（分组可见性，此分组自身不可隐藏） ============
+                item { PocoGroupTitle("高级") }
+                item {
+                    PocoCard {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "勾选后，对应分组会在上方隐藏。此分组本身不可隐藏。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            if (local.hiddenSettings.isNotEmpty()) {
+                                Spacer(Modifier.height(10.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        quickSave(local.copy(hiddenSettings = emptySet()))
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(AppRadius.SM)
+                                ) {
+                                    Text("全部恢复显示")
+                                }
+                            }
+                        }
+                    }
+                }
+                HIDDEN_GROUPS.forEach { (key, label) ->
+                    item(key = "hidden_group_$key") {
+                        PocoCard {
+                            PocoSwitchRow(
+                                title = label,
+                                subtitle = null,
+                                checked = key in local.hiddenSettings
+                            ) { checked ->
+                                val newSet = if (checked) {
+                                    local.hiddenSettings + key
+                                } else {
+                                    local.hiddenSettings - key
+                                }
+                                quickSave(local.copy(hiddenSettings = newSet))
+                            }
+                        }
+                    }
+                }
+
                 item { Spacer(Modifier.height(32.dp)) }
             }
         }
     }
 }
 
-// ============================================================
 // 主题选项
-// ============================================================
 
 @Composable
 private fun RowScope.ThemeOption(
@@ -559,7 +779,7 @@ private fun RowScope.ThemeOption(
     Surface(
         color = if (selected) MaterialTheme.colorScheme.primary
         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(AppRadius.SM),
         modifier = Modifier.weight(1f).clickable { onChange(value) }
     ) {
         Box(
@@ -577,9 +797,7 @@ private fun RowScope.ThemeOption(
     }
 }
 
-// ============================================================
 // 通知模式选项
-// ============================================================
 
 @Composable
 private fun RowScope.NotifyModeOption(
@@ -589,7 +807,7 @@ private fun RowScope.NotifyModeOption(
     Surface(
         color = if (selected) MaterialTheme.colorScheme.primary
         else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-        shape = RoundedCornerShape(12.dp),
+        shape = RoundedCornerShape(AppRadius.SM),
         modifier = Modifier.weight(1f).clickable { onChange(value) }
     ) {
         Box(
@@ -608,9 +826,7 @@ private fun RowScope.NotifyModeOption(
     }
 }
 
-// ============================================================
 // 添加模型按钮
-// ============================================================
 
 @Composable
 private fun AddModelButton(text: String = "添加自定义模型", onClick: () -> Unit) {
@@ -623,7 +839,7 @@ private fun AddModelButton(text: String = "添加自定义模型", onClick: () -
     )
     Surface(
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(AppRadius.MD),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
         modifier = Modifier
             .fillMaxWidth()
@@ -651,10 +867,8 @@ private fun AddModelButton(text: String = "添加自定义模型", onClick: () -
     }
 }
 
-// ============================================================
 // 模型卡片
-// ============================================================
-//
+
 // 【UI 统一】用 PocoCard 承载，不再手写 GlassShadow + Surface。
 // 选中态用 primary 描边 + primary 半透明底。
 
@@ -707,7 +921,7 @@ private fun ModelProfileCard(
                             Spacer(Modifier.width(6.dp))
                             Surface(
                                 color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.18f),
-                                shape = RoundedCornerShape(6.dp)
+                                shape = RoundedCornerShape(AppRadius.TINY)
                             ) {
                                 Text(
                                     "生图",
@@ -765,7 +979,7 @@ private fun ModelProfileCard(
                     OutlinedButton(
                         onClick = onTest,
                         enabled = !testing,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         modifier = Modifier.weight(1f)
                     ) {
                         if (testing) {
@@ -781,12 +995,12 @@ private fun ModelProfileCard(
                     }
                     OutlinedButton(
                         onClick = onEdit,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         modifier = Modifier.weight(1f)
                     ) { Text("编辑") }
                     OutlinedButton(
                         onClick = onDelete,
-                        shape = RoundedCornerShape(12.dp),
+                        shape = RoundedCornerShape(AppRadius.SM),
                         colors = ButtonDefaults.outlinedButtonColors(
                             contentColor = MaterialTheme.colorScheme.error
                         ),
@@ -821,3 +1035,5 @@ private fun maskKey(key: String): String {
     if (key.length <= 8) return ".".repeat(key.length)
     return key.take(4) + ".".repeat((key.length - 8).coerceAtMost(20)) + key.takeLast(4)
 }
+
+// 修改历史 + 一键回档（已移到聊天页 MainActivity 底栏）

@@ -9,7 +9,6 @@ package net.xinkong.furagent.shared.util
  *
  * 逐字符扫描，不走正则，避免转义兼容问题。
  *
- * 【2026-10-15 抽公共】原来在 Android MediaTools / 桌面 FfmpegTools / 桌面 PythonTools / 桌面 McpPage
  * 各有 1 份相同实现（共 4 处）。现统一到这里。
  */
 object CommandLine {

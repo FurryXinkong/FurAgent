@@ -11,7 +11,14 @@ data class Session(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
-    val messages: List<ChatMessage>
+    val messages: List<ChatMessage>,
+    /** 母会话 id：子会话派生时记录，删除母会话时级联删除子会话；null=非子会话 */
+    val parentId: String? = null,
+    /**
+     * 会话专用提示词：非空时注入该会话的系统提示词（追加在全局指令之后）。
+     * null=未携带（persist 等场景重造对象时保留磁盘原值）；""=显式清空。
+     */
+    val systemPrompt: String? = null
 )
 
 /**
@@ -22,5 +29,7 @@ data class SessionMeta(
     val title: String,
     val createdAt: Long,
     val updatedAt: Long,
-    val messageCount: Int
+    val messageCount: Int,
+    /** 母会话 id：删除级联用；null=非子会话 */
+    val parentId: String? = null
 )

@@ -1,5 +1,6 @@
 package net.xinkong.furagent.bridge
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.shared.tools.PathResolver
@@ -15,7 +16,6 @@ import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 
-
 object AndroidHttpFileServer {
     private const val MAX_HEADER = 8192
     private const val TOKEN_FILE_NAME = "http_token.txt"
@@ -25,7 +25,7 @@ object AndroidHttpFileServer {
     @Volatile private var pool: ExecutorService? = null
     @Volatile private var token: String = ""
     @Volatile private var port: Int = 0
-    @Volatile private var receiveDir: String = "/sdcard/FurAgent/received"
+    @Volatile private var receiveDir: String = "/sdcard/FurAgent/downloads"
 
     @Volatile private var appContext: Context? = null
 
@@ -45,7 +45,7 @@ object AndroidHttpFileServer {
     fun start(context: Context, preferredPort: Int): Pair<Int, String> {
         if (serverSocket != null) return port to token
         appContext = context.applicationContext
-        // 【B4】token 从持久化文件读，首次生成后不再变
+        // token 从持久化文件读，首次生成后不再变
         token = loadOrCreateToken()
 
         val candidates = listOf(preferredPort, 0)
@@ -166,7 +166,6 @@ object AndroidHttpFileServer {
         }
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared HttpTokenCodec
     private fun deriveShortCode(t: String): String =
         net.xinkong.furagent.shared.util.HttpTokenCodec.deriveShortCode(t)
 
@@ -209,7 +208,7 @@ object AndroidHttpFileServer {
             val query = if (qIdx >= 0) url.substring(qIdx + 1) else ""
             val params = parseQuery(query)
 
-            // 【B4】/pair 端点必须在 token 校验之前处理：
+            // /pair 端点必须在 token 校验之前处理：
             // 用短码作为凭证换真 token。
             if (method == "GET" && path == "/pair") {
                 val code = (params["code"] ?: "").trim().uppercase()
@@ -231,7 +230,7 @@ object AndroidHttpFileServer {
             }
 
             // 其余端点：token 校验
-            // 【修复 4】token 为空时拒绝一切请求，避免 ?token= 空串绕过校验
+            // token 为空时拒绝一切请求，避免 ?token= 空串绕过校验
             if (token.isBlank() || params["token"] != token) {
                 respondText(output, 403, "forbidden")
                 return
@@ -257,26 +256,45 @@ object AndroidHttpFileServer {
                     val name = remote.substringAfterLast('/').substringAfterLast('\\')
                         .ifBlank { "unnamed_${System.currentTimeMillis()}" }
 
-                    // 【修复 1】dirParam 是相对 receiveDir 的路径（如 "relay/<id>"），
-                    // 必须先拼到 receiveDir 再做安全检查。
-                    val targetDir: File = if (dirParam.isNotBlank()) {
-                        val candidate = File(receiveDir, dirParam)
-                        val resolved = PathResolver.check(
-                            candidate.absolutePath, allowedPaths, blockedPaths
-                        ).resolved
-                        if (resolved == null) {
-                            respondText(output, 403, "dir not allowed")
-                            return
+                    val targetDir: File = run {
+                        if (dirParam.isBlank()) {
+                            File(receiveDir)
+                        } else if (dirParam.startsWith("/") || dirParam.contains(":\\")) {
+                            // 绝对路径：能过白名单就用，否则回退 receiveDir
+                            val resolved = PathResolver.check(
+                                dirParam, allowedPaths, blockedPaths
+                            ).resolved
+                            if (resolved != null) {
+                                File(resolved)
+                            } else {
+                                AgentLogger.log(
+                                    "BRIDGE",
+                                    "upload dir 不在白名单，回退到 receiveDir：$dirParam → $receiveDir"
+                                )
+                                File(receiveDir)
+                            }
+                        } else {
+                            // 相对路径：拼到 receiveDir 下
+                            val candidate = File(receiveDir, dirParam)
+                            val resolved = PathResolver.check(
+                                candidate.absolutePath, allowedPaths, blockedPaths
+                            ).resolved
+                            if (resolved == null) {
+                                AgentLogger.log(
+                                    "BRIDGE",
+                                    "upload 相对 dir 被拒，回退到 receiveDir：$dirParam"
+                                )
+                                File(receiveDir)
+                            } else {
+                                File(resolved)
+                            }
                         }
-                        File(resolved)
-                    } else {
-                        File(receiveDir)
                     }
                     if (!targetDir.exists()) targetDir.mkdirs()
 
                     var target = File(targetDir, name)
                     if (target.exists()) {
-                        val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())
+                        val ts = DateFormats.formatFileTs()
                         val base = name.substringBeforeLast('.')
                         val ext = name.substringAfterLast('.', "")
                         target = File(
@@ -286,8 +304,28 @@ object AndroidHttpFileServer {
                     }
 
                     val len = headers["content-length"]?.toLongOrNull() ?: -1L
-                    if (len <= 0) { respondText(output, 400, "no content-length"); return }
-                    writeBody(input, target, len)
+                    val te = headers["transfer-encoding"]?.lowercase() ?: ""
+                    // OkHttp 对小文件可能用 chunked 编码（不带 Content-Length），
+                    // 旧实现直接 400 导致小文件传输失败。现在两种都支持。
+                    if (len <= 0 && !te.contains("chunked")) {
+                        AgentLogger.log(
+                            "BRIDGE",
+                            "upload 缺少长度信息：content-length=$len transfer-encoding=$te"
+                        )
+                        respondText(output, 400, "no content-length")
+                        return
+                    }
+                    AgentLogger.log(
+                        "BRIDGE",
+                        "upload 开始：$name len=$len chunked=${te.contains("chunked")} → ${target.absolutePath}"
+                    )
+                    if (te.contains("chunked")) {
+                        writeBodyChunked(input, target)
+                    } else {
+                        writeBody(input, target, len)
+                    }
+                    val written = target.length()
+                    AgentLogger.log("BRIDGE", "upload 完成：${target.absolutePath}（$written 字节）")
                     respondText(output, 200, "ok: ${target.absolutePath}")
                     try {
                         fileReceivedCallback?.invoke(target.absolutePath)
@@ -307,7 +345,7 @@ object AndroidHttpFileServer {
 
                     val f = File(resolved)
                     if (!f.exists()) { respondText(output, 404, "not found"); return }
-                    // 【安全删除】不真删，移入回收站，由用户决定何时清空。
+                    // 不真删，移入回收站，由用户决定何时清空。
                     val trashDir = appContext?.let { File(it.filesDir, "temp/trash") }
                         ?: net.xinkong.furagent.shared.tools.TrashHelper.defaultTrashDir()
                     val r = net.xinkong.furagent.shared.tools.TrashHelper.moveToTrash(f, trashDir)
@@ -349,7 +387,6 @@ object AndroidHttpFileServer {
         return null
     }
 
-    // 【2026-10-15 去重】实现已抽到 shared HttpQuery
     private fun parseQuery(q: String): Map<String, String> =
         net.xinkong.furagent.shared.util.HttpQuery.parse(q)
 
@@ -396,6 +433,51 @@ object AndroidHttpFileServer {
                 if (n <= 0) break
                 out.write(buf, 0, n)
                 remaining -= n
+            }
+        }
+        if (!tmp.renameTo(target)) {
+            target.writeBytes(tmp.readBytes())
+            tmp.delete()
+        }
+    }
+
+    /**
+     * 【新增】处理 HTTP/1.1 chunked 传输编码的请求体。
+     *
+     * OkHttp 的 asRequestBody 在部分情况下（尤其小文件）会使用 chunked 编码，
+     * 不带 Content-Length。旧实现只认 Content-Length，导致小文件上传直接 400。
+     *
+     * chunked 格式：
+     *   <hex 长度>\r\n<数据>\r\n ... 0\r\n\r\n
+     */
+    private fun writeBodyChunked(input: InputStream, target: File) {
+        target.parentFile?.mkdirs()
+        val tmp = File(target.parentFile, target.name + ".part")
+        tmp.outputStream().use { out ->
+            while (true) {
+                val sizeLine = readLine(input) ?: break
+                // chunk 扩展（;xxx）忽略
+                val hex = sizeLine.substringBefore(';').trim()
+                if (hex.isEmpty()) break
+                val size = hex.toLongOrNull(16) ?: break
+                if (size == 0L) {
+                    // 末尾可能有 trailer，读到空行为止
+                    while (true) {
+                        val trailer = readLine(input) ?: break
+                        if (trailer.isEmpty()) break
+                    }
+                    break
+                }
+                var remaining = size
+                val buf = ByteArray(128 * 1024)
+                while (remaining > 0) {
+                    val n = input.read(buf, 0, minOf(buf.size.toLong(), remaining).toInt())
+                    if (n <= 0) break
+                    out.write(buf, 0, n)
+                    remaining -= n
+                }
+                // 每个 chunk 后面跟一个 CRLF
+                readLine(input)
             }
         }
         if (!tmp.renameTo(target)) {

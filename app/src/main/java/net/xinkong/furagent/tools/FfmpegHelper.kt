@@ -222,9 +222,7 @@ object FfmpegHelper {
         }
     }
 
-    // ============================================================
     // 媒体信息探测（用 ffprobe 输出 JSON，绕开 StreamInformation）
-    // ============================================================
 
     suspend fun probeRawJson(path: String): String = withContext(Dispatchers.IO) {
         if (!isAvailable()) {
@@ -361,9 +359,7 @@ object FfmpegHelper {
         return s.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n")
     }
 
-    // ============================================================
     // 能力查询
-    // ============================================================
 
     suspend fun version(): String = withContext(Dispatchers.IO) {
         if (!isAvailable()) return@withContext "FFmpeg native 库未加载"

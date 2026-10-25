@@ -2,15 +2,23 @@ package net.xinkong.furagent.desktop.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import net.xinkong.furagent.desktop.ui.theme.Radius
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontVariation
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import net.xinkong.furagent.shared.ui.rememberMiSansFontFamily
 
 data class FurColors(
     val bg: Color,
@@ -46,9 +54,7 @@ data class FurColors(
     val isDark: Boolean
 )
 
-// ============================================================
 // 浅色（亮白 + 冷灰）
-// ============================================================
 val FurLightColors = FurColors(
     bg = Color(0xFFFAFAFA),
     bgGradientTop = Color(0xFFFFFFFF),
@@ -57,7 +63,7 @@ val FurLightColors = FurColors(
     // 半透明侧边栏：透出背景渐变
     sidebarBg = Color(0xE8F5F6F7),
     sidebarItemHover = Color(0xFFEAEBEE),
-    sidebarItemActive = Color(0xFFE6EEFE),
+    sidebarItemActive = Color(0xFFEBEDFE),
 
     card = Color(0xFFFFFFFF),
     cardHover = Color(0xFFF7F8FA),
@@ -70,9 +76,10 @@ val FurLightColors = FurColors(
     textSecondary = Color(0xFF6B7280),
     textMuted = Color(0xFF9CA3AF),
 
-    accent = Color(0xFF3B82F6),
-    accentHover = Color(0xFF2563EB),
-    accentSoft = Color(0x143B82F6),
+    // 【改】主题色从纯蓝换成蓝紫，与流体渐变（#4A9EFF -> #A78BFA）同一色系
+    accent = Color(0xFF6E7CFA),
+    accentHover = Color(0xFF5866E8),
+    accentSoft = Color(0x146E7CFA),
     onAccent = Color.White,
 
     tool = Color(0xFFF59E0B),
@@ -85,9 +92,7 @@ val FurLightColors = FurColors(
     isDark = false
 )
 
-// ============================================================
 // 深色（中性灰，参考 Codex / VS Code Dark）
-// ============================================================
 val FurDarkColors = FurColors(
     bg = Color(0xFF1B1D21),
     bgGradientTop = Color(0xFF1F2125),
@@ -96,7 +101,7 @@ val FurDarkColors = FurColors(
     // 半透明侧边栏：透出背景渐变
     sidebarBg = Color(0xE0202225),
     sidebarItemHover = Color(0xFF2A2D31),
-    sidebarItemActive = Color(0xFF2A3548),
+    sidebarItemActive = Color(0xFF2E3050),
 
     card = Color(0xFF242629),
     cardHover = Color(0xFF2C2F33),
@@ -110,9 +115,10 @@ val FurDarkColors = FurColors(
     textSecondary = Color(0xFF9BA1A8),
     textMuted = Color(0xFF6B7076),
 
-    accent = Color(0xFF5A9BFF),
-    accentHover = Color(0xFF7BAFFF),
-    accentSoft = Color(0x285A9BFF),
+    // 【改】主题色从纯蓝换成蓝紫（提亮版），与流体渐变深色版同色系
+    accent = Color(0xFF8B93FF),
+    accentHover = Color(0xFFA2A9FF),
+    accentSoft = Color(0x288B93FF),
     onAccent = Color(0xFF0F1216),
 
     // 【改】原来 #F5A524 偏橙，改成和 Android 端一致的琥珀色
@@ -189,12 +195,39 @@ private fun materialDark(c: FurColors) = darkColorScheme(
 )
 
 private val AppShapes = Shapes(
-    extraSmall = RoundedCornerShape(6.dp),
-    small = RoundedCornerShape(12.dp),
-    medium = RoundedCornerShape(16.dp),
-    large = RoundedCornerShape(20.dp),
-    extraLarge = RoundedCornerShape(24.dp)
+    extraSmall = RoundedCornerShape(Radius.TINY),
+    small = RoundedCornerShape(Radius.SM),
+    medium = RoundedCornerShape(Radius.MD),
+    large = RoundedCornerShape(Radius.LG),
+    extraLarge = RoundedCornerShape(Radius.XL)
 )
+
+// 全局字体 MiSans —— 构造逻辑在 shared（rememberMiSansFontFamily），
+// 字体资源只存 shared/composeResources/font 一份，双端共用。
+@Composable
+private fun rememberMiSansTypography(): Typography {
+    val family = rememberMiSansFontFamily()
+    return remember(family) {
+        val base = Typography()
+        Typography(
+            displayLarge = base.displayLarge.copy(fontFamily = family),
+            displayMedium = base.displayMedium.copy(fontFamily = family),
+            displaySmall = base.displaySmall.copy(fontFamily = family),
+            headlineLarge = base.headlineLarge.copy(fontFamily = family),
+            headlineMedium = base.headlineMedium.copy(fontFamily = family),
+            headlineSmall = base.headlineSmall.copy(fontFamily = family),
+            titleLarge = base.titleLarge.copy(fontFamily = family),
+            titleMedium = base.titleMedium.copy(fontFamily = family),
+            titleSmall = base.titleSmall.copy(fontFamily = family),
+            bodyLarge = base.bodyLarge.copy(fontFamily = family),
+            bodyMedium = base.bodyMedium.copy(fontFamily = family),
+            bodySmall = base.bodySmall.copy(fontFamily = family),
+            labelLarge = base.labelLarge.copy(fontFamily = family),
+            labelMedium = base.labelMedium.copy(fontFamily = family),
+            labelSmall = base.labelSmall.copy(fontFamily = family),
+        )
+    }
+}
 
 @Composable
 fun FurAgentTheme(
@@ -213,6 +246,7 @@ fun FurAgentTheme(
         MaterialTheme(
             colorScheme = m3,
             shapes = AppShapes,
+            typography = rememberMiSansTypography(),
             content = content
         )
     }

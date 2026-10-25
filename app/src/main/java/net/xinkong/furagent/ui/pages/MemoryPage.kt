@@ -2,6 +2,7 @@
 
 package net.xinkong.furagent.ui.pages
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -10,12 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Psychology
-import androidx.compose.material.icons.filled.Search
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -36,14 +32,16 @@ import net.xinkong.furagent.ui.PocoCard
 import net.xinkong.furagent.ui.PocoEmptyState
 import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.glassPageBg
+import net.xinkong.furagent.ui.pocoSwitchColors
 import net.xinkong.furagent.ui.pocoFieldColors
+import net.xinkong.furagent.ui.theme.AppRadius
 import java.text.SimpleDateFormat
 import java.util.*
 
 /**
  * 长期记忆 —— 整屏页面。
  *
- * 【F2】每条记忆加 Switch：关闭后不注入 system prompt，但仍留在列表。
+ * 每条记忆加 Switch：关闭后不注入 system prompt，但仍留在列表。
  * 新加的记忆默认开启。
  */
 @Composable
@@ -93,7 +91,7 @@ fun MemoryPage(onBack: () -> Unit) {
             ) {
                 Button(
                     onClick = { showAdd = true },
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(AppRadius.MD_MINUS),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -136,7 +134,7 @@ fun MemoryPage(onBack: () -> Unit) {
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 8.dp),
                 singleLine = true,
-                shape = RoundedCornerShape(14.dp),
+                shape = RoundedCornerShape(AppRadius.MD_MINUS),
                 colors = pocoFieldColors()
             )
 
@@ -192,14 +190,12 @@ fun MemoryPage(onBack: () -> Unit) {
         }
     }
 
-    // ============================================================
     // 弹窗
-    // ============================================================
 
     pendingDeleteId?.let { id ->
         AlertDialog(
             onDismissRequest = { pendingDeleteId = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -221,7 +217,7 @@ fun MemoryPage(onBack: () -> Unit) {
     if (showClearConfirm) {
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -246,7 +242,7 @@ fun MemoryPage(onBack: () -> Unit) {
     editingId?.let { id ->
         AlertDialog(
             onDismissRequest = { editingId = null },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -257,7 +253,7 @@ fun MemoryPage(onBack: () -> Unit) {
                     onValueChange = { editingContent = it },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                     minLines = 3,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(AppRadius.MD_MINUS),
                     colors = pocoFieldColors()
                 )
             },
@@ -279,7 +275,7 @@ fun MemoryPage(onBack: () -> Unit) {
     if (showAdd) {
         AlertDialog(
             onDismissRequest = { showAdd = false },
-            shape = RoundedCornerShape(28.dp),
+            shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -291,7 +287,7 @@ fun MemoryPage(onBack: () -> Unit) {
                     placeholder = { Text("例如：用户是一名 Android 开发者") },
                     modifier = Modifier.fillMaxWidth().heightIn(min = 100.dp),
                     minLines = 3,
-                    shape = RoundedCornerShape(14.dp),
+                    shape = RoundedCornerShape(AppRadius.MD_MINUS),
                     colors = pocoFieldColors()
                 )
             },
@@ -312,11 +308,8 @@ fun MemoryPage(onBack: () -> Unit) {
     }
 }
 
-// 【批次 20 UI 收口】EmptyMemoryState 已合并到 PocoEmptyState（Glass.kt）。
 
-// ============================================================
-// 记忆行（【F2】右侧加 Switch）
-// ============================================================
+// 记忆行
 
 @Composable
 private fun MemoryRow(
@@ -327,7 +320,7 @@ private fun MemoryRow(
     onDelete: () -> Unit
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    val time = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault()).format(Date(memory.createdAt))
+    val time = DateFormats.formatShortDateTime(memory.createdAt)
 
     PocoCard {
         Row(
@@ -370,10 +363,7 @@ private fun MemoryRow(
             Switch(
                 checked = memory.enabled,
                 onCheckedChange = onToggleEnabled,
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary
-                )
+                colors = pocoSwitchColors()
             )
 
             Box {

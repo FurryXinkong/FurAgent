@@ -12,8 +12,8 @@ package net.xinkong.furagent.shared.util
  * {gN} 只在节点来自"被穿透的父容器"时出现（groupId != 0）。
  * 同一组内的节点通常有并列关系（同一列表行、同一组 Tab）。
  *
- * 只渲染"有意义"的节点（isSignificant 或有显著子节点）。
- * 无意义的空容器被跳过，但子节点保留（缩进保持层级感）。
+ * 【不做豁免】全部节点照常渲染，不按"是否有意义"做过滤——
+ * 过滤会让 AI 看不到本应看到的元素。层级缩进保持原树结构。
  *
  * 【默认不截断】
  *  maxChars / maxLines / nodeTextLimit 默认都是 0，表示不限制。
@@ -57,12 +57,8 @@ object UiTreeFormatter {
     ) {
         if (maxLines > 0 && lineCount[0] >= maxLines) return
 
-        val hasInterestingChildren = node.children.any {
-            it.isSignificant || it.children.isNotEmpty()
-        }
-        val show = node.isSignificant || hasInterestingChildren
-        if (!show) return
-
+        // 【不做豁免】原先 isSignificant 为 false 的节点会被跳过（"无意义空容器"），
+        // 属于会让 AI 看不到元素的过滤，现全部渲染。
         val indent = "  ".repeat(depth.coerceAtMost(15))
         sb.append(indent).append(buildNodeLine(node, nodeTextLimit)).append('\n')
         lineCount[0]++

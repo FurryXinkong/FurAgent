@@ -27,6 +27,8 @@ import java.util.Calendar
  */
 object CronParser {
 
+    private val RE_WHITESPACE = Regex("""\s+""")
+
     /**
      * 计算下一次触发时间。
      *
@@ -35,7 +37,7 @@ object CronParser {
      * @return 下一次触发的毫秒时间戳；表达式非法或一年内无匹配时返回 null
      */
     fun nextCronTime(expr: String, fromMs: Long): Long? {
-        val parts = expr.trim().split(Regex("\\s+"))
+        val parts = expr.trim().split(RE_WHITESPACE)
         if (parts.size < 5) return null
 
         val cal = Calendar.getInstance().apply {

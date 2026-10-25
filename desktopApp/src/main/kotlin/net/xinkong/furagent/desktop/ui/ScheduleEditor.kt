@@ -1,15 +1,13 @@
 package net.xinkong.furagent.desktop.ui
 
+import net.xinkong.furagent.shared.util.DateFormats
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Edit
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,16 +19,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.xinkong.furagent.desktop.data.ScheduleStore
+import net.xinkong.furagent.shared.util.TaskCondition
+import net.xinkong.furagent.desktop.data.DesktopSessionStore
 import net.xinkong.furagent.desktop.data.ScheduledTask
-import net.xinkong.furagent.desktop.data.TaskCondition
 import net.xinkong.furagent.desktop.data.WorkflowStore
 import net.xinkong.furagent.desktop.tools.DesktopTools
+import net.xinkong.furagent.desktop.ui.theme.Radius
 import java.text.SimpleDateFormat
 import java.util.*
 
-// ============================================================
 // 定时任务编辑器
-// ============================================================
 
 @Composable
 fun ScheduleEditorDialog(
@@ -38,7 +36,7 @@ fun ScheduleEditorDialog(
     onDismiss: () -> Unit,
     onSave: (ScheduledTask) -> Unit
 ) {
-    val sdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+    val sdf = DateFormats.dateTimeFormatter()
 
     var description by remember { mutableStateOf(initial?.description ?: "") }
     var action by remember { mutableStateOf(initial?.action ?: "notify") }
@@ -61,12 +59,14 @@ fun ScheduleEditorDialog(
     var command by remember { mutableStateOf(initial?.command ?: "") }
     var notifTitle by remember { mutableStateOf(initial?.notificationTitle ?: "") }
     var notifContent by remember { mutableStateOf(initial?.notificationContent ?: "") }
+    var agentPrompt by remember { mutableStateOf(initial?.prompt ?: "") }
+    var agentSessionId by remember { mutableStateOf(initial?.sessionId ?: "") }
 
     var conditions by remember { mutableStateOf(initial?.conditions ?: emptyList()) }
     var conditionMode by remember { mutableStateOf(initial?.conditionMode ?: "and") }
     var skipIfNotMet by remember { mutableStateOf(initial?.skipIfNotMet ?: true) }
 
-    // 【F4】启用状态（新建默认 true）
+    // 启用状态（新建默认 true）
     var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
 
     var errorMsg by remember { mutableStateOf<String?>(null) }
@@ -87,7 +87,7 @@ fun ScheduleEditorDialog(
                     label = "任务描述", placeholder = "例如：每小时提醒我喝水"
                 )
 
-                // 【F4】启用开关
+                // 启用开关
                 GlassSwitchRow(
                     "启用此任务",
                     if (enabled) "任务会按计划执行" else "任务暂时不执行，但仍保留在列表里",
@@ -139,6 +139,7 @@ fun ScheduleEditorDialog(
                     ActionChip("工作流", "run_workflow", action) { action = it }
                     ActionChip("应用", "open_app", action) { action = it }
                     ActionChip("命令", "run_command", action) { action = it }
+                    ActionChip("AI", "run_agent", action) { action = it }
                 }
 
                 when (action) {
@@ -206,6 +207,42 @@ fun ScheduleEditorDialog(
                             placeholder = "echo hello >> log.txt",
                             singleLine = false, minLines = 2, maxLines = 4, monospace = true
                         )
+                    }
+                    "run_agent" -> {
+                        GlassTextField(
+                            agentPrompt, { agentPrompt = it },
+                            label = "发给 AI 的内容（prompt）",
+                            placeholder = "例如：总结今天的待办并提醒我",
+                            singleLine = false, minLines = 2, maxLines = 4
+                        )
+                        val sessions = remember { DesktopSessionStore.list() }
+                        Text("结果写入会话（可选）", fontSize = 12.sp, color = TextSecondary())
+                        Box {
+                            var sessionExpanded by remember { mutableStateOf(false) }
+                            val boundTitle = sessions.firstOrNull { it.id == agentSessionId }?.title
+                            SecondaryButton(
+                                boundTitle?.let { "已绑定：$it" } ?: "不绑定（只发通知）",
+                                onClick = { sessionExpanded = true },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            DropdownMenu(
+                                expanded = sessionExpanded,
+                                onDismissRequest = { sessionExpanded = false },
+                                containerColor = CardColor()
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("不绑定（只发通知）", fontSize = 12.sp) },
+                                    onClick = { agentSessionId = ""; sessionExpanded = false }
+                                )
+                                sessions.forEach { s ->
+                                    DropdownMenuItem(
+                                        text = { Text(s.title, fontSize = 12.sp) },
+                                        onClick = { agentSessionId = s.id; sessionExpanded = false }
+                                    )
+                                }
+                            }
+                        }
+                        HintText("绑定会话后，AI 回复会追加为该会话的 assistant 消息；不绑定则只发系统通知")
                     }
                 }
 
@@ -286,11 +323,12 @@ fun ScheduleEditorDialog(
                     action == "run_workflow" && workflowName.isBlank() -> errorMsg = "请选择工作流"
                     action == "open_app" && appPath.isBlank() -> errorMsg = "请输入应用路径"
                     action == "run_command" && command.isBlank() -> errorMsg = "请输入命令"
+                    action == "run_agent" && agentPrompt.isBlank() -> errorMsg = "请输入发给 AI 的内容"
                     else -> {
                         val triggerTime = when (repeatMode) {
                             "interval" -> parsed ?: System.currentTimeMillis()
                             "cron" -> System.currentTimeMillis() + 60_000L
-                            else -> parsed!!
+                            else -> parsed ?: System.currentTimeMillis()
                         }
                         val task = ScheduledTask(
                             id = initial?.id ?: ScheduleStore.newId(),
@@ -306,10 +344,11 @@ fun ScheduleEditorDialog(
                             command = if (action == "run_command") command else "",
                             notificationTitle = if (action == "notify") notifTitle else "",
                             notificationContent = if (action == "notify") notifContent else "",
+                            prompt = if (action == "run_agent") agentPrompt else "",
+                            sessionId = if (action == "run_agent") agentSessionId else "",
                             conditions = conditions,
                             conditionMode = conditionMode,
                             skipIfNotMet = skipIfNotMet,
-                            // 【F4】
                             enabled = enabled,
                             description = description
                         )
@@ -337,61 +376,23 @@ fun ScheduleEditorDialog(
     }
 }
 
-// ============================================================
-// Chip（统一形状：10dp 圆角，选中 AccentColor 底 + OnAccent 字）
-// ============================================================
+// Chip —— 薄包装，实际渲染复用公共库 GlassChip（Glass.kt）
 
 @Composable
 private fun RowScope.RepeatChip(
     label: String, value: String, current: String, onChange: (String) -> Unit
 ) {
-    ChipBox(label, value == current, Modifier.weight(1f)) { onChange(value) }
+    GlassChip(label, value == current, Modifier.weight(1f)) { onChange(value) }
 }
 
 @Composable
 private fun RowScope.ActionChip(
     label: String, value: String, current: String, onChange: (String) -> Unit
 ) {
-    ChipBox(label, value == current, Modifier.weight(1f)) { onChange(value) }
+    GlassChip(label, value == current, Modifier.weight(1f)) { onChange(value) }
 }
 
-@Composable
-private fun ChipBox(
-    label: String,
-    selected: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    val bg by animateColorAsState(
-        if (selected) AccentColor() else CardColor(),
-        tween(140), label = "chipBoxBg"
-    )
-    Box(
-        modifier
-            .clip(RoundedCornerShape(10.dp))
-            .background(bg)
-            .border(
-                1.dp,
-                if (selected) Color.Transparent else BorderColor(),
-                RoundedCornerShape(10.dp)
-            )
-            .clickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            label,
-            fontSize = 12.sp,
-            color = if (selected) OnAccent() else TextPrimary(),
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1
-        )
-    }
-}
-
-// ============================================================
 // 工具选择器
-// ============================================================
 
 @Composable
 private fun ToolPicker(currentTool: String, onChange: (String) -> Unit) {
@@ -429,9 +430,7 @@ private fun ToolPicker(currentTool: String, onChange: (String) -> Unit) {
     }
 }
 
-// ============================================================
 // 条件描述
-// ============================================================
 
 private fun conditionLabel(c: TaskCondition): String = when (c.type) {
     "time_between" -> "时间范围：${c.value}"
@@ -442,9 +441,7 @@ private fun conditionLabel(c: TaskCondition): String = when (c.type) {
     else -> "${c.type} ${c.operator} ${c.value}"
 }
 
-// ============================================================
 // 条件编辑器
-// ============================================================
 
 @Composable
 private fun ConditionEditorDialog(
@@ -514,9 +511,9 @@ private fun ConditionTypeRow(
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(Radius.SM_PLUS))
             .background(bg)
-            .border(1.dp, borderColor, RoundedCornerShape(10.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(Radius.SM_PLUS))
             .clickable { onSelect(typeValue) }
             .padding(12.dp),
         verticalAlignment = Alignment.CenterVertically

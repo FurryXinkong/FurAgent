@@ -11,7 +11,7 @@
 
 ## 这是什么
 
-FurAgent 是一个跑在你自己设备上的 AI Agent。它不是聊天机器人，而是一个能**实际操作**你手机和电脑的助手。
+FurAgent 是一个跑在你自己设备上的 AI Agent。它不是聊天机器人，而是能**实际操作**你手机和电脑的助手。
 
 你告诉它要做什么，它会调用工具去完成——读写文件、执行命令、处理音视频、定时执行任务、控制手机和电脑上的应用、联网搜索、读取通知。所有推理通过你自己的 API Key 完成，所有数据存在你自己的设备上。
 
@@ -19,9 +19,9 @@ FurAgent 是一个跑在你自己设备上的 AI Agent。它不是聊天机器�
 
 ## 关于本项目
 
-**本项目源自作者的一个奇妙小幻想**
+**本项目源自作者的一个奇妙小幻想。**
 
-## **FurAgent 的代码几乎完全由 AI 编写。**
+**FurAgent 的代码几乎完全由 AI 编写。**
 
 ---
 
@@ -40,43 +40,50 @@ FurAgent 是一个跑在你自己设备上的 AI Agent。它不是聊天机器�
 ## 核心特性
 
 ### 通用
-- **通用 Agent 循环**——多轮工具调用、失败重试、防伪造工具调用
-- **三种工具来源**——内置通用工具、平台私有工具、MCP 动态工具
+- **通用 Agent 循环**——多轮工具调用、失败重试、伪造工具调用拦截
+- **分层工具系统**——核心工具常驻，其余通过 `tool_search` / `tool_load` 按需加载，省 50%+ token
 - **长期记忆**——主动识别值得记住的信息，跨会话注入上下文
-- **定时任务**——支持秒级轮询 / cron / 条件触发（电量、网络、时间段等）
-- **工作流**——把多个工具调用串成命名流程，带条件分支和循环
-- **会话搜索**——全文检索所有历史消息
-- **会话管理**——复制会话、单会话导入导出、全量备份恢复
-- **模型能力配置**——可开关"是否支持图片输入"，不支持时自动禁用截图与图片工具
-- **Markdown 渲染**——标题、列表、引用、代码块、表格、链接等基础语法
-- **Token 估算**——不依赖 API 的 usage 字段，本地估算 prompt / completion
+- **定时任务**——秒级轮询 / cron / 条件触发（电量、网络、时间段、进程等 12 种）
+- **工作流**——多工具串成命名流程，支持条件分支、循环、变量
+- **子代理**——派生独立上下文的子会话执行子任务，可并行 4 个，结果自动回流主对话
+- **会话管理**——复制、导入导出、全量备份恢复、按会话专用提示词
+- **会话摘要**（桌面端）——启动时用摘要模型把历史会话压成一句标签存入记忆
+- **MCP 集成**——stdio（桌面）/ http / sse，热开关，工具级启用/禁用
+- **自定义脚本**——`scripts/` 下放 `.py`，自动注册成 `pytool_<name>` 工具
+- **修改历史**——写前备份 + 行级 patch + 一键回档
+- **Markdown 渲染**——标题、列表、引用、代码块、表格、链接、删除线
+- **Token 估算**——不依赖 API 的 `usage` 字段，本地估算 prompt / completion
 
 ### Android 端
-- **22 个私有工具**——应用管理、设备信息、日历、日程、剪贴板、定位、联系人、下载、截图、通知读取、媒体控制
+- **22 个私有工具**——应用管理、设备信息、日历、日程、剪贴板、定位、联系人、下载、截图、通知读取、媒体控制、屏幕控制
+- **屏幕控制**——无障碍 API 直接读 UI 树并操作元素，无需截图
 - **Shizuku 集成**——调用 ADB 级权限执行 shell、后台启动应用
-- **FFmpeg 音视频处理**——换容器、压缩、裁剪、转码、加水印、提取音频等 50+ 预设
+- **FFmpeg 音视频**——换容器、压缩、裁剪、转码、加水印、提取音频等 50+ 预设
 - **媒体控制**——读取并控制当前播放的音乐 / 播客（MediaSession）
 - **通知读取**——缓存最近通知，供 AI 通过 `notifications` 工具读取
 - **免提模式**——语音识别 → AI → TTS 朗读，全自动循环
-- **悬浮助手**——悬浮球一键唤起对话，不打断当前应用
-- **电脑互联**——通过局域网 WebSocket 调用电脑端工具，大文件走 HTTP 通道
-- **直连传输**——不经电脑中转，两台手机 / 手机与电脑直接互传文件
-- **消息组折叠**——连续工具调用自动折叠，长会话更清爽
-- **WOL 唤醒**——远程唤醒局域网内的电脑
+- **悬浮助手**——悬浮球 + 实时状态气泡（显示 AI 正在做什么 + 输出预览）
+- **计算机互联**——局域网 WebSocket 调用电脑工具，大文件走 HTTP 通道
+- **直连传输**——两台设备直接 HTTP 互传，不经过中转
+- **WOL 唤醒**——远程唤醒局域网内电脑
+- **会话专用提示词**——每个会话可追加独立系统指令
 
 ### 桌面端
-- **16 个私有工具**——文件删除、命令执行、打开应用 / 网址、联网搜索、系统集成
+- **19 个私有工具**——文件删除、命令执行、打开应用 / 网址、联网搜索、系统集成、文档生成、文生图、Python
 - **联网搜索**——360 / 百度 / 必应多源自动回退，可显式指定搜索源
 - **Python 集成**——执行任意 Python 3 代码，支持 pip 安装
-- **FFmpeg 音视频处理**——同 Android，参数针对桌面优化
-- **系统集成**——音量、媒体控制、窗口控制、电源、锁屏、通知、剪贴板、壁纸
-- **SMTC 媒体控制**——Windows 系统级媒体控制，比键盘事件可靠
-- **系统通知**——通过 AWT SystemTray 弹原生通知
+- **文档生成**——Word / Excel / PPT，通过 Apache POI 纯本地生成
+- **文生图**——走 OpenAI 兼容的 `/images/generations` 接口
+- **FFmpeg 音视频**——同 Android，参数针对桌面优化
+- **系统集成**——音量、媒体（SMTC）、窗口、电源、锁屏、通知、剪贴板、壁纸
+- **屏幕控制**——Windows UI Automation，常驻 PowerShell，无需截图
 - **手机桥接**——调用手机端工具、互传文件
 - **relay 中转**——手机 A → 电脑 → 手机 B 的文件转发
 - **TTS**——Windows SAPI 语音合成
 - **开机自启动**——Windows 注册表一键配置
-- **直连传输**——不经中转，电脑与手机 / 电脑与电脑直接互传
+- **桌面悬浮窗**——独立置顶窗口显示 AI 状态
+- **MiniMap**——长会话右侧色块导航
+- **右滑返回**——Page 浮层支持手势返回
 
 ### 跨端协作
 - **工具互调**——手机可以让电脑执行命令，电脑可以让手机截图
@@ -118,13 +125,9 @@ FurAgent 不提供模型，你需要自己准备一个。支持所有 OpenAI 兼
 
 ### 第二步：安装
 
-**Android 端**
+**Android 端**：从 [Releases](https://github.com/FurryXinkong/FurAgent/releases) 下载最新 APK，安装后授予必要权限。
 
-从 [Releases](https://github.com/FurryXinkong/FurAgent/releases) 下载最新 APK，安装后授予必要权限。
-
-**桌面端**
-
-从 [Releases](https://github.com/FurryXinkong/FurAgent/releases) 下载 `FurAgent-x.x.x.exe`，双击安装。
+**桌面端**：从 [Releases](https://github.com/FurryXinkong/FurAgent/releases) 下载 `FurAgent-x.x.x.exe`，双击安装。
 
 ### 第三步：配置
 
@@ -153,11 +156,13 @@ FurAgent 要求一些敏感权限。以下是每一项的**具体用途**：
 |---|---|---|
 | **文件读写** | 读写 `/sdcard` 下的文件（文件工具、截图、下载） | 拒绝则文件工具不可用 |
 | **悬浮窗** | 显示悬浮球、后台启动应用 | 拒绝则悬浮助手和定时打开应用不可用 |
-| **通知** | 定时任务提醒、工具调用通知 | 拒绝则无通知 |
+| **通知** | 定时任务提醒、工具调用通知、实时通知 | 拒绝则无通知 |
 | **通知使用权** | 读取媒体播放信息、系统通知（`media_session` / `notifications` 工具） | 拒绝则媒体控制和通知读取不可用 |
 | **定位** | `get_location` 工具 | 拒绝则定位不可用 |
+| **无障碍** | 屏幕控制（`ui` 工具） | 拒绝则 AI 无法读取/操作屏幕 |
 | **Shizuku** | 执行 shell、后台启动应用 | 拒绝则高级功能不可用 |
 | **精确闹钟** | 准点执行定时任务 | 拒绝则任务可能延后 |
+| **本地网络** | Android 17+ 访问局域网（桥接 / WOL / HTTP 文件服务） | 拒绝则无法连接电脑 |
 
 **重要**：FurAgent 不做任何路径白名单限制。它有能力读写你设备上的任何文件，就像你自己的终端一样。**这是设计上的选择**——AI 需要和你平等的操作能力，而不是被关在沙盒里。请自己判断风险。
 
@@ -269,6 +274,14 @@ A:
 
 A: 早期版本的字段名不一致导致的。现在已修复，两端的备份格式完全对齐，可以互导。
 
+**Q: 会话专用提示词在哪设置？**
+
+A: 桌面端点聊天页顶栏的「提示词」按钮；Android 端侧边抽屉里点「会话提示词」。只作用于当前会话，留空保存 = 清除。
+
+**Q: 设置页分组太多，能隐藏一些吗？**
+
+A: 可以。滚动到设置页最下方「高级」分组，勾选要隐藏的分组。"高级"自身不可隐藏。桌面端和 Android 端都支持。
+
 ---
 
 ## 技术栈
@@ -280,12 +293,14 @@ A: 早期版本的字段名不一致导致的。现在已修复，两端的备�
 | 移动 UI | Jetpack Compose (Material 3) |
 | 桌面 UI | Compose Multiplatform 1.12.1 |
 | 跨平台共享 | Kotlin Multiplatform |
-| 网络 | OkHttp 4.12.0（shared）/ 5.5.0（desktop） + Java-WebSocket 1.6.0 |
-| 序列化 | kotlinx.serialization 1.7.3 + org.json |
-| HTML 解析 | jsoup 1.23.2（shared） |
-| 媒体 | FFmpeg / FFmpegKit |
+| 网络 | OkHttp 5.5.0 + Java-WebSocket 1.6.0 |
+| 序列化 | kotlinx.serialization 1.7.3 + org.json 20260814 |
+| HTML 解析 | jsoup 1.23.2 |
+| 媒体 | FFmpeg（Android: ffmpeg-kit-full 8.1.9 / 桌面: 系统 ffmpeg） |
 | 高权限 | Shizuku 13.1.5 |
-| 脚本 | Python 3.x |
+| 脚本 | Python 3.x（Android: Chaquopy 3.12 / 桌面: 系统 Python） |
+| 文档 | Apache POI 5.5.1（仅桌面） |
+| 历史 | SQLite（Android: SQLiteOpenHelper / 桌面: sqlite-jdbc 3.47.1.0） |
 | 协程 | kotlinx.coroutines |
 
 ---
@@ -298,26 +313,26 @@ FurAgent/
 │   └── src/main/java/net/xinkong/furagent/
 │       ├── core/       # Agent 循环、日志、MCP
 │       ├── data/       # 会话、设置、记忆、定时任务、直连设备
-│       ├── service/    # 前台服务、悬浮服务
-│       ├── system/     # Shizuku、TTS、通知、权限、媒体监听
-│       ├── tools/      # 平台私有工具
-│       └── ui/         # Compose UI
+│       ├── service/    # 前台服务、悬浮服务、定时任务执行
+│       ├── system/     # Shizuku、TTS、通知、权限、媒体监听、无障碍
+│       ├── tools/      # 平台私有工具 + 工具注册
+│       └── ui/         # Compose UI（含 pages/ 子包）
 │
 ├── desktopApp/         # 桌面应用
 │   └── src/main/kotlin/net/xinkong/furagent/desktop/
 │       ├── bridge/     # WebSocket 服务、HTTP 文件服务
 │       ├── core/       # Agent、任务运行时、下载管理、MCP
-│       ├── data/       # 会话、设置、直连设备
-│       ├── system/     # 日志、通知、TTS、环境检测、SMTC
+│       ├── data/       # 会话、设置、直连设备、历史
+│       ├── system/     # 日志、通知、TTS、环境检测、SMTC、UIA
 │       ├── tools/      # 桌面私有工具
 │       └── ui/         # Compose Desktop UI
 │
 └── shared/             # KMP 共享库
-    └── src/
-        ├── commonMain/     # 纯 Kotlin（协议定义、接口）
-        ├── jvmCommonMain/  # JVM 通用（通用工具、路径解析、联网搜索、直连传输、Agent 共用逻辑）
-        ├── androidMain/    # Android 平台实现
-        └── jvmMain/        # 桌面平台实现
+└── src/
+├── commonMain/     # 纯 Kotlin（协议定义、接口、数据类、工具常量）
+├── jvmCommonMain/  # JVM 通用（通用工具、路径解析、联网搜索、直连传输、Agent 共用逻辑）
+├── androidMain/    # Android 平台实现
+└── jvmMain/        # 桌面平台实现
 ```
 
 ---
@@ -338,74 +353,24 @@ FurAgent/
 ./gradlew :app:assembleRelease         # 打包 Android release
 ```
 
+### 版本号
+
+`versionName` 和 `versionCode` 由根 `build.gradle.kts` 自动生成：
+- Android `versionName`：构建时刻 `yyyyMMddHHmm`
+- 桌面 `version`：`年后两位.月.日*1440+时*60+分`（jpackage 三段限制）
+- `versionCode`：`version.properties` 持久化计数器，打包时 +1
+
 ---
 
 ## 已知限制
 
 - **桌面端通知**：目前通过 AWT SystemTray 弹原生通知，某些 Linux 桌面环境可能不支持
-- **Android 端 MCP**：只支持 HTTP 传输，不支持 stdio（Android 无法 spawn 子进程）
+- **Android 端 MCP**：只支持 http / sse，不支持 stdio（Android 无法 spawn 子进程）
 - **SMTC 媒体控制**：仅 Windows，需要 Windows 10 1809+
 - **WOL 唤醒**：仅局域网，跨网段需要路由器支持 VPN / 端口转发
 - **文件互传**：base64 通道单文件上限 10MB，大文件走 HTTP 通道
 - **Android 端**：只支持 arm64-v8a 架构
 - **直连传输**：需要设备在同一局域网，且双方 HTTP 服务都在运行
-
----
-
-## 与 AI 协作开发（可选）
-
-FurAgent 的代码几乎完全由 AI 编写。为了降低大范围改动的 token 成本，本项目在 `tool/` 目录提供了一个通用补丁应用器 `apply_patch.py`。
-
-**工作流**：
-
-1. AI 把改动写成 `tool/patch.json`
-2. 双击 `tool/apply_patch.py`（或命令行 `python tool/apply_patch.py`）
-3. 脚本自动备份到 `~/.furagent/temp/patch_backup/`，应用全部改动，全部成功后自动编译
-
-**特性**：
-
-- 原子提交：任一锚点失败全部回滚，不会改一半
-- 自动备份：每次运行前备份被改的文件，支持一键回滚
-- 自动编译：在 `patch.json` 里声明编译命令即可
-- 回滚：`python tool/apply_patch.py --rollback-last`
-- 兼容 CRLF / LF / UTF-8 BOM
-
-**patch.json 格式**：
-
-```json
-{
-  "project_root": "D:/JavaSource/FurAgent",
-  "comment": "批次 1：修复 xxx",
-  "compile": {
-    "enabled": true,
-    "command": "gradlew.bat :app:assembleDebug",
-    "timeout_sec": 600
-  },
-  "files": [
-    {
-      "path": "app/src/main/java/net/xinkong/furagent/.../X.kt",
-      "edits": [
-        {"old": "原文锚点（必须唯一）", "new": "替换后"}
-      ]
-    }
-  ]
-}
-```
-
-**子命令**：
-
-```
-python tool/apply_patch.py                      # 自动读同目录 patch.json
-python tool/apply_patch.py 别的/path.json       # 指定 patch 文件
-Get-Clipboard | python tool/apply_patch.py -    # 从剪贴板读
-python tool/apply_patch.py --dry-run            # 只校验不写盘
-python tool/apply_patch.py --no-compile         # 跳过编译
-python tool/apply_patch.py --list               # 列出所有备份
-python tool/apply_patch.py --rollback-last      # 回滚最近一次
-python tool/apply_patch.py --rollback 20261015_143022
-```
-
-详见 `TOAI.MD` §0.5。
 
 ---
 

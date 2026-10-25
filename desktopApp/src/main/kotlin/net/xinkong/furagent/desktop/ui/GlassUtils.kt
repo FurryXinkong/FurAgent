@@ -9,9 +9,7 @@ import net.xinkong.furagent.desktop.system.DesktopLogger
  * 这里只放纯 JVM 工具 / 格式化函数，不依赖任何 Composable。
  */
 
-// ============================================================
 // 下载速度 / 剩余时间格式化
-// ============================================================
 
 internal fun formatSpeed(bps: Long): String = when {
     bps <= 0 -> "-"
@@ -27,9 +25,7 @@ internal fun formatEta(sec: Long): String = when {
     else -> "${sec / 3600}小时${(sec % 3600) / 60}分"
 }
 
-// ============================================================
 // 安全剪贴板
-// ============================================================
 
 object SafeClipboard {
     fun setText(text: String): Boolean {

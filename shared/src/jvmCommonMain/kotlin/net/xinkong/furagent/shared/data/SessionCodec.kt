@@ -6,6 +6,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import net.xinkong.furagent.shared.util.DateFormats
 import java.util.UUID
 
 /**
@@ -112,21 +113,20 @@ object SessionCodec {
                 content = m.optString("content", ""),
                 type = m.optString("type", "text"),
                 timestamp = m.optLong("timestamp", System.currentTimeMillis()),
-                // 【缓存关键】必须反序列化原始 tool_call_id。
+                // 必须反序列化原始 tool_call_id。
                 toolCallId = m.optString("toolCallId", ""),
                 interrupted = m.optBoolean("interrupted", false),
                 imagePaths = imagePaths,
                 durationMs = m.optLong("durationMs", 0L),
-                reasoning = m.optString("reasoning", "")
+                reasoning = m.optString("reasoning", ""),
+                parallelGroup = m.optString("parallelGroup", "")
             )
         } catch (_: Exception) {
             null
         }
     }
 
-    // ============================================================
     // 消息序列化
-    // ============================================================
 
     /**
      * 消息 → JSONObject（只含 imagePaths，不含 imageData）。
@@ -145,6 +145,7 @@ object SessionCodec {
         put("interrupted", m.interrupted)
         if (m.durationMs > 0) put("durationMs", m.durationMs)
         if (m.reasoning.isNotBlank()) put("reasoning", m.reasoning)
+        if (m.parallelGroup.isNotBlank()) put("parallelGroup", m.parallelGroup)
         if (m.imagePaths.isNotEmpty()) {
             put("imagePaths", JSONArray().apply {
                 m.imagePaths.forEach { p -> put(p) }
@@ -173,6 +174,7 @@ object SessionCodec {
         put("interrupted", m.interrupted)
         if (m.durationMs > 0) put("durationMs", m.durationMs)
         if (m.reasoning.isNotBlank()) put("reasoning", m.reasoning)
+        if (m.parallelGroup.isNotBlank()) put("parallelGroup", m.parallelGroup)
         if (m.imagePaths.isNotEmpty()) {
             put("imagePaths", JSONArray().apply {
                 m.imagePaths.forEach { p -> put(p) }
@@ -195,9 +197,7 @@ object SessionCodec {
         }
     }
 
-    // ============================================================
     // Markdown 导出
-    // ============================================================
 
     /**
      * 图片文件 → data URL（base64 内嵌）。
@@ -245,7 +245,7 @@ object SessionCodec {
         val sb = StringBuilder()
         sb.append("# ${session.title}\n\n")
         sb.append("导出时间：")
-            .append(SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date()))
+            .append(DateFormats.formatDateTime())
             .append("\n\n---\n\n")
         session.messages.forEach { m ->
             if (hideToolMessages && (m.type == "tool_call" || m.type == "tool_result")) return@forEach
@@ -277,9 +277,7 @@ object SessionCodec {
         return sb.toString()
     }
 
-    // ============================================================
     // Markdown 导入
-    // ============================================================
 
     /**
      * 解析 Markdown 文本为消息列表（不涉及文件读取 / 持久化）。

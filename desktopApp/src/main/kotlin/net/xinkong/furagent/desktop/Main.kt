@@ -16,14 +16,10 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Window
-import androidx.compose.ui.window.application
-import androidx.compose.ui.window.rememberWindowState
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.compose.ui.window.*
+import kotlinx.coroutines.*
 import net.xinkong.furagent.desktop.bridge.BridgeServer
+import net.xinkong.furagent.desktop.bridge.DesktopNotificationManager
 import net.xinkong.furagent.desktop.bridge.HttpFileServer
 import net.xinkong.furagent.desktop.core.*
 import net.xinkong.furagent.desktop.core.mcp.McpManager
@@ -31,15 +27,14 @@ import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.*
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.*
+import net.xinkong.furagent.shared.util.DateFormats
 import org.json.JSONObject
-import java.awt.Toolkit
 import java.io.File
 import javax.imageio.IIOImage
 import javax.imageio.ImageIO
 import javax.imageio.ImageWriteParam
-import javax.swing.JFileChooser
-import javax.swing.filechooser.FileNameExtensionFilter
 import kotlin.system.exitProcess
+import kotlin.time.Duration.Companion.milliseconds
 
 private fun shutdownAndExit() {
     try { TaskScheduler.stop() } catch (_: Throwable) { }
@@ -81,7 +76,7 @@ private fun installGlobalCrashHandler() {
             val sw = java.io.StringWriter()
             throwable.printStackTrace(java.io.PrintWriter(sw))
             val stack = sw.toString()
-            val header = "[${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.ROOT).format(java.util.Date())}] " +
+            val header = "[${DateFormats.formatFullMs()}] " +
                     "线程 ${thread.name} 未捕获异常：${throwable.javaClass.name}: ${throwable.message}\n"
             // 优先走 DesktopLogger（已初始化时）；否则直接写文件
             try {
@@ -100,26 +95,9 @@ private fun installGlobalCrashHandler() {
 }
 
 fun main() {
-    // 【关键】最先装全局崩溃处理器，拦住 JVM 原生错误弹窗
+    // 最先装全局崩溃处理器，拦住 JVM 原生错误弹窗
     installGlobalCrashHandler()
 
-    // 【关键】必须在 application { } 之前设置渲染后端。
-    //
-    // 【为什么默认 OPENGL 而不是 DIRECT3D】
-    // 曾经默认 DIRECT3D（D3D11），因为 Intel 核显（UHD 620 等）的 OpenGL 驱动
-    // 在窗口 resize 时有经典 bug：front/back buffer 不同步 → 画面错位/花屏/残影。
-    //
-    // 但 D3D 在多显卡环境下会崩：当机器上装了虚拟显示适配器
-    // （MuMu 模拟器 / GameViewer 等），Skiko 的 Direct3DRedrawer 可能选错适配器，
-    // swap 时抛 EXCEPTION_ACCESS_VIOLATION（code 3221225477）→ 画面崩溃。
-    // 实测：装了 MuMu + GameViewer 虚拟适配器的机器上，强制 D3D 必崩。
-    //
-    // OpenGL 后端对多显卡/虚拟适配器更宽容（走系统默认适配器，通常是独显），
-    // 且花屏 bug 只影响 Intel 核显，独显机器不受影响。
-    //
-    // 用户遇到问题可设环境变量 FURAGENT_RENDER 切换：
-    //   OPENGL   / DIRECT3D / SOFTWARE
-    // SOFTWARE 是 100% 稳定的兜底（CPU 占用高）。
     val renderApi = System.getenv("FURAGENT_RENDER")?.takeIf { it.isNotBlank() } ?: "OPENGL"
     System.setProperty("skiko.renderApi", renderApi)
 
@@ -146,10 +124,14 @@ fun main() {
             DesktopSettingsHolder.current = s
             HttpFileServer.start(s.port + 1)
             BridgeServer.start(s.port)
+            // 通知同步开关（手机 → 电脑）
+            DesktopNotificationManager.load()
             TaskScheduler.start()
             McpManager.startAll()
             // 启动时按设置清理 temp 目录（只删程序生成的、超过 N 天的文件）
             TempCleaner.cleanupOnStartup(s.tempCleanupDays)
+            // 【双端共用】安装桌面端脚本运行时（ProcessBuilder 调系统 python）
+            SkillStore.install()
             // 首次运行时创建示例脚本，让用户知道脚本目录怎么用
             SkillStore.ensureExample()
             // 屏幕控制（UIA）。内部异步探活，不阻塞启动。
@@ -170,9 +152,28 @@ fun main() {
         // settings 提升到 application 作用域，悬浮窗也要读它
         var settings by remember { mutableStateOf(DesktopSettings.load()) }
 
+        // 【常驻后台】窗口是否已收进托盘；托盘图标常驻，菜单可恢复/退出
+        var hiddenToTray by remember { mutableStateOf(false) }
+        val trayState = rememberTrayState()
+
+        // 【关闭统一入口】窗口右上角的 × 是自建标题栏按钮，它不会触发
+        // onCloseRequest（那是系统声明的关闭事件）。之前它直接调 quitApp()，
+        // 所以点×永远是真退出，closeToTray 开关形同虚设。现在两边走同一个入口。
+        fun requestClose() {
+            if (settings.closeToTray && java.awt.SystemTray.isSupported()) {
+                // 只隐藏窗口，不发任何通知：托盘图标就在那儿，
+                // 再弹一个“仍在后台运行”只会嫌烦。
+                hiddenToTray = true
+            } else {
+                shutdownAndExit()
+            }
+        }
+
         Window(
-            onCloseRequest = { shutdownAndExit() },
+            visible = !hiddenToTray,
+            onCloseRequest = { requestClose() },
             title = "FurAgent Desktop",
+            icon = AppIcon.painter(),
             undecorated = true,
             state = rememberWindowState(width = 1280.dp, height = 820.dp),
             onPreviewKeyEvent = { event ->
@@ -188,6 +189,8 @@ fun main() {
         ) {
             val window = this.window
             var isMaximized by remember { mutableStateOf(false) }
+            // 最大化前的窗口位置和大小，还原时用（无边框窗口手动模拟最大化，必须自己记）
+            var restoreBounds by remember { mutableStateOf<java.awt.Rectangle?>(null) }
 
             DisposableEffect(window) {
                 MainWindowHolder.register(window)
@@ -205,15 +208,43 @@ fun main() {
             }
 
             fun toggleMaximize() {
-                val screenSize = Toolkit.getDefaultToolkit().screenSize
                 if (!isMaximized) {
-                    window.setSize(screenSize.width, screenSize.height)
-                    window.setLocation(0, 0)
+                    // 记一下原来的位置，个别 JVM 上系统还原会跑位，兜底用
+                    restoreBounds = window.bounds
+                    // 【修复“最大化 = 全屏”】
+                    // MAXIMIZED_BOTH 对无边框窗口不管用：Windows 看到「无边框 + 铺满整屏」
+                    // 就按全屏独占路径处理（DirectFlip），所以最大化后跟全屏一样。
+                    // 现在只铺「工作区」（已扣掉任务栏），窗口不覆盖整屏，
+                    // 系统就不会当它是全屏，任务栏也正常可见。
+                    runCatching {
+                        val ge = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment()
+                        val wa = ge.maximumWindowBounds      // 工作区，已排除任务栏
+                        val screen = ge.screenDevices.firstOrNull()?.defaultConfiguration?.bounds ?: wa
+                        var w = wa.width
+                        var h = wa.height
+                        // 任务栏自动隐藏时工作区等于整屏，再缩 1px 避开全屏判定
+                        if (w >= screen.width && h >= screen.height) {
+                            w -= 1
+                            h -= 1
+                        }
+                        window.extendedState = window.extendedState and java.awt.Frame.MAXIMIZED_BOTH.inv()
+                        window.bounds = java.awt.Rectangle(wa.x, wa.y, w, h)
+                    }
                     isMaximized = true
                 } else {
-                    window.setSize(1280, 820)
-                    window.setLocation((screenSize.width - 1280) / 2, (screenSize.height - 820) / 2)
+                    window.extendedState = window.extendedState and java.awt.Frame.MAXIMIZED_BOTH.inv()
                     isMaximized = false
+                    // 等系统把 NORMAL 状态处理完再校正一次位置，避免无边框窗口还原后跑位
+                    val b = restoreBounds
+                    if (b != null) {
+                        javax.swing.SwingUtilities.invokeLater {
+                            try {
+                                if (window.extendedState and java.awt.Frame.MAXIMIZED_BOTH == 0) {
+                                    window.bounds = b
+                                }
+                            } catch (_: Throwable) { }
+                        }
+                    }
                 }
             }
 
@@ -268,7 +299,7 @@ fun main() {
                                     try { window.setState(java.awt.Frame.ICONIFIED) } catch (_: Exception) { }
                                 },
                                 onMaximize = { toggleMaximize() },
-                                onClose = { quitApp() }
+                                onClose = { requestClose() }
                             )
                             App(settings = settings, onSettingsChange = { applySettings(it) })
                         }
@@ -290,11 +321,37 @@ fun main() {
             }
         }
 
+        // 【常驻后台】系统托盘：关闭窗口后靠它恢复/退出
+        if (settings.closeToTray && java.awt.SystemTray.isSupported()) {
+            Tray(
+                state = trayState,
+                icon = AppIcon.painter() ?: androidx.compose.ui.graphics.painter.ColorPainter(
+                    androidx.compose.ui.graphics.Color(0xFF7C5CFF)
+                ),
+                tooltip = "FurAgent 正在后台运行",
+                onAction = {
+                    hiddenToTray = false
+                    MainWindowHolder.activate()
+                },
+                menu = {
+                    Item("View") {
+                        hiddenToTray = false
+                        MainWindowHolder.activate()
+                    }
+                    Separator()
+                    Item("Quit") { shutdownAndExit() }
+                }
+            )
+        }
+
         // 独立的置顶悬浮窗，显示 AI 运行状态
         FloatingStatusWindow(
             visible = settings.floatingWindowEnabled,
             themeMode = settings.themeMode,
-            onOpenMainWindow = { MainWindowHolder.activate() },
+            onOpenMainWindow = {
+                hiddenToTray = false
+                MainWindowHolder.activate()
+            },
         )
     }
 }
@@ -309,11 +366,41 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     // runningSessions：哪些会话正在跑；sessionThinking/sessionStreaming：各会话的中间态。
     var runningSessions by remember { mutableStateOf<Set<String>>(emptySet()) }
     var sessionThinking by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    // 【错误状态】API 错误（如「HTTP 429 · 用量配额已用尽」），渲染成状态小气泡。
+    // 与 sessionThinking 分开：thinking 在任务结束时清空，error 保留到下次发消息。
+    var sessionError by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var sessionReasoning by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var sessionStreaming by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     // 【多会话并发】运行中会话的最新消息列表（供悬浮窗显示非当前会话的工具名/进度）。
     var sessionMessages by remember { mutableStateOf<Map<String, List<DesktopMessage>>>(emptyMap()) }
     var inputText by remember { mutableStateOf("") }
+
+    // 【会话隔离】输入框草稿按会话保存：切走存盘、切回恢复、输入后防抖落盘。
+    // 监听 currentSessionId 而非逐个改切换入口，新增入口也不会漏。
+    val draftPrefs = remember {
+        java.util.prefs.Preferences.userRoot().node("FurAgent/session_drafts")
+    }
+    fun readDraft(id: String): String = draftPrefs.get("d_$id", "") ?: ""
+    fun writeDraft(id: String, text: String) {
+        draftPrefs.put("d_$id", text)
+    }
+    // 草稿归属者：知道当前 inputText 属于哪个会话
+    var draftOwner by remember { mutableStateOf(currentSessionId) }
+    LaunchedEffect(currentSessionId) {
+        val prev = draftOwner
+        if (prev == currentSessionId) return@LaunchedEffect
+        prev?.let { writeDraft(it, inputText) }
+        draftOwner = currentSessionId
+        inputText = currentSessionId?.let { readDraft(it) } ?: ""
+    }
+    LaunchedEffect(inputText, currentSessionId) {
+        delay(400.milliseconds)
+        // 只写回「自己的」会话：切换瞬间 inputText 可能还是旧的，
+        // 不加这个判断会把 A 的草稿写进 B
+        if (draftOwner == currentSessionId) {
+            currentSessionId?.let { writeDraft(it, inputText) }
+        }
+    }
 
     var currentPage by remember { mutableStateOf(AppPage.CHAT) }
     var sidebarExpanded by remember { mutableStateOf(true) }
@@ -348,10 +435,10 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     val thinking = currentSessionId?.let { sessionThinking[it] } ?: ""
     val reasoning = currentSessionId?.let { sessionReasoning[it] } ?: ""
     val streamingText = currentSessionId?.let { sessionStreaming[it] } ?: ""
+    // 【错误状态】API 错误（如「HTTP 429 · 用量配额已用尽」）
+    val errorText = currentSessionId?.let { sessionError[it] } ?: ""
 
-    // ============================================================
     // 局部函数：先定义，后使用
-    // ============================================================
 
     /** 停掉指定会话的 Agent 任务。 */
     fun stopSession(sessionId: String) {
@@ -383,20 +470,34 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     fun persist(
         sessionId: String? = currentSessionId,
         history: List<DesktopMessage> = messages,
-        createdAt: Long = sessionCreatedAt
+        createdAt: Long = sessionCreatedAt,
+        refreshList: Boolean = true
     ) {
         val id = sessionId ?: return
-        val title = DesktopSessionStore.generateTitle(history)
+        // 【子会话标题保护】子会话标题带「↳ 」前缀，是子代理列表的识别依据。
+        // 以前这里无条件 generateTitle，一 persist 就把前缀抹掉，
+        // 子会话于是出现在主会话侧栏、又不在子代理列表里（看起来就像
+        // “子代理把原会话覆盖了”，而且再也找不到回去的入口）。
+        // 现在：子会话（id 以 sub_ 开头）保留原标题。
+        val existing = if (id.startsWith("sub_")) DesktopSessionStore.load(id) else null
+        val title = when {
+            existing?.title?.startsWith("↳") == true -> existing.title
+            id.startsWith("sub_") -> "↳ " + DesktopSessionStore.generateTitle(history)
+            else -> DesktopSessionStore.generateTitle(history)
+        }
         DesktopSessionStore.save(
             DesktopSession(
                 id = id,
                 title = title,
                 createdAt = createdAt,
                 updatedAt = System.currentTimeMillis(),
-                messages = history
+                messages = history,
+                parentId = existing?.parentId
             )
         )
-        sessionList = DesktopSessionStore.list()
+        if (refreshList) {
+            sessionList = DesktopSessionStore.list().filter { it.parentId == null }
+        }
     }
 
     fun startNewSession() {
@@ -404,7 +505,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         currentSessionId = s.id
         sessionCreatedAt = s.createdAt
         messages = emptyList()
-        sessionList = DesktopSessionStore.list()
+        sessionList = DesktopSessionStore.list().filter { it.parentId == null }
     }
 
     fun switchSession(id: String) {
@@ -420,7 +521,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                 DesktopSessionStore.duplicate(id)
             }
             if (result != null) {
-                sessionList = DesktopSessionStore.list()
+                sessionList = DesktopSessionStore.list().filter { it.parentId == null }
                 ToastBus.info("已复制会话「${result.title}」")
             } else {
                 ToastBus.error("复制失败：会话不存在")
@@ -429,18 +530,17 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     }
 
     fun pickAndImportSingleSession() {
-        val chooser = JFileChooser().apply {
-            dialogTitle = "选择要导入的会话（JSON / Markdown）"
-            fileFilter = FileNameExtensionFilter("会话文件 (*.json, *.md)", "json", "md")
-        }
-        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return
-        val f = chooser.selectedFile ?: return
+        // 改用原生文件对话框
+        val f = NativeFilePicker.pickFile(
+            title = "选择要导入的会话（JSON / Markdown）",
+            extensions = listOf("json", "md")
+        ) ?: return
         scope.launch {
             val result = withContext(Dispatchers.IO) {
                 DesktopSessionStore.importSingleSession(f)
             }
             if (result.success) {
-                sessionList = DesktopSessionStore.list()
+                sessionList = DesktopSessionStore.list().filter { it.parentId == null }
                 result.sessionId?.let { switchSession(it) }
                 currentPage = AppPage.CHAT
                 ToastBus.info("已导入「${result.sessionTitle}」（${result.messageCount} 条消息）")
@@ -469,17 +569,40 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         sessionThinking = sessionThinking + (taskSessionId to "")
         sessionReasoning = sessionReasoning + (taskSessionId to "")
         sessionStreaming = sessionStreaming + (taskSessionId to "")
+        // 【错误消失】新一轮任务一开始，把上一次的 API 错误清掉。
+        // 之前只在重试按钮里清，所以切了模型、发了新消息，
+        // 那个 HTTP 429 气泡还挂在底下不动。
+        sessionError = sessionError + (taskSessionId to "")
         sessionMessages = sessionMessages + (taskSessionId to history)
 
         val job = scope.launch {
             fun isCurrent() = sessionTokens[taskSessionId] == myToken
+            // 流式输出缓冲：每 chunk 直接写 state 会让主窗口每 chunk 全量重组，
+            // 合并到 32ms 间隔再由 flusher 协程刷出
+            val streamBuf = java.util.concurrent.ConcurrentLinkedQueue<String>()
+            var thinkingLastFlush = 0L
+            fun drainStream() {
+                if (streamBuf.isEmpty()) return
+                val sb = StringBuilder()
+                while (true) {
+                    val c = streamBuf.poll() ?: break
+                    sb.append(c)
+                }
+                sessionStreaming = sessionStreaming +
+                    (taskSessionId to ((sessionStreaming[taskSessionId] ?: "") + sb))
+            }
+            val flusher = launch {
+                while (isActive) { delay(32.milliseconds); drainStream() }
+            }
             try {
+                // 记录主任务会话：子会话完成后「子代理完成」通知回流的目标
+                DesktopTools.CurrentTaskSession.id = taskSessionId
                 val result = DesktopAgent.runTurn(
                     settings = settings,
                     history = history,
                     onUpdate = { newList ->
                         if (!isCurrent()) return@runTurn
-                        persist(taskSessionId, newList, taskCreatedAt)
+                        // 只更新内存状态，不在每次消息变化时写盘（persist 移到 onStreamCommit/finally）
                         sessionMessages = sessionMessages + (taskSessionId to newList)
                         if (currentSessionId == taskSessionId) {
                             messages = newList
@@ -487,7 +610,17 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                     },
                     onThinking = { t ->
                         if (!isCurrent()) return@runTurn
-                        sessionThinking = sessionThinking + (taskSessionId to t)
+                        // 全量替换语义，32ms 窗口内只保留最后一帧，减少主窗口重组
+                        val now = System.currentTimeMillis()
+                        if (now - thinkingLastFlush >= 32) {
+                            thinkingLastFlush = now
+                            sessionThinking = sessionThinking + (taskSessionId to t)
+                        }
+                    },
+                    onError = { err ->
+                        if (!isCurrent()) return@runTurn
+                        // 错误走独立状态：不进消息列表（不占 AI 聊天气泡）
+                        sessionError = sessionError + (taskSessionId to err)
                     },
                     onReasoning = { r ->
                         if (!isCurrent()) return@runTurn
@@ -495,14 +628,19 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                     },
                     onStream = { chunk ->
                         if (!isCurrent()) return@runTurn
-                        sessionStreaming = sessionStreaming + (taskSessionId to ((sessionStreaming[taskSessionId] ?: "") + chunk))
+                        streamBuf.add(chunk)
                     },
                     onStreamCommit = {
                         if (!isCurrent()) return@runTurn
-                        // reasoning 已随 assistant 消息落库，清空运行时状态避免与消息内面板重复
+                        drainStream()
+                        // 每次助手消息落盘时持久化一次（比 onUpdate 每次工具返回都写盘省 I/O）
+                        // refreshList=false：agent 运行期间会话列表不变，省掉磁盘读取
+                        persist(taskSessionId, messages, taskCreatedAt, refreshList = false)
                         sessionStreaming = sessionStreaming + (taskSessionId to "")
                         sessionReasoning = sessionReasoning + (taskSessionId to "")
-                    }
+                    },
+                    // 会话专用提示词：每轮发送前实时读盘，编辑后下一轮即生效
+                    sessionPrompt = DesktopSessionStore.load(taskSessionId)?.systemPrompt ?: ""
                 )
                 if (isCurrent()) {
                     persist(taskSessionId, result, taskCreatedAt)
@@ -526,19 +664,40 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                         }
                     }
                 }
-            } catch (e: Exception) {
+            } catch (e: Throwable) {
+                // Throwable 而非 Exception：NoClassDefFoundError 等 Error 也要兜住，
+                // 否则会穿出协程直达 EDT 弹原生 Error 框并打崩进程
                 DesktopLogger.error(
                     "Agent",
                     "runAgent 任务异常：${e.javaClass.simpleName}: ${e.message}\n" +
                             e.stackTrace.take(5).joinToString("\n") { "  at $it" }
                 )
+                // 异常退出时也要保存已产生的消息；
+                // 非用户主动停止的异常写一条系统提示进会话，避免对话"无声死亡"只留日志
+                if (isCurrent()) {
+                    if (e !is CancellationException) {
+                        messages = messages + DesktopMessage(
+                            role = "system",
+                            type = "system_note",
+                            content = "本轮执行异常已中断：${e.javaClass.simpleName}: ${e.message}",
+                            timestamp = System.currentTimeMillis()
+                        )
+                    }
+                    persist(taskSessionId, messages, taskCreatedAt, refreshList = false)
+                }
             } finally {
+                flusher.cancel()
+                drainStream()
+                // 确保所有消息都被持久化（包括中途被取消的情况）
+                if (isCurrent()) persist(taskSessionId, messages, taskCreatedAt, refreshList = false)
                 if (isCurrent()) {
                     runningSessions = runningSessions - taskSessionId
                     sessionStreaming = sessionStreaming - taskSessionId
                     sessionThinking = sessionThinking - taskSessionId
                     sessionReasoning = sessionReasoning - taskSessionId
                     sessionMessages = sessionMessages - taskSessionId
+                    // 【注意】sessionError 不在这里清：错误要保留到用户下次发消息，
+                    // 否则一闪而过看不到。下次发消息时在启动处清空。
                 }
                 sessionJobs = sessionJobs - taskSessionId
             }
@@ -549,6 +708,12 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     fun send(attachments: List<PendingAttachment>) {
         val text = inputText.trim()
         if (text.isBlank() && attachments.isEmpty()) return
+        // 【子代理只读】子会话是 AI 派发的任务上下文，用户不能直接发消息，
+        // 否则会污染子代理上下文。AI 追问走 run_sub_session 的 session_id 参数。
+        if (currentSessionId?.startsWith("sub_") == true) {
+            ToastBus.info("子代理会话只读，不能直接发消息")
+            return
+        }
         // 【多会话并发】只拦当前会话正在跑的情况；其他会话在跑不影响本会话发消息。
         if (currentSessionId != null && currentSessionId in runningSessions) return
         val profile = settings.currentProfile()
@@ -603,7 +768,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
             ToastBus.error("导入失败：${result.error ?: "未知错误"}")
             return
         }
-        sessionList = DesktopSessionStore.list()
+        sessionList = DesktopSessionStore.list().filter { it.parentId == null }
         if (currentSessionId == null || sessionList.none { it.id == currentSessionId }) {
             val first = sessionList.firstOrNull()
             if (first != null) switchSession(first.id) else startNewSession()
@@ -613,17 +778,14 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     }
 
     fun pickAndImport() {
-        val chooser = JFileChooser().apply {
-            dialogTitle = "选择 FurAgent 备份文件"
-            fileFilter = FileNameExtensionFilter("JSON 备份 (*.json)", "json")
-        }
-        if (chooser.showOpenDialog(null) != JFileChooser.APPROVE_OPTION) return
-        pendingImportFile = chooser.selectedFile ?: return
+        // 改用原生文件对话框
+        pendingImportFile = NativeFilePicker.pickFile(
+            title = "选择 FurAgent 备份文件",
+            extensions = listOf("json")
+        ) ?: return
     }
 
-    // ============================================================
     // 副作用
-    // ============================================================
 
     // 【多会话并发】同一会话从“跑”变“不跑”时激活窗口（任务完成提醒）。
     // 记录上次的 (会话, 是否在跑)，切会话时不误触发。
@@ -637,7 +799,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
 
     // 【多会话并发】把运行中的会话汇总上报给 AgentRuntimeState（供悬浮窗读取）。
     // 每个会话一份快照，工具名/工具数从 sessionMessages 取（运行中的会话都有缓存）。
-    LaunchedEffect(runningSessions, sessionThinking, sessionStreaming, sessionMessages, currentSessionId, sessionList) {
+    LaunchedEffect(runningSessions, sessionThinking, sessionStreaming, sessionMessages, currentSessionId) {
         val map = runningSessions.associateWith { sid ->
             val meta = sessionList.firstOrNull { it.id == sid }
             val msgs = sessionMessages[sid].orEmpty()
@@ -691,6 +853,71 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         }
     }
 
+    // 子会话完成 → 主对话注入「子代理完成」通知（结果摘要回流）
+    LaunchedEffect(Unit) {
+        DesktopTools.SubSessionProgress.events.collect { e ->
+            // originId 为空（桥接/悬浮窗发起、母会话已关）时此前直接丢弃通知，
+            // 现在回落到最近一个主会话，至少不会让子代理结果人间蒸发。
+            val target = e.originId.ifBlank {
+                DesktopSessionStore.list().firstOrNull { it.parentId == null }?.id ?: ""
+            }
+            if (target.isBlank()) return@collect
+            val notice = DesktopMessage(
+                role = "system",
+                content = "【子代理完成】「${e.title}」（${e.subId}）已完成，共 ${e.msgCount} 条消息。\n" +
+                        "结果摘要：\n${e.summary}",
+                timestamp = System.currentTimeMillis()
+            )
+            if (currentSessionId == target) {
+                messages = messages + notice
+                val title = sessionList.find { it.id == target }?.title ?: "对话"
+                withContext(Dispatchers.IO) {
+                    DesktopSessionStore.save(
+                        DesktopSession(
+                            id = target,
+                            title = title,
+                            createdAt = sessionCreatedAt,
+                            updatedAt = System.currentTimeMillis(),
+                            messages = messages
+                        )
+                    )
+                }
+            } else {
+                withContext(Dispatchers.IO) {
+                    val s = DesktopSessionStore.load(target) ?: return@withContext
+                    DesktopSessionStore.save(
+                        s.copy(
+                            messages = s.messages + notice,
+                            updatedAt = System.currentTimeMillis()
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    // 定时任务 run_agent 写回会话 → 当前会话立即显示，侧栏列表同步刷新
+    LaunchedEffect(Unit) {
+        TaskScheduler.agentResults.collect { e ->
+            if (currentSessionId == e.sessionId) {
+                messages = messages + e.message
+                persist()
+            }
+            sessionList = DesktopSessionStore.list().filter { it.parentId == null }
+        }
+    }
+
+    // 子会话卡片/列表点击 → 打开子会话；进入前记住来路，顶部「返回」可切回主会话
+    SubSessionNavigator.open = { id ->
+        val enteringSub = id.startsWith("sub_")
+        if (enteringSub && currentSessionId?.startsWith("sub_") != true) {
+            SubSessionNavigator.originId = currentSessionId
+        } else if (!enteringSub && currentSessionId?.startsWith("sub_") == true) {
+            SubSessionNavigator.originId = null
+        }
+        switchSession(id)
+    }
+
     LaunchedEffect(Unit) {
         val list = DesktopSessionStore.list()
         sessionList = list
@@ -704,15 +931,23 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         } else startNewSession()
     }
 
-    // ============================================================
     // UI
-    // ============================================================
+
+    var sidebarSortMode by remember { mutableIntStateOf(0) }
+    val sortedSessions = remember(sessionList, sidebarSortMode) {
+        when (sidebarSortMode) {
+            1 -> sessionList.sortedBy { it.updatedAt }
+            2 -> sessionList.sortedBy { it.title.lowercase() }
+            3 -> sessionList.sortedByDescending { it.messageCount }
+            else -> sessionList.sortedByDescending { it.updatedAt }
+        }
+    }
 
     Row(Modifier.fillMaxSize()) {
         Sidebar(
             expanded = sidebarExpanded,
             currentPage = currentPage,
-            sessions = sessionList,
+            sessions = sortedSessions,
             currentSessionId = currentSessionId,
             runningSessions = runningSessions,
             onToggleExpand = { sidebarExpanded = !sidebarExpanded },
@@ -724,7 +959,9 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
             onExportSession = { exportSessionId = it },
             onDuplicateSession = { id -> duplicateSession(id) },
             onImportSession = { pickAndImportSingleSession() },
-            onClearAllSessions = { pendingClearAllSessions = true }
+            onClearAllSessions = { pendingClearAllSessions = true },
+            sortMode = sidebarSortMode,
+            onSortModeChange = { sidebarSortMode = it }
         )
 
         Box(Modifier.width(1.dp).fillMaxHeight().background(BorderColor()))
@@ -753,19 +990,24 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                         streamingText = streamingText,
                         thinking = thinking,
                         reasoning = reasoning,
+                        errorText = errorText,
                         isLoading = isLoading,
                         inputText = inputText,
-                        hasApiKey = settings.currentProfile()?.apiKey?.isNotBlank() == true,
+                        hasApiKey = remember(settings.currentProfileId) { settings.currentProfile()?.apiKey?.isNotBlank() == true },
                         modelName = settings.currentProfile()?.name ?: "未配置模型",
-                        enableThinking = settings.enableThinking,
+                        thinkingLevel = settings.thinkingLevel,
                         supportsThinking = settings.currentProfile()?.supportsThinking ?: true,
                         chatProfiles = settings.chatProfiles().map { it.id to it.name },
                         currentProfileId = settings.currentProfileId,
-                        onToggleThinking = { on ->
-                            onSettingsChange(settings.copy(enableThinking = on))
+                        onThinkingLevelChange = { level ->
+                            onSettingsChange(settings.copy(thinkingLevel = level))
                         },
                         onSelectProfile = { id ->
                             onSettingsChange(settings.copy(currentProfileId = id))
+                            // 【错误消失】切了模型，上一个模型报的 HTTP 429 已经不成立，
+                            // 不该继续挂在底下吓人。当前会话的错误直接清掉。
+                            val sid = currentSessionId
+                            if (sid != null) sessionError = sessionError + (sid to "")
                         },
                         scrollToMessageId = scrollToMessageId,
                         onScrollToMessageHandled = { scrollToMessageId = null },
@@ -773,6 +1015,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                         onSend = { atts -> send(atts) },
                         onStop = { stopAgent() },
                         onOpenSettings = { currentPage = AppPage.SETTINGS },
+                        onOpenHistory = { currentPage = AppPage.HISTORY },
                         onCopyMessage = { msg ->
                             val ok = SafeClipboard.setText(msg.content)
                             if (ok) ToastBus.info("已复制")
@@ -813,6 +1056,16 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                                 messages = deleteMessagePair(messages, idx)
                                 persist()
                             }
+                        },
+                        onRetryError = {
+                            val lastUserMsg = messages.lastOrNull { it.role == "user" }?.content
+                            if (!lastUserMsg.isNullOrBlank() && !isLoading) {
+                                sessionError = sessionError + ((currentSessionId ?: "") to "")
+                                val userMsg = DesktopMessage(role = "user", content = lastUserMsg)
+                                messages = messages + userMsg
+                                persist()
+                                runAgent(messages)
+                            }
                         }
                     )
                     AppPage.MEMORY -> MemoryPage(
@@ -825,6 +1078,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                             }
                         }
                     )
+                    AppPage.HISTORY -> HistoryPage()
                     AppPage.SCHEDULES -> SchedulesPage()
                     AppPage.MCP -> McpPage(
                         disabledTools = settings.disabledTools,
@@ -873,7 +1127,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                 DesktopSessionStore.load(id)?.let { s ->
                     DesktopSessionStore.save(s.copy(title = newTitle, updatedAt = System.currentTimeMillis()))
                 }
-                sessionList = DesktopSessionStore.list()
+                sessionList = DesktopSessionStore.list().filter { it.parentId == null }
                 renamingSessionId = null
             }
         )
@@ -930,8 +1184,10 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                         DesktopSessionStore.list().forEach { meta ->
                             DesktopSessionStore.delete(meta.id)
                         }
+                        // 会话没了，摘要状态里的孤儿脏标记一起清
+                        SessionSummarizer.pruneState()
                     }
-                    sessionList = DesktopSessionStore.list()
+                    sessionList = DesktopSessionStore.list().filter { it.parentId == null }
                     startNewSession()
                     ToastBus.info("已清空全部会话")
                 }
@@ -947,8 +1203,14 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
             message = "确定删除「$title」？此操作不可恢复。",
             confirmText = "删除", danger = true,
             onConfirm = {
+                // 删会话前先停掉它的 Agent 任务。
+                // 之前直接 delete，正在跑的 sessionJobs[id] 不管，
+                // 导致“删了会话 AI 还在继续执行工具”。
+                stopSession(id)
                 DesktopSessionStore.delete(id)
-                sessionList = DesktopSessionStore.list()
+                // 会话删了，它的记忆摘要和摘要状态也要一起清
+                SessionSummarizer.pruneState()
+                sessionList = DesktopSessionStore.list().filter { it.parentId == null }
                 if (id == currentSessionId) {
                     val next = sessionList.firstOrNull()
                     if (next != null) switchSession(next.id) else startNewSession()
@@ -1061,6 +1323,18 @@ private suspend fun reExecuteToolCall(
     val argsPart = msg.content.substringAfter('\n', "").trim()
     if (firstLine.isBlank()) {
         infoCallback("无法解析工具调用")
+        return
+    }
+
+    // 【与安卓端对齐】元工具不支持再次执行：
+    //   - tool_search / tool_load 是分层工具系统入口，只在本轮 tools 数组里动态下发
+    //   - 反查失败后 fallback 会把显示名当工具名，导致污染 loadedToolNames
+    if (firstLine == "工具搜索" || firstLine == "tool_search") {
+        infoCallback("工具搜索不支持再次执行")
+        return
+    }
+    if (firstLine == "加载工具" || firstLine == "tool_load") {
+        infoCallback("加载工具不支持再次执行")
         return
     }
 

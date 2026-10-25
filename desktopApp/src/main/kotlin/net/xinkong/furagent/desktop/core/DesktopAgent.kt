@@ -1,6 +1,9 @@
 package net.xinkong.furagent.desktop.core
 
+import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.*
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import net.xinkong.furagent.desktop.data.ApiKeyResolver
 import net.xinkong.furagent.desktop.data.DesktopMessage
 import net.xinkong.furagent.desktop.data.DesktopSettings
@@ -11,6 +14,7 @@ import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.tools.EditSessionTracker
 import net.xinkong.furagent.desktop.tools.PhoneTools
 import net.xinkong.furagent.shared.tools.ToolResult
+import net.xinkong.furagent.shared.ThinkingLevel
 import net.xinkong.furagent.shared.util.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -28,98 +32,35 @@ import kotlin.time.Duration.Companion.milliseconds
 object DesktopAgent {
 
     private const val SYSTEM_PROMPT = """
-你是 FurAgent，运行在用户的电脑上。当前时间 {TIME}，操作系统 {OS}。
+你是 FurAgent，运行在用户电脑上。时间 {TIME}。可调本地工具（文件/命令/系统/屏幕）与手机桥接工具，用法见各 description。
 
-你可以调用本地工具（文件、命令、系统信息、屏幕控制），也可以通过桥接调用手机端工具。
-每个工具的具体用法见其 description。
+【工具发现】tools 只含核心工具 + tool_search/tool_load。
+缺工具→先看 tool_search 目录，再 tool_load(name=) 或 tool_search(query=)。加载后下轮可用，本轮勿重复搜。
 
-【工具发现（重要）】
-你的 tools 数组只包含"核心工具"和两个元工具 tool_search / tool_load。
-其他工具（文件操作、媒体处理、系统控制、手机桥接、MCP 扩展等）需要按需加载：
-  - 目录已经在 tool_search 的 description 里列出，先扫一眼
-  - 需要某个工具时，调用 tool_load(name="工具名") 直接拉取完整定义
-  - 不确定工具名时，用 tool_search(query="描述") 做模糊搜索
-  - 加载后下一轮就能直接调用，本轮不要重复搜索
-不要因为 tools 数组里没看到某个工具就放弃，先看一眼目录或用 tool_load / tool_search。
+【规则】
+1 执行操作必须调工具，禁止文字声称完成。
+2 只依据工具返回判断成败；以"失败"开头才算失败。
+3 危险操作（写/删文件、执行命令）前先说明。
+4 复杂任务先列编号计划。
+5 用户给 URL 要看内容→直接抓正文，别只看搜索摘要。
+6 看图用 view_image；取时间用 time(op=now)。
 
-【基本规则】
-1. 需要执行操作时必须调用工具，禁止用文字声称完成。
-2. 只依据工具返回判断成败。返回以"失败"开头才算失败，成功不得说失败。
-3. 危险操作（写文件、删文件、执行命令）前先向用户说明你要做什么。
-4. 复杂任务先用编号列出简短计划，再逐步调用工具。
-5. 用户提供 URL 且要求总结或查看内容时，直接抓网页正文，不要只依赖搜索摘要。
-6. 需要看本地图片用 view_image，会自动附加到下一轮上下文。
-7. 需要当前时间用 time(op=now)。
+【批量与并行】互不依赖的操作放同一条消息返回多个 tool_call，系统并行执行。
+可并行：多个 read_file、多个 execute_command、read_file+list_files。
+必须串行：tool_search/tool_load（改 tools 数组）、有依赖的操作。
+改代码用 code_edit 一次提交所有改动（files 可放多文件多处），不要"改一个→看结果→再改下一个"。
 
-【批量编辑（省 token 的核心）】
+【路径】~ 主目录；桌面 ~/Desktop；下载 ~/Downloads；文档 ~/Documents；图片 ~/Pictures。
+产出目录（~/.furagent/）：screenshots 截图 / downloads 下载 / images 生成图 / exports 导出 / temp 临时 / logs 日志 / scripts 脚本。
+其它文件操作保持主目录内，系统目录会被拒。
 
-修改代码必须用 code_edit 一次提交所有改动，禁止分多次调用。
+【工作目录】execute_command 默认 cwd 是应用启动目录（开发时仓库根，打包后 exe 所在目录），不是主目录也不是项目目录。相对路径先 cd 或用绝对路径。
 
-为什么：
-- 每多一次工具调用轮次，就要重发一遍完整历史（system + 全部对话 + tools）
-- 拆成 N 次调用 = 成本乘以 N，用户也要多等 N 倍时间
-- code_edit 的 files 数组就是为此设计的：一次调用可以改任意多个文件的任意多个位置
-- 所有文件原子提交：任一锚点失败全部回滚，不会出现"改了一半"的脏状态
+【失败处理】参数错→修正重试一次；权限问题→说明原因让用户决定；同工具同参数连失 2 次→停止换思路。
 
-反模式（禁止）：
-- 先改文件 A，看 diff 对不对，再改文件 B
-- 先改 import，再改实现，再改测试
-- 每改一个文件就调一次 code_edit
-- 在同一条消息里并行调用多个 code_edit（会互相覆盖，必须合并成一次调用）
+【记忆】主动存：姓名/昵称、职业、偏好/习惯/忌讳、常用路径、用户纠正过的事实。不存：一次性信息、寒暄。取用 memory(op=recall)。
 
-正确做法：
-- 一次 code_edit：files 数组里放 A、B、C，每个文件内 edits 数组放改动 1、改动 2
-- 拿到 diff 一次性验证
-- 如果本次任务确实只改一个文件，那就只调一次；下次别再一个一个来
-
-【多工具并行（当且仅当互不依赖）】
-
-如果需要执行多个互不依赖的操作，请在**同一条 assistant 消息里返回多个 tool_call**。
-系统会并行执行，一次性返回所有结果，避免"调一个等一个"的 N 倍历史重发成本。
-
-可以并行：
-- 多个独立的 read_file（同时看多个文件）
-- 多个独立的 execute_command（比如 git status / git diff / git log 一起发）
-- read_file + list_files 这类纯查询操作
-
-不可以并行：
-- 多个 code_edit（会互相覆盖，必须合并到一次调用）
-- tool_search / tool_load（会改 tools 数组，系统强制串行）
-- 有依赖的命令（build 依赖前一个改动完成后才能跑）
-
-【路径与目录】
-路径别名：
-- ~ 表示用户主目录
-- 桌面 → ~/Desktop
-- 下载 → ~/Downloads
-- 文档 → ~/Documents
-- 图片 → ~/Pictures
-
-FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
-- 截图 → ~/.furagent/screenshots/
-- 接收文件 → ~/.furagent/received/
-- 导出 / 备份 → ~/.furagent/exports/
-- 临时文件 → ~/.furagent/temp/
-- 日志 → ~/.furagent/logs/
-- 自定义脚本 → ~/.furagent/scripts/
-
-其它文件操作应保持在用户主目录内，系统目录会被拒绝。
-
-【失败处理】
-工具返回失败时：
-- 参数错误 → 修正参数重试一次
-- 权限问题 → 说明原因，让用户决定
-- 同一工具同一参数连续失败 2 次 → 停止重试，向用户说明，换思路
-- 禁止盲目重试同一个调用。
-
-【主动记忆】
-主动识别值得长期记住的信息，用 memory(op=save) 保存，不要等用户说"记住"。
-值得存：姓名/昵称、职业/身份、偏好/习惯/忌讳、常用路径/应用、用户纠正过你的事实。
-不值得存：一次性临时信息、寒暄。
-每轮最多存一次。需要回忆时用 memory(op=recall)。
-
-【回复规范】
-中文，简洁直接，不用 emoji 或颜文字，代码块用 ```语言 包裹。
+【回复】中文，简洁直接，不用 emoji，代码块用 ```语言 包裹。
 """
 
     private val httpClient = OkHttpClient.Builder()
@@ -134,17 +75,42 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
 
     private const val MIN_KEEP_MESSAGES = 40
 
+    /** 【用量监控】单轮 prompt token 超过该值就打 warn 日志（不改变行为）。 */
+    private const val PROMPT_TOKEN_WARN_THRESHOLD = 60_000
+
     /** 【失败计数】同一工具同一参数连续失败达到此值则中断循环。 */
     private const val TOOL_FAILURE_STREAK_LIMIT = 3
+
+    /**
+     * API 请求最大重试次数（429 / 5xx / 网络异常）。
+     * 提到类级别是因为错误展示处也要用到（告诉用户“已重试 N 次”）。
+     */
+    private const val API_MAX_RETRIES = 3
 
     suspend fun runTurn(
         settings: DesktopSettings,
         history: List<DesktopMessage>,
         onUpdate: (List<DesktopMessage>) -> Unit,
         onThinking: (String) -> Unit,
+        /**
+         * 【错误回调】API 错误（HTTP 错误码 / 网络异常）。
+         *
+         * 与 onThinking 分开：错误要渲染成状态小气泡并保留到下次发消息，
+         * 而 thinking 在任务结束时会被清空。也不走 onUpdate（不进 AI 聊天气泡）。
+         */
+        onError: (String) -> Unit = {},
         onReasoning: (String) -> Unit,
         onStream: (String) -> Unit,
-        onStreamCommit: () -> Unit
+        onStreamCommit: () -> Unit,
+        /** 会话专用提示词：非空时追加到系统提示词末尾（每轮实时读取） */
+        sessionPrompt: String = "",
+        /**
+         * 【子会话限轮】传非空时覆盖 settings.maxToolCallLoops。
+         *
+         * 为什么需要：子代理是被派出去干活的，它跑 100 轮也不会自己停下来，
+         * 主会话设多少轮它就跑多少轮，然后全部烧掉。子会话必须有独立的硬上限。
+         */
+        maxLoopsOverride: Int? = null
     ): List<DesktopMessage> = withContext(Dispatchers.IO) {
         var current = history
 
@@ -180,20 +146,33 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         val messages = JSONArray()
         messages.put(JSONObject().apply {
             put("role", "system")
-            put("content", buildSystemPrompt(settings))
+            put("content", buildSystemPrompt(settings, sessionPrompt))
         })
 
-        val truncated = truncateHistory(current, settings.maxTurns)
+        val envSection = try {
+            EnvDetector.buildPromptSection()
+        } catch (e: Exception) {
+            DesktopLogger.warn("Agent", "环境检测注入失败：${e.message}")
+            ""
+        }
+        if (envSection.isNotBlank()) {
+            messages.put(JSONObject().apply {
+                put("role", "user")
+                put("content", "【环境信息】\n$envSection")
+            })
+        }
+
+        val truncated = truncateHistory(current, settings.maxTurns, settings.contextTokenBudgetK)
         buildHistoryMessages(truncated, messages, settings, supportsVision)
 
-        // 【P0】跨轮次累积"已加载工具"
+        // 跨轮次累积"已加载工具"
         val loadedToolNames = mutableSetOf<String>()
 
         // 【失败计数】同一工具同一参数连续失败 3 次则中断（与手机端 Agent.kt 一致）。
         // 签名忽略翻页/数量类参数，避免模型只改 limit/offset 就绕过计数。
         val toolFailureStreak = mutableMapOf<String, Int>()
 
-        val maxLoops = settings.maxToolCallLoops.coerceAtLeast(1)
+        val maxLoops = (maxLoopsOverride ?: settings.maxToolCallLoops).coerceAtLeast(1)
 
         repeat(maxLoops) { loopIndex ->
             // 【中断修复】每轮开头检查取消。用户点“停止”后 currentAgentJob.cancel()
@@ -202,25 +181,39 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
 
             onThinking(if (loopIndex == 0) "思考中…" else "继续思考…")
 
-            // 【P0】每轮重建 tools（loadedToolNames 会变化）
+            // 每轮重建 tools（loadedToolNames 会变化）
             val tools = buildToolsArray(settings, supportsVision, loadedToolNames)
+
+            // 【用量监控】每轮请求前估算 prompt token，超阈值告警，便于定位烧钱点。
+            val promptTokens = estimateMessagesTokens(messages)
+            if (promptTokens > PROMPT_TOKEN_WARN_THRESHOLD) {
+                DesktopLogger.warn(
+                    "Agent",
+                    "上下文偏大：约 $promptTokens tokens（${messages.length()} 条消息），" +
+                            "本轮将按此计费，建议检查是否有大结果未落盘"
+                )
+            }
 
             DesktopLogger.info(
                 "Agent",
-                "第 ${loopIndex + 1} 轮（tools=${tools.length()}，已加载额外工具 ${loadedToolNames.size} 个）"
+                "第 ${loopIndex + 1} 轮（tools=${tools.length()}，已加载额外工具 ${loadedToolNames.size} 个，" +
+                        "prompt≈$promptTokens tokens）"
             )
 
             val body = JSONObject().apply {
                 put("model", profile.model)
                 put("messages", messages)
                 put("tools", tools)
-                // 【可配】温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
+                // 温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
                 put("temperature", profile.temperature)
+                // 惩罚参数：只在非默认值时发送（部分中转站不认，无脑发会 400）
+                if (profile.presencePenalty != 0.0) put("presence_penalty", profile.presencePenalty)
+                if (profile.frequencyPenalty != 0.0) put("frequency_penalty", profile.frequencyPenalty)
                 put("stream", true)
             }
-            // 【P1-2】按模型能力强制关闭思考（与手机端 Agent.kt 一致）
-            if (settings.enableThinking) {
-                net.xinkong.furagent.shared.util.applyEnableThinking(body, profile.baseUrl)
+            // 【P1-2】按模型能力强制关闭/开启思考（与手机端 Agent.kt 一致）
+            if (settings.thinkingLevel != ThinkingLevel.OFF) {
+                applyEnableThinking(body, profile, settings.thinkingLevel)
             } else {
                 applyDisableThinking(body, profile)
             }
@@ -239,9 +232,8 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             } catch (e: Exception) {
                 DesktopLogger.error("Agent", "网络请求失败（已重试）：${e.javaClass.simpleName}: ${e.message}")
                 onThinking("")
-                val err = DesktopMessage(role = "assistant", content = "网络请求失败：${e.message}")
-                current = current + err
-                onUpdate(current)
+                // 不走 onUpdate，避免占 AI 聊天气泡
+                onError("网络请求失败 · ${e.message}")
                 return@withContext current
             }
 
@@ -254,9 +246,12 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                 }
                 DesktopLogger.error("Agent", "API 错误 ${response.code}：${errStr.take(200)}")
                 onThinking("")
-                val err = DesktopMessage(role = "assistant", content = "API 错误 ${response.code}：${errStr.take(300)}")
-                current = current + err
-                onUpdate(current)
+                // 简短文案：`HTTP 429 · 用量配额已用尽`
+                // 不走 onUpdate，避免占 AI 聊天气泡
+                onError(
+                    net.xinkong.furagent.shared.util.ApiErrorInfo
+                        .format(response.code, errStr)
+                )
                 return@withContext current
             }
 
@@ -265,22 +260,40 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             var toolCalls: MutableMap<Int, ToolCallAccumulator> = mutableMapOf()
 
             try {
-                response.body.source().use { source ->
-                    toolCalls = parseSseStream(
-                        readLine = { source.readUtf8Line() },
-                        onContent = { content ->
-                            contentBuilder.append(content)
-                            onStream(content)
-                        },
-                        onReasoning = { r ->
-                            reasoningBuilder.append(r)
-                            onReasoning(r)
-                        },
-                        onParseError = { cls, data ->
-                            DesktopLogger.warn("Agent", "SSE 单行 JSON 解析失败：$cls，行：${data.take(120)}")
+                // 【中断修复】流式读取放到可取消包装里：
+                // readUtf8Line() 是阻塞读，协程取消不会中断它。
+                // 取消时主动 response.close()，让阻塞读抛异常退出。
+                withContext(Dispatchers.IO) {
+                    val job = currentCoroutineContext()[Job]
+                    val handle = job?.invokeOnCompletion { cause ->
+                        if (cause is CancellationException) {
+                            try { response.close() } catch (_: Exception) { }
                         }
-                    )
+                    }
+                    try {
+                        response.body.source().use { source ->
+                            toolCalls = parseSseStream(
+                                readLine = { source.readUtf8Line() },
+                                onContent = { content ->
+                                    contentBuilder.append(content)
+                                    onStream(content)
+                                },
+                                onReasoning = { r ->
+                                    reasoningBuilder.append(r)
+                                    onReasoning(r)
+                                },
+                                onParseError = { cls, data ->
+                                    DesktopLogger.warn("Agent", "SSE 单行 JSON 解析失败：$cls，行：${data.take(120)}")
+                                }
+                            )
+                        }
+                    } finally {
+                        handle?.dispose()
+                    }
                 }
+            } catch (e: CancellationException) {
+                // 用户取消：向上传播，不当作错误处理
+                throw e
             } catch (e: Exception) {
                 DesktopLogger.error("Agent", "SSE 流式解析失败：${e.javaClass.simpleName}: ${e.message}")
                 onThinking("")
@@ -307,10 +320,24 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
 
             if (contentStr.isNotBlank()) {
                 current = current + DesktopMessage(
-                    role = "assistant", content = contentStr, type = "text",
-                    reasoning = reasoningBuilder.toString()
+                    role = "assistant", content = contentStr, type = "text"
                 )
                 onUpdate(current)
+                onStreamCommit()
+            }
+
+            // 本轮 reasoning 作为独立消息落库（先于工具调用）。
+            // 这样历史会话里能看到「思考过程 → 工具调用 → 思考过程 → ...」的完整过程。
+            if (reasoningBuilder.isNotEmpty()) {
+                current = current + DesktopMessage(
+                    role = "assistant", content = reasoningBuilder.toString(), type = "reasoning"
+                )
+                onUpdate(current)
+                // 【清空实时缓冲】本轮思考已落库成独立 reasoning 消息，
+                // 必须把运行时缓冲一并清掉。之前只有“无工具调用 + 有正文”才走
+                // onStreamCommit，所以“只有思考 + 工具调用”的轮次缓冲从不清：
+                // 最后一条工作过程会把旧思考一直悬着，越积越长，
+                // 既与已保存的消息重复，又看不到最新的思考。
                 onStreamCommit()
             }
 
@@ -344,17 +371,42 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             val hasMetaTool = sortedCalls.any { it.second.name == "tool_search" || it.second.name == "tool_load" }
 
             // 先按顺序把 tool_call 占位消息推给 UI（保持展示顺序）
+            // 【并行可见性】并行批次给同批调用写同一个 parallelGroup，
+            // UI 据此把同批条目収进「并行 N」分组，用户能看出这几个是一起跑的。
+            val parallelTag = if (!hasMetaTool && sortedCalls.size > 1) {
+                "pg_${System.currentTimeMillis()}_$loopIndex"
+            } else ""
             sortedCalls.forEach { (idx, acc) ->
                 val callId = callIds[idx] ?: "call_${loopIndex}_$idx"
                 current = current + DesktopMessage(
                     role = "tool", content = "${friendlyName(acc.name)}\n${prettyJson(acc.arguments.toString())}",
-                    type = "tool_call", toolCallId = callId
+                    type = "tool_call", toolCallId = callId, parallelGroup = parallelTag
                 )
             }
             onUpdate(current)
 
             // 执行（并行或串行），结果按 idx 收集
             val results = LinkedHashMap<Int, Pair<ToolResult, Long>>()
+            // 【工作过程实时化】
+            // 原来所有工具跑完才把结果一次性追加进历史、一次性 onUpdate，
+            // 所以磨刀那一段时间 UI 完全不动；等它跑完又“刷”地一下全出来。
+            // 现在每个工具一结束就立即往历史里追一条并刷 UI。
+            val uiLock = Any()
+            fun reportToolResult(idx: Int, r: ToolResult, durationMs: Long) {
+                val callId = callIds[idx] ?: "call_${loopIndex}_$idx"
+                val snap: List<DesktopMessage>
+                synchronized(uiLock) {
+                    results[idx] = r to durationMs
+                    current = current + DesktopMessage(
+                        role = "tool", content = r.output,
+                        type = "tool_result", toolCallId = callId,
+                        durationMs = durationMs, parallelGroup = parallelTag
+                    )
+                    snap = current
+                }
+                onUpdate(snap)
+            }
+
             if (hasMetaTool || sortedCalls.size <= 1) {
                 sortedCalls.forEach { (idx, acc) ->
                     // 【中断修复】每个工具执行前检查取消
@@ -364,7 +416,7 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                     DesktopLogger.info("Agent", "调用工具（串行）：${acc.name}")
                     val startMs = System.currentTimeMillis()
                     val r = runOneTool(acc.name, argsJson, settings, loadedToolNames)
-                    results[idx] = r to (System.currentTimeMillis() - startMs)
+                    reportToolResult(idx, r, System.currentTimeMillis() - startMs)
                 }
             } else {
                 onThinking("正在并行执行 ${sortedCalls.size} 个工具…")
@@ -378,6 +430,13 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                 val executed = supervisorScope {
                     sortedCalls.map { (idx, acc) ->
                         async {
+                            // 【中断修复】并行分支也要检查取消。
+                            // 之前只在串行路径和收尾阶段检查，并行时用户点停止后
+                            // 所有分支仍会全部跑完（工具副作用已发生）。
+                            currentCoroutineContext().ensureActive()
+                            // 【实时阶段】并行时也告诉 UI 现在跑哪个工具，
+                            // 否则并行跑一大堆工具时界面一直停在“并行执行 N 个工具”。
+                            onThinking("正在执行工具：${friendlyName(acc.name)}")
                             val startMs = System.currentTimeMillis()
                             val r = try {
                                 runOneTool(acc.name, acc.arguments.toString(), settings, loadedToolNames)
@@ -390,6 +449,8 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                                 )
                                 ToolResult.fail("执行异常：${t.javaClass.simpleName}: ${t.message}")
                             }
+                            // 【实时】这个工具一结束就刷 UI，不等其他并行工具
+                            reportToolResult(idx, r, System.currentTimeMillis() - startMs)
                             Triple(idx, r, System.currentTimeMillis() - startMs)
                         }
                     }.awaitAll()
@@ -403,14 +464,9 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                 // 否则用户已点停止，工具结果仍会被推给 UI（“中断像安慰人”的元凶之一）。
                 currentCoroutineContext().ensureActive()
                 val callId = callIds[idx] ?: "call_${loopIndex}_$idx"
-                val (result, durationMs) = results[idx] ?: (ToolResult.fail("工具未执行") to 0L)
+                val result = results[idx]?.first ?: ToolResult.fail("工具未执行")
 
-                current = current + DesktopMessage(
-                    role = "tool", content = result.output,
-                    type = "tool_result", toolCallId = callId,
-                    durationMs = durationMs
-                )
-                onUpdate(current)
+                // tool_result 已在 reportToolResult 里追加并刷过 UI，这里只补模型侧消息
 
                 // 工具返回原样送给模型
                 messages.put(JSONObject().apply {
@@ -493,9 +549,7 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         current
     }
 
-    // ============================================================
-    // 【P0】构建分层 tools 数组
-    // ============================================================
+    // 构建分层 tools 数组
 
     /**
      * 核心工具 + 已加载工具 + 元工具（DesktopTools 侧）
@@ -516,12 +570,22 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         DesktopTools.getToolListWithLoaded(loadedNames).forEach { t ->
             if (t.name in disabled) return@forEach
             if (!supportsVision && t.name in VISION_TOOLS) return@forEach
+            // 单个工具的 schema 坏了只跳过它，不能炸掉整个对话
+            val params = try {
+                JSONObject(t.paramsSchema)
+            } catch (e: Exception) {
+                DesktopLogger.warn(
+                    "Agent",
+                    "工具 ${t.name} paramsSchema 解析失败，本轮已跳过：${e.message}"
+                )
+                return@forEach
+            }
             arr.put(JSONObject().apply {
                 put("type", "function")
                 put("function", JSONObject().apply {
                     put("name", t.name)
                     put("description", t.description)
-                    put("parameters", JSONObject(t.paramsSchema))
+                    put("parameters", params)
                 })
             })
         }
@@ -530,12 +594,21 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         PhoneTools.TOOLS.forEach { t ->
             if (t.name in disabled) return@forEach
             if (t.name !in loadedNames) return@forEach
+            val params = try {
+                JSONObject(t.paramsSchema)
+            } catch (e: Exception) {
+                DesktopLogger.warn(
+                    "Agent",
+                    "工具 ${t.name} paramsSchema 解析失败，本轮已跳过：${e.message}"
+                )
+                return@forEach
+            }
             arr.put(JSONObject().apply {
                 put("type", "function")
                 put("function", JSONObject().apply {
                     put("name", t.name)
                     put("description", t.description)
-                    put("parameters", JSONObject(t.paramsSchema))
+                    put("parameters", params)
                 })
             })
         }
@@ -543,15 +616,19 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         return arr
     }
 
-    // ============================================================
     // 历史截断 / 重建
-    // ============================================================
 
-    private fun truncateHistory(history: List<DesktopMessage>, maxTurns: Int): List<DesktopMessage> {
+    private fun truncateHistory(
+        history: List<DesktopMessage>,
+        maxTurns: Int,
+        budgetKTokens: Int
+    ): List<DesktopMessage> {
         if (history.isEmpty()) return history
         if (maxTurns <= 0) return history
 
-        val minKeep = minOf(MIN_KEEP_MESSAGES, maxTurns * 2)
+        // 原为 minOf，方向反了：maxTurns 调小时 minKeep 反而变小，
+        // 与“至少保留 MIN_KEEP_MESSAGES 条”的意图相反。改为 maxOf。
+        val minKeep = maxOf(MIN_KEEP_MESSAGES, maxTurns * 2)
         val startIdx = computeTruncateStart(
             history = history,
             maxTurns = maxTurns,
@@ -559,8 +636,43 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             roleOf = { it.role },
             typeOf = { it.type }
         )
-        if (startIdx <= 0) return history
-        return history.subList(startIdx, history.size)
+        // 【token 预算二次裁剪】见 trimByTokenBudget
+        val byTurns = if (startIdx <= 0) history else history.subList(startIdx, history.size)
+        return trimByTokenBudget(byTurns, budgetKTokens)
+    }
+
+
+    /** 单条消息的 token 粗估（正文 + 图片）。 */
+    private fun estimateMessageTokens(msg: DesktopMessage): Int =
+        TokenEstimator.estimate(msg.content) +
+            msg.imagePaths.size * TokenEstimator.PER_IMAGE_TOKENS
+
+    /**
+     * 【token 预算二次裁剪】按轮次截断之后可能仍然巨大：
+     * 一轮里读十个大文件，光工具输出就能吃掉几万 token，maxTurns 完全拦不住。
+     * 这里再按 token 预算从最旧的「工具过程」开始丢，人类消息与助手文字回复一律保留。
+     */
+    private fun trimByTokenBudget(
+        history: List<DesktopMessage>,
+        budgetKTokens: Int
+    ): List<DesktopMessage> {
+        val budget = budgetKTokens * 1000
+        if (budget <= 0) return history
+        return trimToolProcessByBudget(
+            history = history,
+            budgetTokens = budget,
+            entryTokens = { estimateMessageTokens(it) },
+            isToolEntry = {
+                it.type == "tool_call" || it.type == "tool_result" || it.type == "system_note"
+            },
+            makeElidedNote = { n ->
+                DesktopMessage(
+                    role = "assistant",
+                    content = "（此处省略 $n 条工具调用记录，为节省上下文未逐条保留）",
+                    type = "system_note"
+                )
+            }
+        ).kept
     }
 
     private fun buildHistoryMessages(
@@ -599,12 +711,23 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                         })
                     })
 
-                    val hasResult = i + 1 < history.size && history[i + 1].type == "tool_result"
-                    if (hasResult) {
-                        // 【去掉 degradeToolResult】原样发送工具返回。
-                        // 大结果已经在 CommonTools.maybeSpill 里落盘，
-                        // 这里再砍一遍中间段会让模型"失忆"，得不偿失。
-                        val resultMsg = history[i + 1]
+                    // 【关键修复】按 toolCallId 配对，不能只看位置相邻。
+                    // 并行跑一批工具时，历史里是「A的call, B的call, C的call,
+                    // B的result, A的result, C的result」这种错开的顺序。
+                    // 旧逻辑只看下一条是不是 tool_result，于是 A 被判成
+                    // “未记录返回结果”，模型以为工具失败 → 重跑一遍（重复读
+                    // 同一个文件、重复跑同一个命令），又慢又浪费钱。
+                    val resultMsg = history.firstOrNull {
+                        it.type == "tool_result" && it.toolCallId.isNotBlank() &&
+                                it.toolCallId == callId
+                    } ?: run {
+                        // 兼容旧数据（没存 toolCallId）：退回位置相邻判断
+                        val pos = history.indexOf(msg) + 1
+                        history.getOrNull(pos)
+                            ?.takeIf { it.type == "tool_result" && it.toolCallId.isBlank() }
+                    }
+
+                    if (resultMsg != null) {
                         messages.put(JSONObject().apply {
                             put("role", "tool")
                             put("tool_call_id", callId)
@@ -623,9 +746,18 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                 "tool_result" -> i += 1
                 "system_note" -> i += 1
                 else -> {
-                    if ((msg.content.isNotBlank() || msg.imagePaths.isNotEmpty()) &&
-                        (msg.role == "user" || msg.role == "assistant")
-                    ) messages.put(buildMessageObject(msg, settings, supportsVision))
+                    val hasBody = msg.content.isNotBlank() || msg.imagePaths.isNotEmpty()
+                    if (hasBody && (msg.role == "user" || msg.role == "assistant")) {
+                        messages.put(buildMessageObject(msg, settings, supportsVision))
+                    } else if (hasBody && msg.role == "system") {
+                        // 注入给模型的系统通知（如「子代理完成」回流）此前被这里丢弃，
+                        // 模型永远看不到，只能自己调 sub_session 去查。
+                        // 请求中不允许中途插入 system 角色，故以 user 身份附带并标明来源。
+                        messages.put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", "【系统通知】\n" + msg.content)
+                        })
+                    }
                     i += 1
                 }
             }
@@ -742,7 +874,7 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
     }
 
     /**
-     * 【P0】displayName → name 反查。
+     * displayName → name 反查。
      * 加 tool_search / tool_load 两个元工具映射。
      */
     private fun resolveToolName(displayOrName: String): String {
@@ -772,13 +904,23 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         request: Request,
         onThinking: (String) -> Unit
     ): Response {
-        val maxRetries = 3
+        val maxRetries = API_MAX_RETRIES
         var lastError: Exception? = null
         for (attempt in 0..maxRetries) {
             try {
-                val resp = httpClient.newCall(request).execute()
+                val resp = executeCancellable(httpClient.newCall(request))
                 val code = resp.code
-                val retryable = code == 429 || code == 500 || code == 502 || code == 503 || code == 504
+                // 429 要区分「限速」和「配额用尽」：
+                //   限速 → 重试有意义
+                //   配额用尽 → 重试纯浪费（要等重置或充值）
+                val retryable = if (code == 429) {
+                    val body = try {
+                        resp.peekBody(4096).string()
+                    } catch (_: Exception) { "" }
+                    net.xinkong.furagent.shared.util.ApiErrorInfo.explain(429, body).retryable
+                } else {
+                    code == 500 || code == 502 || code == 503 || code == 504
+                }
                 if (!retryable || attempt == maxRetries) return resp
                 // 可重试：关掉响应体，退避后重试
                 resp.close()
@@ -786,8 +928,15 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                 val jitter = (baseMs * 0.3 * (Math.random() * 2 - 1)).toLong()
                 val waitMs = (baseMs + jitter).coerceAtLeast(200L)
                 DesktopLogger.warn("Agent", "API $code，第 ${attempt + 1} 次重试，等待 ${waitMs}ms")
-                onThinking("服务端繁忙（$code），${waitMs / 1000}s 后重试…")
+                // 【友好提示】用共享错误解释器，与安卓端文案一致
+                onThinking(
+                    net.xinkong.furagent.shared.util.ApiErrorInfo
+                        .retryHint(code, attempt + 1, maxRetries + 1, waitMs)
+                )
                 delay(waitMs.milliseconds)
+            } catch (e: CancellationException) {
+                // 用户取消：直接向上传播，不重试
+                throw e
             } catch (e: Exception) {
                 lastError = e
                 if (attempt == maxRetries) throw e
@@ -803,6 +952,26 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
     }
 
     /**
+     * 可取消的 OkHttp 同步调用。
+     *
+     * OkHttp 的 execute() 是阻塞调用，不响应协程取消。这里用
+     * suspendCancellableCoroutine 包装，协程取消时主动 call.cancel()，
+     * 立即中断阻塞，避免「用户点了停止但请求还在跑」。
+     */
+    private suspend fun executeCancellable(call: okhttp3.Call): Response =
+        withContext(Dispatchers.IO) {
+            suspendCancellableCoroutine { cont ->
+                cont.invokeOnCancellation { call.cancel() }
+                try {
+                    val resp = call.execute()
+                    if (cont.isActive) cont.resume(resp) else resp.close()
+                } catch (e: Exception) {
+                    if (cont.isActive) cont.resumeWithException(e)
+                }
+            }
+        }
+
+    /**
      * 【P1-3】执行单个工具（含元工具拦截）。
      * 抽出来供串行 / 并行两条路径复用。
      */
@@ -813,7 +982,7 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
         loadedToolNames: MutableSet<String>
     ): ToolResult {
         return when (name) {
-            // 【P0】元工具拦截：本地处理，不进 DesktopTools
+            // 元工具拦截：本地处理，不进 DesktopTools
             "tool_search" -> {
                 val args = try { JSONObject(argsJson) } catch (_: Exception) { JSONObject() }
                 val query = args.optString("query", "").trim()
@@ -856,6 +1025,10 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
     private suspend fun executeTool(
         name: String, argsJson: String, settings: DesktopSettings
     ): ToolResult {
+        // 【中断修复】工具执行前再确认一次未取消。
+        // 调用方（runOneTool）已经检查过，但元工具分支可能耗时（tool_search 扫目录），
+        // 这里再兵一道，避免“用户已点停止但工具仍被执行”。
+        currentCoroutineContext().ensureActive()
         if (name in settings.disabledTools) {
             DesktopLogger.warn("Agent", "拒绝调用已禁用工具：$name")
             return ToolResult.fail("工具 $name 已被禁用")
@@ -866,6 +1039,9 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
             } else {
                 DesktopTools.execute(name, argsJson)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消信号必须原样上抛，不能当成工具失败
+            throw e
         } catch (e: Exception) {
             DesktopLogger.error(
                 "Agent",
@@ -873,12 +1049,22 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
                         e.stackTrace.take(5).joinToString("\n") { "  at $it" }
             )
             ToolResult.fail("执行异常：${e.javaClass.simpleName}: ${e.message}")
+        } catch (e: LinkageError) {
+            // 类加载失败（NoClassDefFoundError 等 Error，catch Exception 接不住）：
+            // 典型场景是运行中触发增量构建、build/classes 输出目录被重写的窗口期。
+            // 转成工具失败回传 AI 可重试，而不是穿透协程把进程打崩
+            DesktopLogger.error(
+                "Agent",
+                "工具 $name 类加载失败：${e.javaClass.simpleName}: ${e.message}\n" +
+                        e.stackTrace.take(5).joinToString("\n") { "  at $it" }
+            )
+            ToolResult.fail("工具类加载失败：${e.message}（可能正在重新构建，稍后重试即可）")
         }
     }
 
-    private suspend fun buildSystemPrompt(settings: DesktopSettings): String {
-        // 【缓存关键】时间戳只到天
-        val now = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date())
+    private suspend fun buildSystemPrompt(settings: DesktopSettings, sessionPrompt: String = ""): String {
+        // 时间戳只到天
+        val now = DateFormats.formatDate()
         val os = "${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})"
 
         val base = if (settings.systemPromptMode == "replace" && settings.systemPromptFull.isNotBlank()) {
@@ -893,15 +1079,10 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
 
         var prompt = base
 
+        // 记忆留在 system（遵循度敏感）；环境信息已挪到首条 user 消息，
+        // 见 chat() 里的 envSection 处理，此处不再拼接。
         val mem = MemoryStore.toPromptString()
         if (mem.isNotBlank()) prompt = "$prompt\n\n$mem"
-
-        try {
-            val env = EnvDetector.buildPromptSection()
-            if (env.isNotBlank()) prompt = "$prompt\n\n$env"
-        } catch (e: Exception) {
-            DesktopLogger.warn("Agent", "环境检测注入失败：${e.message}")
-        }
 
         if (settings.disabledTools.isNotEmpty()) {
             prompt += "\n\n以下工具已被用户禁用，禁止调用：${settings.disabledTools.joinToString(", ")}"
@@ -909,6 +1090,11 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
 
         if (settings.systemPromptMode != "replace" && settings.systemPromptAddon.isNotBlank()) {
             prompt += "\n\n【用户附加指令】\n" + settings.systemPromptAddon
+        }
+
+        // 会话专用提示词：只作用于当前会话，追加在全局指令之后
+        if (sessionPrompt.isNotBlank()) {
+            prompt += "\n\n【本会话专用指令】\n" + sessionPrompt
         }
         return prompt
     }
@@ -930,6 +1116,19 @@ FurAgent 自己管理的目录（在 ~/.furagent/ 下）：
     ) {
         if (!profile.supportsDisableThinking) return
         net.xinkong.furagent.shared.util.applyDisableThinking(body, profile.baseUrl)
+    }
+
+    /**
+     * 【与 applyDisableThinking 对称】按模型能力主动开启思考。
+     * supportsThinking=false 的模型（如 DeepSeek-V3 非思考版）不发参数，避免 API 400。
+     */
+    internal fun applyEnableThinking(
+        body: JSONObject,
+        profile: net.xinkong.furagent.desktop.data.DesktopModelProfile,
+        level: ThinkingLevel
+    ) {
+        if (!profile.supportsThinking) return
+        net.xinkong.furagent.shared.util.applyEnableThinking(body, profile.baseUrl, level)
     }
 
     private fun prettyJson(raw: String): String = try {

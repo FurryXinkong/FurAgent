@@ -92,6 +92,8 @@ class FloatingService : Service() {
     // 状态气泡
     private var bubbleView: LinearLayout? = null
     private var bubbleStateText: TextView? = null
+    /** 气泡第二行：AI 输出预览（能看到 AI 说了什么）。 */
+    private var bubblePreviewText: TextView? = null
     private var bubbleParams: WindowManager.LayoutParams? = null
 
     /** 上一次 isRunning 状态，用于检测"刚刚结束" */
@@ -198,7 +200,7 @@ class FloatingService : Service() {
             layoutParams = ViewGroup.LayoutParams(size, size)
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(0xFF3B82F6.toInt())
+                setColor(0xFF6E7CFA.toInt())
                 setStroke(dp(2), 0x66FFFFFF)
             }
             elevation = dp(8).toFloat()
@@ -283,30 +285,38 @@ class FloatingService : Service() {
         ball.visibility = if (ballVisible.value) View.VISIBLE else View.GONE
     }
 
-    // ============================================================
     // 状态气泡
-    // ============================================================
 
     private fun showBubble() {
         if (bubbleView != null) return
         try {
+            // 【改造】从单行改成两行：
+            //   第一行：状态标题（思考中 / 调用工具 / 生成中）
+            //   第二行：AI 输出预览（能看到 AI 说了什么）
+            // 之前只有一行且优先级是“工具名 > 流式 > 思考”，
+            // AI 说话时如果同时在调工具，就完全看不到 AI 说了什么。
             val container = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
+                orientation = LinearLayout.VERTICAL
                 setPadding(dp(12), dp(8), dp(6), dp(8))
                 background = GradientDrawable().apply {
                     cornerRadius = dp(16).toFloat()
                     // 半透明深色 + 蓝色描边
                     setColor(0xE0202225.toInt())
-                    setStroke(dp(1), 0x665A9BFF)
+                    setStroke(dp(1), 0x668B93FF)
                 }
                 elevation = dp(6).toFloat()
+            }
+
+            // 第一行：标题 + 停止按钮
+            val headerRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
             }
 
             val stateText = TextView(this).apply {
                 setTextColor(0xFFFFFFFF.toInt())
                 setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                maxLines = 2
+                maxLines = 1
                 ellipsize = TextUtils.TruncateAt.END
                 layoutParams = LinearLayout.LayoutParams(
                     0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f
@@ -322,8 +332,26 @@ class FloatingService : Service() {
                 setOnClickListener { stopAgent() }
             }
 
-            container.addView(stateText)
-            container.addView(stopButton)
+            headerRow.addView(stateText)
+            headerRow.addView(stopButton)
+
+            // 第二行：AI 输出预览（灰色小字，最多 3 行）
+            val previewText = TextView(this).apply {
+                setTextColor(0xFFB8C4D4.toInt())
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+                maxLines = 3
+                ellipsize = TextUtils.TruncateAt.END
+                setPadding(0, dp(4), dp(6), 0)
+                visibility = View.GONE
+                layoutParams = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT
+                )
+                setOnClickListener { openMainActivity() }
+            }
+
+            container.addView(headerRow)
+            container.addView(previewText)
 
             val params = WindowManager.LayoutParams(
                 dp(BUBBLE_WIDTH_DP),
@@ -341,11 +369,13 @@ class FloatingService : Service() {
             windowManager.addView(container, params)
             bubbleView = container
             bubbleStateText = stateText
+            bubblePreviewText = previewText
             bubbleParams = params
         } catch (e: Exception) {
             AgentLogger.log("ERR", "创建状态气泡失败：${e.message}")
             bubbleView = null
             bubbleStateText = null
+            bubblePreviewText = null
             bubbleParams = null
         }
     }
@@ -366,15 +396,19 @@ class FloatingService : Service() {
         val ballLeft = ballP.x
 
         // 优先放球的右侧，右侧空间不够放左侧，都不够则贴边
-        val x = when {
+        val newX = when {
             ballRight + gap + bubbleW <= screenW -> ballRight + gap
             ballLeft - gap - bubbleW >= 0 -> ballLeft - gap - bubbleW
             else -> (screenW - bubbleW - dp(4)).coerceAtLeast(0)
         }
-        val y = ballP.y.coerceIn(0, (screenH - dp(60)).coerceAtLeast(0))
+        val newY = ballP.y.coerceIn(0, (screenH - dp(60)).coerceAtLeast(0))
 
-        bParams.x = x
-        bParams.y = y
+        // 【优化】位置没变就不调 updateViewLayout（binder 调用），
+        // AI 流式输出时 snapshot 高频 emit，原先每次都跨进程刷布局纯浪费
+        if (bParams.x == newX && bParams.y == newY) return
+
+        bParams.x = newX
+        bParams.y = newY
         try {
             windowManager.updateViewLayout(bubble, bParams)
         } catch (_: Exception) { }
@@ -408,20 +442,42 @@ class FloatingService : Service() {
             updateBubblePosition()
         }
 
-        // 更新文字
-        val text = when {
-            snap.currentToolName.isNotBlank() -> "→ ${snap.currentToolName}"
-            snap.streaming.isNotBlank() ->
-                snap.streaming.takeLast(60).replace("\n", " ")
-            snap.thinking.isNotBlank() -> snap.thinking.take(60)
-            else -> "处理中…"
+        // 【改造】标题与预览分开：
+        //   标题：当前在干什么（思考中 / 调用工具 / 生成中）
+        //   预览：AI 实际输出的文字（优先展示，让用户能看到 AI 说了什么）
+        // 【信息增强】工具名 + 已跑多久，让用户知道"卡住了"还是"在跑"
+        val elapsedSec = if (snap.startedAt > 0)
+            (System.currentTimeMillis() - snap.startedAt) / 1000 else 0L
+        val elapsedText = if (elapsedSec > 0) " · ${elapsedSec}s" else ""
+        val header = when {
+            snap.currentToolName.isNotBlank() -> "→ ${snap.currentToolName}$elapsedText"
+            snap.streaming.isNotBlank() -> "生成中…$elapsedText"
+            snap.thinking.isNotBlank() -> snap.thinking.take(40)
+            else -> "处理中…$elapsedText"
         }
-        bubbleStateText?.text = text
+        if (bubbleStateText?.text?.toString() != header) {
+            bubbleStateText?.text = header
+        }
+
+        // 预览：优先流式输出，其次思考内容。
+        // 保留换行（不压成一行）：少量多行比一长串更好读
+        val preview = when {
+            snap.streaming.isNotBlank() -> snap.streaming.takeLast(300).trim()
+            snap.reasoning.isNotBlank() -> snap.reasoning.takeLast(300).trim()
+            else -> ""
+        }
+        val pv = bubblePreviewText
+        if (pv != null) {
+            if (preview.isBlank()) {
+                if (pv.visibility != View.GONE) pv.visibility = View.GONE
+            } else {
+                if (pv.visibility != View.VISIBLE) pv.visibility = View.VISIBLE
+                if (pv.text?.toString() != preview) pv.text = preview
+            }
+        }
     }
 
-    // ============================================================
     // 操作
-    // ============================================================
 
     private fun openMainActivity() {
         try {
@@ -447,9 +503,7 @@ class FloatingService : Service() {
         }
     }
 
-    // ============================================================
     // 通知
-    // ============================================================
 
     private fun createChannel() {
         try {

@@ -17,8 +17,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -40,16 +39,15 @@ import net.xinkong.furagent.desktop.data.DesktopSessionMeta
 import net.xinkong.furagent.desktop.ui.theme.Anim
 import net.xinkong.furagent.desktop.ui.theme.Radius
 
-// ============================================================
 // 页面枚举
-// ============================================================
-//
+
 // 顺序决定侧边栏导航显示顺序（MEMORY 到 LOGS 是主功能区，SETTINGS 固定底部）。
 // CHAT 是主界面，不在侧边栏展示，但保留枚举值作为路由标识。
 
 enum class AppPage(val label: String) {
     CHAT("聊天"),
     MEMORY("长期记忆"),
+    HISTORY("修改历史"),
     SCHEDULES("定时任务"),
     MCP("MCP"),
     SKILLS("自定义脚本"),
@@ -64,10 +62,8 @@ private val SIDEBAR_ANIM_SPEC = tween<androidx.compose.ui.unit.Dp>(Anim.SLOW_MS)
 /** 侧边栏项统一圆角 */
 private val ITEM_SHAPE = RoundedCornerShape(Radius.SM)
 
-// ============================================================
 // 侧边栏
-// ============================================================
-//
+
 // 【色板约定】
 //   SidebarBg()          —— 侧边栏整体底色（半透明，透出背景渐变）
 //   SidebarItemActive()  —— 选中项底色
@@ -76,7 +72,7 @@ private val ITEM_SHAPE = RoundedCornerShape(Radius.SM)
 //   TextPrimary()        —— 未选中项文字
 //   TextSecondary()      —— 未选中项图标
 //   CardColor()          —— 下拉菜单容器色
-//
+
 // 【圆角约定】
 //   所有侧边栏项统一 10dp，靠两侧 padding 14~12dp 留白，视觉对齐。
 
@@ -96,7 +92,9 @@ fun Sidebar(
     onExportSession: (String) -> Unit,
     onDuplicateSession: (String) -> Unit,
     onImportSession: () -> Unit,
-    onClearAllSessions: () -> Unit
+    onClearAllSessions: () -> Unit,
+    sortMode: Int = 0,
+    onSortModeChange: (Int) -> Unit = {}
 ) {
     val width by animateDpAsState(
         targetValue = if (expanded) 240.dp else 60.dp,
@@ -145,20 +143,20 @@ fun Sidebar(
 
         Spacer(Modifier.height(12.dp))
         NewChatButton(expanded = expanded, onClick = onNewChat)
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(10.dp))
 
         // ============ 主导航 ============
-        NavItem(Icons.Default.Psychology, AppPage.MEMORY, currentPage, expanded, onNavigate)
-        Spacer(Modifier.height(2.dp))
+        NavItem(Icons.Default.Memory, AppPage.MEMORY, currentPage, expanded, onNavigate)
+        Spacer(Modifier.height(1.dp))
         NavItem(Icons.Default.Schedule, AppPage.SCHEDULES, currentPage, expanded, onNavigate)
-        Spacer(Modifier.height(2.dp))
+        Spacer(Modifier.height(1.dp))
         NavItem(Icons.Default.Extension, AppPage.MCP, currentPage, expanded, onNavigate)
-        Spacer(Modifier.height(2.dp))
-        NavItem(Icons.Default.Code, AppPage.SKILLS, currentPage, expanded, onNavigate)
-        Spacer(Modifier.height(2.dp))
-        NavItem(Icons.Default.Devices, AppPage.STATUS, currentPage, expanded, onNavigate)
-        Spacer(Modifier.height(2.dp))
-        NavItem(Icons.Default.Terminal, AppPage.LOGS, currentPage, expanded, onNavigate)
+        Spacer(Modifier.height(1.dp))
+        NavItem(Icons.Default.Terminal, AppPage.SKILLS, currentPage, expanded, onNavigate)
+        Spacer(Modifier.height(1.dp))
+        NavItem(Icons.Default.Dashboard, AppPage.STATUS, currentPage, expanded, onNavigate)
+        Spacer(Modifier.height(1.dp))
+        NavItem(Icons.AutoMirrored.Filled.List, AppPage.LOGS, currentPage, expanded, onNavigate)
 
         // ============ 中间剩余空间：历史区 ============
         Column(
@@ -173,11 +171,13 @@ fun Sidebar(
                 modifier = Modifier.fillMaxSize()
             ) {
                 Column(Modifier.fillMaxSize()) {
-                    Spacer(Modifier.height(18.dp))
+                    Spacer(Modifier.height(12.dp))
                     HistorySectionHeader(
                         onNewChat = onNewChat,
                         onImportSession = onImportSession,
-                        onClearAllSessions = onClearAllSessions
+                        onClearAllSessions = onClearAllSessions,
+                        sortMode = sortMode,
+                        onSortModeChange = onSortModeChange
                     )
                     Spacer(Modifier.height(4.dp))
 
@@ -233,15 +233,15 @@ fun Sidebar(
     }
 }
 
-// ============================================================
 // 历史区标题 + 更多操作
-// ============================================================
 
 @Composable
 private fun HistorySectionHeader(
     onNewChat: () -> Unit,
     onImportSession: () -> Unit,
-    onClearAllSessions: () -> Unit
+    onClearAllSessions: () -> Unit,
+    sortMode: Int = 0,
+    onSortModeChange: (Int) -> Unit = {}
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
@@ -260,24 +260,26 @@ private fun HistorySectionHeader(
             modifier = Modifier.weight(1f)
         )
         Box {
-            Box(
-                Modifier
-                    .size(22.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(if (hovered) CardHoverColor() else Color.Transparent)
-                    .clickable(
-                        interactionSource = interaction,
-                        indication = null,
-                        onClick = { menuOpen = true }
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.Add,
-                    contentDescription = "更多操作",
-                    tint = TextSecondary(),
-                    modifier = Modifier.size(14.dp)
-                )
+            HoverTip("更多操作") {
+                Box(
+                    Modifier
+                        .size(26.dp)
+                        .clip(RoundedCornerShape(Radius.TINY))
+                        .background(if (hovered) CardHoverColor() else Color.Transparent)
+                        .clickable(
+                            interactionSource = interaction,
+                            indication = null,
+                            onClick = { menuOpen = true }
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.MoreVert,
+                        contentDescription = "更多操作",
+                        tint = TextSecondary(),
+                        modifier = Modifier.size(15.dp)
+                    )
+                }
             }
             DropdownMenu(
                 expanded = menuOpen,
@@ -292,7 +294,11 @@ private fun HistorySectionHeader(
                     text = { Text("导入会话 JSON…", fontSize = 12.sp, color = TextPrimary()) },
                     onClick = { menuOpen = false; onImportSession() }
                 )
-                // 【体验优化 B17】清空全部会话（带二次确认，由调用方负责弹窗）
+                val sortLabels = listOf("最新更新", "最旧优先", "名称 A-Z", "消息最多")
+                DropdownMenuItem(
+                    text = { Text("排序：${sortLabels[sortMode]}", fontSize = 12.sp, color = TextPrimary()) },
+                    onClick = { menuOpen = false; onSortModeChange((sortMode + 1) % 4) }
+                )
                 DropdownMenuItem(
                     text = { Text("清空全部会话…", fontSize = 12.sp, color = ErrorColor()) },
                     onClick = { menuOpen = false; onClearAllSessions() }
@@ -302,9 +308,7 @@ private fun HistorySectionHeader(
     }
 }
 
-// ============================================================
 // 新建对话按钮
-// ============================================================
 
 @Composable
 private fun NewChatButton(expanded: Boolean, onClick: () -> Unit) {
@@ -319,7 +323,7 @@ private fun NewChatButton(expanded: Boolean, onClick: () -> Unit) {
     // 【动画修复】原来 horizontal padding 直接用 if 切换、horizontalArrangement 也用
     // if 切换，两者都在布尔变化时"跳变"。同时 AnimatedVisibility 里的文字在展开，
     // 三者不同步 → 图标先跳、文字才跟上，视觉上乱跳。
-    //
+
     // 现在：Arrangement 固定 Start，用 animateDpAsState 平滑动画图标位置。
     // 展开：start = 14.dp（内容左侧留白）
     // 折叠：start = 21.dp（让图标在 60dp 宽 - 6dp*2 侧边留白 = 48dp 里居中：
@@ -372,9 +376,7 @@ private fun NewChatButton(expanded: Boolean, onClick: () -> Unit) {
     }
 }
 
-// ============================================================
 // 主导航项
-// ============================================================
 
 @Composable
 private fun NavItem(
@@ -424,16 +426,27 @@ private fun NavItem(
                 interactionSource = interaction,
                 indication = null
             ) { onNavigate(page) }
-            .padding(start = startPadding, end = 8.dp, top = 10.dp, bottom = 10.dp),
+            .padding(start = startPadding, end = 8.dp, top = 7.dp, bottom = 7.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.Start
     ) {
-        Icon(
-            icon,
-            contentDescription = page.label,
-            tint = iconTint,
-            modifier = Modifier.size(18.dp)
-        )
+        if (!expanded) {
+            HoverTip(page.label) {
+                Icon(
+                    icon,
+                    contentDescription = page.label,
+                    tint = iconTint,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+        } else {
+            Icon(
+                icon,
+                contentDescription = page.label,
+                tint = iconTint,
+                modifier = Modifier.size(18.dp)
+            )
+        }
         AnimatedVisibility(
             visible = expanded,
             enter = fadeIn(tween(Anim.SLOW_MS)) +
@@ -456,10 +469,8 @@ private fun NavItem(
     }
 }
 
-// ============================================================
 // 会话项
-// ============================================================
-//
+
 // 右键（PointerEventPass.Initial + consume）打开菜单，抢在 clickable 之前。
 
 @Composable
@@ -477,22 +488,13 @@ private fun SessionItem(
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
-    val bg by animateColorAsState(
-        targetValue = when {
-            selected -> SidebarItemActive()
-            hovered -> SidebarItemHover()
-            else -> Color.Transparent
-        },
-        animationSpec = tween(Anim.QUICK_MS),
-        label = "sessionBg"
-    )
-    val fg by animateColorAsState(
-        targetValue = if (selected) AccentColor() else TextPrimary(),
-        animationSpec = tween(Anim.QUICK_MS),
-        label = "sessionFg"
-    )
-
-    val showMenuButton = hovered || selected || menuOpen
+    // 【动画清理】选中/悬停颜色直接切换，不再做渐变动画
+    val bg = when {
+        selected -> SidebarItemActive()
+        hovered -> SidebarItemHover()
+        else -> Color.Transparent
+    }
+    val fg = if (selected) AccentColor() else TextPrimary()
 
     Box {
         Row(
@@ -548,25 +550,24 @@ private fun SessionItem(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
-            AnimatedVisibility(
-                visible = showMenuButton,
-                enter = fadeIn(tween(Anim.QUICK_MS)) + expandHorizontally(tween(Anim.NORMAL_MS)),
-                exit = fadeOut(tween(Anim.QUICK_MS)) + shrinkHorizontally(tween(Anim.QUICK_MS))
+            Spacer(Modifier.width(4.dp))
+            // 【hover 移动修复】菜单按钮常驻占位：标题宽度恒定，鼠标悬停不再
+            // 插入/移除按钮导致整行文字重排位移。悬停只改变按钮存在感（纯视觉）。
+            Box(
+                Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(Radius.TINY))
+                    .clickable { menuOpen = true },
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    Modifier
-                        .size(22.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .clickable { menuOpen = true },
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Default.MoreVert,
-                        null,
-                        tint = TextSecondary(),
-                        modifier = Modifier.size(14.dp)
-                    )
-                }
+                Icon(
+                    Icons.Default.MoreVert,
+                    null,
+                    tint = TextSecondary().copy(
+                        alpha = if (hovered || selected || menuOpen) 1f else 0.4f
+                    ),
+                    modifier = Modifier.size(14.dp)
+                )
             }
         }
         DropdownMenu(

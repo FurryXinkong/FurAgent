@@ -1,41 +1,43 @@
-@file:OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@file:OptIn(
+    ExperimentalFoundationApi::class,
+    ExperimentalLayoutApi::class,
+    androidx.compose.ui.ExperimentalComposeUiApi::class
+)
 
 package net.xinkong.furagent.desktop.ui
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.PointerEventType
-import androidx.compose.ui.input.pointer.isSecondaryPressed
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
@@ -52,20 +54,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.DesktopMessage
+import net.xinkong.furagent.desktop.data.DesktopSessionStore
 import net.xinkong.furagent.desktop.system.DesktopSpeechHelper
+import net.xinkong.furagent.desktop.system.NativeFilePicker
+import net.xinkong.furagent.desktop.tools.DesktopTools.SubSessionProgress
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Shadow
-import net.xinkong.furagent.shared.util.formatDuration
-import net.xinkong.furagent.shared.util.ChatListItem
-import net.xinkong.furagent.shared.util.buildChatItems
+import net.xinkong.furagent.shared.tools.BackupHelper
+import net.xinkong.furagent.shared.ThinkingLevel
+import net.xinkong.furagent.shared.tools.TrashHelper
+import net.xinkong.furagent.shared.util.*
 import java.awt.KeyboardFocusManager
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
-import javax.swing.JFileChooser
-import javax.swing.filechooser.FileNameExtensionFilter
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -75,9 +77,9 @@ data class PendingAttachment(
     val isImage: Boolean
 )
 
-private val IMAGE_EXTS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
-private val UNSUPPORTED_IMAGE_EXTS = setOf("heic", "heif", "avif", "tiff", "tif")
-// 【2026-10-15 去重】图片扩展名正则已抽到 shared ImagePathExtractor，这里不再使用
+internal val IMAGE_EXTS = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
+internal val UNSUPPORTED_IMAGE_EXTS = setOf("heic", "heif", "avif", "tiff", "tif")
+// 图片扩展名正则已抽到 shared ImagePathExtractor，这里不再使用
 
 object ChatFocusTracker {
     @Volatile var chatPageVisible: Boolean = false
@@ -86,38 +88,32 @@ object ChatFocusTracker {
 /**
  * 送给 TTS 前清理文本。
  */
-internal fun cleanForSpeech(text: String): String {
-    var t = text
-    t = t.replace(Regex("```[\\s\\S]*?```"), "")
-    t = t.replace(Regex("`([^`\n]+)`"), "$1")
-    t = t.replace(Regex("!\\[[^\\]]*]\\([^)]+\\)"), "")
-    t = t.replace(Regex("\\[([^\\]]+)]\\([^)]+\\)"), "$1")
-    t = t.replace(Regex("\\*\\*([^*]+)\\*\\*"), "$1")
-    t = t.replace(Regex("(?<!\\*)\\*([^*]+)\\*(?!\\*)"), "$1")
-    t = t.replace(Regex("__([^_]+)__"), "$1")
-    t = t.replace(Regex("_([^_]+)_"), "$1")
-    t = t.replace(Regex("(?m)^\\s*#{1,6}\\s*"), "")
-    t = t.replace(Regex("(?m)^\\s*[-*+]\\s+"), "")
-    t = t.replace(Regex("(?m)^\\s*\\d+\\.\\s+"), "")
-    t = t.replace(Regex("https?://\\S+"), "")
-    t = t.replace(Regex("(?:[A-Za-z]:[\\\\/]|/)(?:[^\\s/]+/)*[^\\s/]*"), "")
-    t = t.replace(Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF]+"), "")
-    t = t.replace(Regex("[ \\t]+"), " ")
-    t = t.replace(Regex("\\n{2,}"), "\n")
-    t = t.trim()
-    return if (t.length > 800) t.take(800) else t
-}
 
-// 【2026-10-15 去重】实现已抽到 shared ImagePathExtractor
-private fun extractImagePathsFromContent(content: String): List<String> =
-    net.xinkong.furagent.shared.util.ImagePathExtractor.extract(content)
+private val RE_CODE_BLOCK = Regex("```[\\s\\S]*?```")
+private val RE_INLINE_CODE = Regex("(`[^`\n]+`)")
+private val RE_IMAGE = Regex("!\\[[^\\]]*]\\([^)]+\\)")
+private val RE_LINK = Regex("\\[([^\\]]+)]\\([^)]+\\)")
+private val RE_BOLD = Regex("""\*\*([^*]+)\*\*""")
+private val RE_ITALIC = Regex("""(?!\*)\*([^*]+)\*(?!\*)""")
+private val RE_BOLD_UL = Regex("__([^_]+)__")
+private val RE_ITALIC_UL = Regex("_([^_]+)_")
+private val RE_HEADING = Regex("(?m)^\\s*#{1,6}\\s*")
+private val RE_UL_LIST = Regex("(?m)^\\s*[-*+]\\s+")
+private val RE_OL_LIST = Regex("""(?m)^\s*\d+\.\s+""")
+private val RE_URL = Regex("https?://\\S+")
+private val RE_PATH = Regex("(?:[A-Za-z]:[\\\\/]|/)(?:[^\\s/]+/)*[^\\s/]*")
+private val RE_EMOJI = Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF]+")
+private val RE_WHITESPACE = Regex("[ \\t]+")
+private val RE_MULTI_NL = Regex("\\n{2,}")
 
-private fun needsCollapse(content: String): Boolean {
-    return content.isNotBlank() && (content.count { it == '\n' } >= 3 || content.length > 200)
-}
+internal fun cleanForSpeech(text: String): String =
+    // 【P1-抽 shared】完整 15 正则清洗已移入 shared/util/SpeechCleaner
+    net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
 
-// 【冗余清理 Batch 10】ChatListItem / buildChatItems 抽到 shared/util/ChatListItem.kt。
-// Android 端（ChatUI.kt）有同样的结构，已一并合并。
+
+internal fun needsCollapse(content: String): Boolean =
+    shouldCollapseContent(content, maxLines = 3, maxChars = 200)
+
 
 @Composable
 fun ChatPage(
@@ -126,15 +122,17 @@ fun ChatPage(
     streamingText: String,
     thinking: String,
     reasoning: String,
+    /** 【错误状态】API 错误（如「HTTP 429 · 用量配额已用尽」），渲染成状态小气泡。 */
+    errorText: String = "",
     isLoading: Boolean,
     inputText: String,
     hasApiKey: Boolean,
     modelName: String,
-    enableThinking: Boolean = false,
+    thinkingLevel: ThinkingLevel = ThinkingLevel.DEFAULT,
     supportsThinking: Boolean = true,
     chatProfiles: List<Pair<String, String>> = emptyList(),
     currentProfileId: String = "",
-    onToggleThinking: (Boolean) -> Unit = {},
+    onThinkingLevelChange: (ThinkingLevel) -> Unit = {},
     onSelectProfile: (String) -> Unit = {},
     scrollToMessageId: String? = null,
     onScrollToMessageHandled: () -> Unit = {},
@@ -142,15 +140,19 @@ fun ChatPage(
     onSend: (List<PendingAttachment>) -> Unit,
     onStop: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit = {},
     onCopyMessage: (DesktopMessage) -> Unit = {},
     onRegenerateMessage: (DesktopMessage) -> Unit = {},
     onEditAndRegenerate: (DesktopMessage) -> Unit = {},
     onReExecuteTool: (DesktopMessage) -> Unit = {},
-    onDeleteMessage: (DesktopMessage) -> Unit = {}
+    onDeleteMessage: (DesktopMessage) -> Unit = {},
+    onRetryError: (() -> Unit)? = null
 ) {
     var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
     var bottomReservedPx by remember { mutableIntStateOf(140) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
+    // 【子代理只读】子会话（sub_ 开头）是 AI 派发的任务上下文，用户只能看不能发
+    val isSubSession = sessionId?.startsWith("sub_") == true
 
     val speechState by DesktopSpeechHelper.state.collectAsState()
 
@@ -166,8 +168,11 @@ fun ChatPage(
             streamingText = streamingText,
             thinking = thinking,
             reasoning = reasoning,
+            isLoading = isLoading,
+            errorText = errorText,
             hasApiKey = hasApiKey,
             onOpenSettings = onOpenSettings,
+            onOpenHistory = onOpenHistory,
             onCopyMessage = onCopyMessage,
             onRegenerateMessage = onRegenerateMessage,
             onEditAndRegenerate = onEditAndRegenerate,
@@ -177,6 +182,7 @@ fun ChatPage(
             bottomReservedPx = bottomReservedPx,
             scrollToMessageId = scrollToMessageId,
             onScrollToMessageHandled = onScrollToMessageHandled,
+            onRetryError = onRetryError,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -215,28 +221,37 @@ fun ChatPage(
                 contentAlignment = Alignment.Center
             ) {
                 Box(Modifier.fillMaxWidth(0.75f).widthIn(max = 1800.dp)) {
-                    ChatInputCard(
-                        inputText = inputText,
-                        onInputChange = onInputChange,
-                        onSend = {
-                            val current = attachments
-                            attachments = emptyList()
-                            onSend(current)
-                        },
-                        onStop = onStop,
-                        isLoading = isLoading,
-                        enabled = hasApiKey,
-                        attachments = attachments,
-                        onAttachmentsChange = { attachments = it },
-                        onImageClick = { viewingImage = it },
-                        modelName = modelName,
-                        enableThinking = enableThinking,
-                        supportsThinking = supportsThinking,
-                        chatProfiles = chatProfiles,
-                        currentProfileId = currentProfileId,
-                        onToggleThinking = onToggleThinking,
-                        onSelectProfile = onSelectProfile
-                    )
+                    Column {
+                        // 【子代理页不要输入框】不是禁用，是根本不渲染。
+                        // 子会话是 AI 派发的任务上下文，用户没有发消息的场景，
+                        // 留个灰掉的输入框只会让人一直想点。
+                        if (!isSubSession) {
+                            ChatInputCard(
+                                inputText = inputText,
+                                onInputChange = onInputChange,
+                                onSend = {
+                                    val current = attachments
+                                    attachments = emptyList()
+                                    onSend(current)
+                                },
+                                onStop = onStop,
+                                isLoading = isLoading,
+                                enabled = hasApiKey,
+                                readOnlyHint = null,
+                                attachments = attachments,
+                                onAttachmentsChange = { attachments = it },
+                                onImageClick = { viewingImage = it },
+                                modelName = modelName,
+                                thinkingLevel = thinkingLevel,
+                                supportsThinking = supportsThinking,
+                                chatProfiles = chatProfiles,
+                                currentProfileId = currentProfileId,
+                                onThinkingLevelChange = onThinkingLevelChange,
+                                onSelectProfile = onSelectProfile
+                            )
+                        }
+                        TokenStatusBar(messages)
+                    }
                 }
             }
         }
@@ -269,9 +284,7 @@ fun ChatPage(
     }
 }
 
-// ============================================================
 // 朗读进度条
-// ============================================================
 
 @Composable
 private fun SpeechProgressBar(
@@ -333,7 +346,7 @@ private fun SpeechProgressBar(
                     if (isError) {
                         Box(
                             Modifier
-                                .size(24.dp)
+                                .size(28.dp)
                                 .clip(CircleShape)
                                 .clickable(onClick = onClearError),
                             contentAlignment = Alignment.Center
@@ -348,7 +361,7 @@ private fun SpeechProgressBar(
                     } else {
                         Box(
                             Modifier
-                                .size(24.dp)
+                                .size(28.dp)
                                 .clip(CircleShape)
                                 .clickable(onClick = onStop),
                             contentAlignment = Alignment.Center
@@ -397,9 +410,7 @@ private fun SpeechProgressBar(
     }
 }
 
-// ============================================================
 // 消息列表
-// ============================================================
 
 @Composable
 private fun ChatMessageList(
@@ -408,8 +419,12 @@ private fun ChatMessageList(
     streamingText: String,
     thinking: String,
     reasoning: String,
+    /** 任务是否进行中：实时思考只在运行中显示，结束后不残留 */
+    isLoading: Boolean = false,
+    errorText: String = "",
     hasApiKey: Boolean,
     onOpenSettings: () -> Unit,
+    onOpenHistory: () -> Unit = {},
     onCopyMessage: (DesktopMessage) -> Unit,
     onRegenerateMessage: (DesktopMessage) -> Unit,
     onEditAndRegenerate: (DesktopMessage) -> Unit,
@@ -419,6 +434,7 @@ private fun ChatMessageList(
     bottomReservedPx: Int,
     scrollToMessageId: String?,
     onScrollToMessageHandled: () -> Unit,
+    onRetryError: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     key(sessionId) {
@@ -429,6 +445,18 @@ private fun ChatMessageList(
         val bottomPadding = with(density) { (bottomReservedPx + 16).toDp() }
 
         val chatItems = remember(messages) { buildChatItems(messages) }
+        // 任务完成结果卡的数据源（remember 必须在 Composable 上下文，不能放 LazyListScope）
+        val modifiedFiles = remember(messages) {
+            // 【体验】只统计「本次对话」这一轮（最后一条 user 消息之后）改过的文件，
+            // 而不是整个会话历史里所有改过的文件。
+            val lastUserIdx = messages.indexOfLast { it.role == "user" }
+            val turn = if (lastUserIdx >= 0) messages.subList(lastUserIdx, messages.size) else messages
+            SessionAnalytics.collectModifiedFiles(turn)
+        }
+
+        val isAtBottom by remember {
+            derivedStateOf { !listState.canScrollForward }
+        }
 
         val totalCount = chatItems.size +
                 (if (thinking.isNotEmpty() && streamingText.isEmpty()) 1 else 0) +
@@ -438,6 +466,7 @@ private fun ChatMessageList(
             if (totalCount <= 0) return
             try {
                 listState.scrollToItem(totalCount - 1)
+                // scrollBy 会被 clamp 到实际可滚动距离，不需要 repeat 循环
                 listState.scrollBy(100_000f)
             } catch (_: Exception) { }
         }
@@ -454,6 +483,8 @@ private fun ChatMessageList(
                 val idx = chatItems.indexOfFirst {
                     (it is ChatListItem.Single && it.msg.id == scrollToMessageId) ||
                             (it is ChatListItem.ToolsGroup &&
+                                    it.items.any { m -> m.id == scrollToMessageId }) ||
+                            (it is ChatListItem.WorkProcess &&
                                     it.items.any { m -> m.id == scrollToMessageId })
                 }
                 if (idx >= 0) {
@@ -465,59 +496,96 @@ private fun ChatMessageList(
             }
         }
 
-        var lastItemCount by remember { mutableIntStateOf(0) }
+        // 【滚动修复】用 userScrolledUp 标志替代 canScrollForward 判断。
+        // canScrollForward 在新内容刚加入时因布局未稳定而返回错误值，导致滚动永远不触发。
+        var userScrolledUp by remember { mutableStateOf(false) }
+        var programmaticScroll by remember { mutableStateOf(false) }
 
-        // 【滚动修复】是否在底部：用 canScrollForward 判断更可靠。
-        // 必须声明在下面的自动滚动 LaunchedEffect 之前。
-        val isAtBottom by remember {
-            derivedStateOf {
-                val info = listState.layoutInfo
-                if (info.totalItemsCount == 0) return@derivedStateOf true
-                !listState.canScrollForward
-            }
+        // 检测用户主动上滑：滚动进行中且还能往下滚 → 用户上滑了
+        LaunchedEffect(listState) {
+            snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
+                .collect { (scrolling, canForward) ->
+                    if (programmaticScroll) return@collect
+                    if (scrolling && canForward) {
+                        // 正在滚动且还能往下滚 → 用户主动上滑，锁定不自动滚
+                        userScrolledUp = true
+                    } else if (!canForward) {
+                        // 已经到底 → 解锁
+                        userScrolledUp = false
+                    }
+                }
         }
 
+        // 新消息出现时自动滚动（chatItems.size 变化）
+        var lastItemCount by remember { mutableIntStateOf(0) }
         LaunchedEffect(chatItems.size) {
             if (chatItems.size > lastItemCount) {
                 lastItemCount = chatItems.size
-                // 【滚动修复】只有用户本来就在底部时才自动跟到底。
-                // 否则工具调用/新消息会把正在上滑看历史的用户强行拽回底部。
-                if (scrollToMessageId == null && isAtBottom) jumpToBottom()
+                val last = messages.lastOrNull()
+                // 用户上滑后不强制拉到底部，除非是用户刚发的消息
+                val shouldFollow = !userScrolledUp || last?.role == "user"
+                if (scrollToMessageId == null && shouldFollow) {
+                    programmaticScroll = true
+                    try { jumpToBottom() } finally { programmaticScroll = false }
+                }
             } else {
                 lastItemCount = chatItems.size
             }
         }
 
-        LaunchedEffect(totalCount, streamingText.length, thinking.length) {
-            if (isAtBottom && totalCount > 0) {
-                try { listState.scrollToItem(totalCount - 1) } catch (_: Exception) { }
-                try { listState.scrollBy(100_000f) } catch (_: Exception) { }
-            }
+        // 流式/思考内容变化时自动滚动（snapshotFlow 替代 LaunchedEffect 频繁 key 重启）
+        LaunchedEffect(Unit) {
+            snapshotFlow { totalCount to streamingText.length }
+                .collect { (count, _) ->
+                    val last = messages.lastOrNull()
+                    val shouldFollow = !userScrolledUp || last?.role == "user"
+                    if (shouldFollow && count > 0) {
+                        programmaticScroll = true
+                        try {
+                            listState.scrollToItem(count - 1)
+                            listState.scrollBy(100_000f)
+                        } catch (_: Exception) { } finally {
+                            programmaticScroll = false
+                        }
+                    }
+                }
         }
 
         val latestKey = chatItems.lastOrNull()?.key
 
         Box(modifier = modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize().padding(end = 24.dp),
-                contentPadding = PaddingValues(
-                    start = 32.dp,
-                    end = 32.dp,
-                    top = 24.dp,
-                    bottom = bottomPadding
-                ),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
+            Column(Modifier.fillMaxSize()) {
+                // 顶部功能区（基础布局流首行，贴顶贴边零缝隙）
+                ChatTopBar(
+                    modifier = Modifier.fillMaxWidth(),
+                    sessionId = sessionId,
+                    onOpenHistory = onOpenHistory
+                )
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).padding(end = 24.dp),
+                    contentPadding = PaddingValues(
+                        start = 32.dp,
+                        end = 32.dp,
+                        top = 8.dp,
+                        bottom = bottomPadding
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
                 if (chatItems.isEmpty() && streamingText.isEmpty() && thinking.isEmpty()) {
                     item { EmptyChatState(hasApiKey = hasApiKey, onOpenSettings = onOpenSettings) }
                 }
 
-                items(chatItems, key = { it.key }) { item ->
+                itemsIndexed(chatItems, key = { _, it -> it.key }) { index, item ->
                     val isLatest = item.key == latestKey
-                    var appeared by remember(item.key) { mutableStateOf(!isLatest) }
-                    LaunchedEffect(item.key, isLatest) {
-                        if (isLatest) appeared = true
+                    // 新消息淡入 + 轻微上滑（参考 ChatGPT / Claude 的消息入场）
+                    val enter = remember(item.key) {
+                        Animatable(if (isLatest) 0f else 1f)
+                    }
+                    LaunchedEffect(item.key) {
+                        if (enter.value < 1f) {
+                            enter.animateTo(1f, tween(240, easing = FastOutSlowInEasing))
+                        }
                     }
 
                     Box(
@@ -525,15 +593,20 @@ private fun ChatMessageList(
                             fadeInSpec = tween(220, easing = FastOutSlowInEasing),
                             placementSpec = tween(260, easing = FastOutSlowInEasing),
                             fadeOutSpec = null
-                        )
+                        ).graphicsLayer {
+                            alpha = enter.value
+                            translationY = (1f - enter.value) * 10.dp.toPx()
+                        }
                     ) {
-                        if (isLatest && !appeared) {
-                            Box { }
-                        } else {
                             when (item) {
                                 is ChatListItem.Single -> {
+                                    // 与上一条消息同分钟 → 隐藏本条时间戳行（重复时间戳是气泡间隔的主源）
+                                    val prev = chatItems.getOrNull(index - 1)
+                                    val showTime = prev !is ChatListItem.Single ||
+                                        item.msg.timestamp / 60_000L != prev.msg.timestamp / 60_000L
                                     MessageItemWithMenu(
                                         msg = item.msg,
+                                        showTime = showTime,
                                         onCopy = onCopyMessage,
                                         onRegenerate = onRegenerateMessage,
                                         onEditAndRegenerate = onEditAndRegenerate,
@@ -551,23 +624,55 @@ private fun ChatMessageList(
                                         onImageClick = onImageClick
                                     )
                                 }
+                                is ChatListItem.WorkProcess -> {
+                                    WorkProcessRow(
+                                        group = item,
+                                        onCopy = onCopyMessage,
+                                        onReExecute = onReExecuteTool,
+                                        onDelete = onDeleteMessage,
+                                        onImageClick = onImageClick,
+                                        // 【实时思考归位】运行中把流式思考挂到最后一条工作过程里（
+                                        // 即最后一个工具调用之后）展开显示。
+                                        liveReasoning = if (isLoading &&
+                                            item === chatItems.lastOrNull() &&
+                                            streamingText.isEmpty()
+                                        ) reasoning else ""
+                                    )
+                                }
+                                is ChatListItem.DateSeparator -> {
+                                    DateSeparatorChip(item.displayText)
+                                }
                             }
+                    }
+                }
+
+                // 任务完成结果卡：本次会话编辑过的文件（功能强制常开）
+                if (streamingText.isEmpty() && modifiedFiles.isNotEmpty()) {
+                    item(key = "modified_files_result") {
+                        ModifiedFilesCard(modifiedFiles)
+                    }
+                }
+
+                // 【深度思考直显】还没出现工作过程气泡时（第一次工具调用之前），
+                // 流式思考没有宿主可挂；而下面的 thinking 气泡又只在 reasoning 为空时显示，
+                // 结果开了深度思考后，从发消息到第一次工具调用之间思考过程完全看不到。
+                // 这里在没有宿主时把思考过程单独显示出来。
+                val liveReasoningHost = chatItems.lastOrNull() is ChatListItem.WorkProcess
+                if (isLoading && reasoning.isNotBlank() && streamingText.isEmpty() && !liveReasoningHost) {
+                    item(key = "live_reasoning_standalone") {
+                        Box(Modifier.animateItem(fadeOutSpec = null)) {
+                            LiveReasoningStep(reasoning)
                         }
                     }
                 }
 
-                if (reasoning.isNotEmpty()) {
+                // 【实时思考】已归位到工作过程末尾（见 WorkProcessRow 的 liveReasoning），
+                // 不再在气泡外面单独画一行「深度思考」。
+                if (thinking.isNotEmpty() && streamingText.isEmpty() && reasoning.isBlank()) {
                     item {
                         Box(Modifier.animateItem(fadeOutSpec = null)) {
-                            ReasoningPanel(reasoning)
-                        }
-                    }
-                }
-
-                if (thinking.isNotEmpty() && streamingText.isEmpty()) {
-                    item {
-                        Box(Modifier.animateItem(fadeOutSpec = null)) {
-                            AnimatedVisibility(
+                            // 全限定顶层版：外层新增 Column 后，裸调会误解析为 ColumnScope 成员扩展
+                            androidx.compose.animation.AnimatedVisibility(
                                 visible = true,
                                 enter = fadeIn(tween(180)) +
                                         slideInVertically(
@@ -576,8 +681,19 @@ private fun ChatMessageList(
                                         ),
                                 exit = fadeOut(tween(140))
                             ) {
-                                StatusRow(thinking)
+                                ThinkingBubble(thinking)
                             }
+                        }
+                    }
+                }
+
+                // 【错误状态气泡】与「重试中」同款样式，不是 AI 聊天气泡。
+                // 任务结束后仍保留（sessionError 不在 finally 里清），
+                // 直到用户下次发消息才清。
+                if (errorText.isNotEmpty() && streamingText.isEmpty()) {
+                    item {
+                        Box(Modifier.animateItem(fadeOutSpec = null)) {
+                            ErrorBubble(errorText, onRetry = onRetryError)
                         }
                     }
                 }
@@ -593,6 +709,7 @@ private fun ChatMessageList(
                         }
                     }
                 }
+            }
             }
 
             AnimatedVisibility(
@@ -619,12 +736,9 @@ private fun ChatMessageList(
                 ExtendedFloatingActionButton(
                     onClick = {
                         scope.launch {
-                            try {
-                                if (totalCount > 0) {
-                                    listState.animateScrollToItem(totalCount - 1)
-                                    listState.animateScrollBy(100_000f)
-                                }
-                            } catch (_: Exception) { }
+                            // 【优化】复用 jumpToBottom 的两阶段滚动逻辑，
+                            // 等布局稳定后持续滚动直到真正触底。
+                            jumpToBottom()
                         }
                     },
                     icon = { Icon(Icons.Default.VerticalAlignBottom, "回到底部") },
@@ -634,7 +748,7 @@ private fun ChatMessageList(
                 )
             }
 
-            if (chatItems.size >= 6) {
+            if (chatItems.size >= 15) {
                 MiniMap(
                     listState = listState,
                     chatItems = chatItems,
@@ -652,9 +766,7 @@ private fun ChatMessageList(
     }
 }
 
-// ============================================================
 // Minimap
-// ============================================================
 
 @Composable
 private fun MiniMap(
@@ -696,8 +808,31 @@ private fun MiniMap(
 
     val barColor = AccentColor()
     // 视觉宽度 16dp，热区宽度 28dp（左右各多 6dp）
-    val visualWidth = 16.dp
     val hitWidth = 28.dp
+
+    // 【性能优化】预计算色块数据，避免在 Canvas draw 内做 Compose 类型判断。
+    // 之前用 chatItems.forEachIndexed + Box 逐项绘制，每帧 recompose 都重建 N 个 Composable；
+    // 改为 derivedStateOf 只在 chatItems 变化时重算，Canvas 一次性绘制。
+    // 注意：AccentColor/CardStrongColor/ToolColor 是 @Composable，不能在 remember 内调用，
+    // 所以先在外面取值，再用 Color.toArgb()/Color(colorLong) 转为非 Compose 依赖。
+    val userColor = AccentColor().copy(alpha = 0.75f)
+    val assistantColor = CardStrongColor()
+    val toolColor = ToolColor().copy(alpha = 0.75f)
+    val blockColors by remember {
+        derivedStateOf {
+            val userArgb = userColor.toArgb()
+            val assistantArgb = assistantColor.toArgb()
+            val toolArgb = toolColor.toArgb()
+            chatItems.map { item ->
+                when (item) {
+                    is ChatListItem.Single -> if (item.msg.role == "user") userArgb else assistantArgb
+                    is ChatListItem.ToolsGroup -> toolArgb
+                    is ChatListItem.WorkProcess -> toolArgb
+                    is ChatListItem.DateSeparator -> 0 // transparent
+                }
+            }
+        }
+    }
 
     Box(
         modifier = modifier
@@ -722,7 +857,6 @@ private fun MiniMap(
                                 change.consume()
                             }
                             PointerEventType.Move -> {
-                                // 仅在按下拖动时响应，避免悬停误触
                                 if (dragging) {
                                     val y = change.position.y
                                     val ratio = (y / trackHeightPx).coerceIn(0f, 1f)
@@ -744,81 +878,95 @@ private fun MiniMap(
             },
         contentAlignment = Alignment.Center
     ) {
-        Box(
+        val borderColor = BorderColor().copy(alpha = if (hovered) 0.9f else 0.5f)
+        val bgColor = CardColor().copy(alpha = if (hovered) 0.85f else 0.5f)
+
+        Canvas(
             modifier = Modifier
-                .width(visualWidth)
+                .width(16.dp)
                 .fillMaxHeight()
                 .clip(RoundedCornerShape(Radius.XS))
-                .background(CardColor().copy(alpha = if (hovered) 0.85f else 0.5f))
-                .border(
-                    1.dp,
-                    BorderColor().copy(alpha = if (hovered) 0.9f else 0.5f),
-                    RoundedCornerShape(Radius.XS)
-                )
+                .background(bgColor)
+                .border(1.dp, borderColor, RoundedCornerShape(Radius.XS))
                 .onGloballyPositioned { coords ->
                     trackHeightPx = coords.size.height.coerceAtLeast(1)
                 }
         ) {
             val total = chatItems.size.toFloat().coerceAtLeast(1f)
+            val w = size.width
 
-            chatItems.forEachIndexed { idx, item ->
-                val topRatio = idx / total
-                val bottomRatio = (idx + 1) / total
-                val blockHeight = ((bottomRatio - topRatio) * trackHeightPx).coerceAtLeast(1.5f)
-                val blockColor = when (item) {
-                    is ChatListItem.Single -> {
-                        val msg = item.msg
-                        when {
-                            msg.role == "user" -> AccentColor().copy(alpha = 0.75f)
-                            else -> CardStrongColor()
-                        }
-                    }
-                    is ChatListItem.ToolsGroup -> ToolColor().copy(alpha = 0.75f)
-                }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .offset(y = with(LocalDensity.current) { (topRatio * trackHeightPx).toDp() })
-                        .height(with(LocalDensity.current) { blockHeight.toDp() })
-                        .background(blockColor)
-                )
+            // 一次性绘制所有色块（替代 N 个 Box Composable）
+            blockColors.forEachIndexed { idx, argb ->
+                if (argb == 0) return@forEachIndexed
+                val topY = (idx / total) * trackHeightPx
+                val h = ((1f / total) * trackHeightPx).coerceAtLeast(1.5f)
+                drawRect(color = Color(argb), topLeft = Offset(0f, topY), size = Size(w, h))
             }
 
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .offset(y = with(LocalDensity.current) { animatedTop.toDp() })
-                    .height(with(LocalDensity.current) { animatedHeight.toDp() })
-                    .background(barColor.copy(alpha = 0.22f))
-                    .border(1.dp, barColor.copy(alpha = 0.9f), RoundedCornerShape(3.dp))
+            // 视口指示器
+            drawRect(
+                color = barColor.copy(alpha = 0.22f),
+                topLeft = Offset(0f, animatedTop),
+                size = Size(w, animatedHeight)
+            )
+            drawRect(
+                color = barColor.copy(alpha = 0.9f),
+                topLeft = Offset(0f, animatedTop),
+                size = Size(w, animatedHeight),
+                style = Stroke(width = 1.dp.toPx())
             )
         }
     }
 }
 
-// ============================================================
 // 消息组折叠
-// ============================================================
 
+// 会话内可折叠面板（工具调用组 / 深度思考共用）
+
+/**
+ * 会话内所有可折叠列表的统一容器。
+ *
+ * 工具调用组、深度思考面板都基于它，保证布局、内边距、展开动画完全一致，
+ * 唯一可定制的是强调色（accent）与头部内容（header）。
+ *
+ * 展开状态由容器自己管理：
+ *  - 执行中（isRunning=true）默认展开，让用户实时看到执行内容；
+ *  - 执行完成（isRunning 变为 false）自动折叠；
+ *  - 用户手动点过之后不再自动干预。
+ *
+ * @param accent    强调色，决定边框与图标色
+ * @param isRunning 是否正在执行（有调用未返回）
+ * @param header    头部内容（图标 + 标题 + 右侧信息），不含展开箭头
+ * @param content   展开后的内容
+ */
 @Composable
-private fun ToolsGroupRow(
-    group: ChatListItem.ToolsGroup,
-    onCopy: (DesktopMessage) -> Unit,
-    onReExecute: (DesktopMessage) -> Unit,
-    onDelete: (DesktopMessage) -> Unit,
-    onImageClick: (String) -> Unit
+internal fun CollapsiblePanel(
+    accent: Color,
+    isRunning: Boolean = false,
+    modifier: Modifier = Modifier,
+    /** 默认展开，且任务结束不自动收起（工作过程用；工具组保持默认折叠）。 */
+    defaultExpanded: Boolean = false,
+    header: @Composable RowScope.() -> Unit,
+    content: @Composable ColumnScope.() -> Unit
 ) {
-    var expanded by remember(group.groupKey) { mutableStateOf(false) }
+    var expanded by remember { mutableStateOf(isRunning || defaultExpanded) }
+    var userToggled by remember { mutableStateOf(false) }
+    LaunchedEffect(isRunning) {
+        if (!isRunning && !userToggled && !defaultExpanded) expanded = false
+    }
 
-    Column(Modifier.fillMaxWidth()) {
+    Column(modifier.fillMaxWidth()) {
         Surface(
             color = CardColor(),
             shape = RoundedCornerShape(Radius.MD),
-            border = BorderStroke(1.dp, ToolColor().copy(alpha = 0.3f)),
+            border = BorderStroke(1.dp, accent.copy(alpha = 0.3f)),
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(Radius.MD))
-                .clickable { expanded = !expanded }
+                .clickable {
+                    expanded = !expanded
+                    userToggled = true
+                }
         ) {
             Row(
                 Modifier
@@ -826,38 +974,21 @@ private fun ToolsGroupRow(
                     .padding(horizontal = 14.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    Icons.Default.Build,
-                    contentDescription = null,
-                    tint = ToolColor(),
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    buildString {
-                        append("${group.toolCallCount} 次工具调用")
-                        if (group.toolResultCount != group.toolCallCount) {
-                            append(" · ${group.toolResultCount} 条返回")
-                        }
-                    },
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = TextPrimary()
-                )
-                if (group.durationMs > 0) {
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "· 耗时 ${formatDuration(group.durationMs)}",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = TextMuted()
-                    )
-                }
+                header()
                 Spacer(Modifier.weight(1f))
+                // 运行中的动态提示，让新手一眼看出「还在执行」而不是卡住
+                if (isRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        color = accent
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 val rotation by animateFloatAsState(
                     targetValue = if (expanded) 180f else 0f,
                     animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
-                    label = "toolsGroupArrow"
+                    label = "collapsibleArrow"
                 )
                 Icon(
                     Icons.Default.ExpandMore,
@@ -887,1236 +1018,63 @@ private fun ToolsGroupRow(
                     .padding(start = 20.dp, top = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                group.items.forEach { msg ->
-                    MessageItemWithMenu(
-                        msg = msg,
-                        onCopy = onCopy,
-                        onRegenerate = {},
-                        onEditAndRegenerate = {},
-                        onReExecute = onReExecute,
-                        onDelete = onDelete,
-                        onImageClick = onImageClick
-                    )
-                }
+                content()
             }
         }
     }
 }
 
-// ============================================================
-// 消息 + 右键菜单
-// ============================================================
-
 @Composable
-private fun MessageItemWithMenu(
-    msg: DesktopMessage,
+private fun ToolsGroupRow(
+    group: ChatListItem.ToolsGroup,
     onCopy: (DesktopMessage) -> Unit,
-    onRegenerate: (DesktopMessage) -> Unit,
-    onEditAndRegenerate: (DesktopMessage) -> Unit,
     onReExecute: (DesktopMessage) -> Unit,
     onDelete: (DesktopMessage) -> Unit,
     onImageClick: (String) -> Unit
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
-    var menuOffset by remember { mutableStateOf(Offset.Zero) }
-
-    Box {
-        Box(
-            Modifier.pointerInput(msg.id) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent(PointerEventPass.Initial)
-                        if (event.type == PointerEventType.Press && event.buttons.isSecondaryPressed) {
-                            val pos = event.changes.firstOrNull()?.position ?: Offset.Zero
-                            menuOffset = pos
-                            menuOpen = true
-                            event.changes.forEach { it.consume() }
-                        }
-                    }
-                }
-            }
-        ) {
-            MessageRow(msg, onImageClick)
-        }
-
-        Box(
-            Modifier
-                .offset {
-                    IntOffset(menuOffset.x.toInt(), menuOffset.y.toInt())
-                }
-                .size(1.dp)
-        ) {
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false },
-                containerColor = CardColor()
-            ) {
-                DropdownMenuItem(
-                    text = { Text("复制", fontSize = 12.sp, color = TextPrimary()) },
-                    onClick = { menuOpen = false; onCopy(msg) }
-                )
-
-                // 朗读此消息（仅 assistant 的 text 消息）
-                if (msg.role == "assistant" && msg.type == "text" && msg.content.isNotBlank()) {
-                    DropdownMenuItem(
-                        text = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    Icons.AutoMirrored.Filled.VolumeUp,
-                                    contentDescription = null,
-                                    tint = TextSecondary(),
-                                    modifier = Modifier.size(14.dp)
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text("朗读此消息", fontSize = 12.sp, color = TextPrimary())
-                            }
-                        },
-                        onClick = {
-                            menuOpen = false
-                            val clean = cleanForSpeech(msg.content)
-                            if (clean.isNotBlank()) {
-                                DesktopSpeechHelper.speak(clean)
-                            }
-                        }
-                    )
-                }
-
-                if (msg.type == "tool_call") {
-                    DropdownMenuItem(
-                        text = { Text("再次执行", fontSize = 12.sp, color = TextPrimary()) },
-                        onClick = { menuOpen = false; onReExecute(msg) }
-                    )
-                }
-                // 【体验优化 B7/B20】任意 text 类型都可编辑
-                if (msg.type == "text") {
-                    DropdownMenuItem(
-                        text = {
-                            Text(
-                                if (msg.role == "user") "编辑并重新生成" else "编辑此消息内容",
-                                fontSize = 12.sp, color = TextPrimary()
-                            )
-                        },
-                        onClick = { menuOpen = false; onEditAndRegenerate(msg) }
-                    )
-                }
-                if (msg.role == "assistant" && msg.type == "text") {
-                    DropdownMenuItem(
-                        text = { Text("重新生成", fontSize = 12.sp, color = TextPrimary()) },
-                        onClick = { menuOpen = false; onRegenerate(msg) }
-                    )
-                }
-                DropdownMenuItem(
-                    text = { Text("删除", fontSize = 12.sp, color = ErrorColor()) },
-                    onClick = { menuOpen = false; onDelete(msg) }
-                )
-            }
-        }
-    }
-}
-
-// ============================================================
-// 空状态
-// ============================================================
-
-@Composable
-private fun EmptyChatState(hasApiKey: Boolean, onOpenSettings: () -> Unit) {
-    val infinite = rememberInfiniteTransition(label = "empty")
-    val scale by infinite.animateFloat(
-        initialValue = 1f,
-        targetValue = 1.035f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(2400, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "emptyScale"
-    )
-
-    Column(
-        Modifier.fillMaxWidth().padding(vertical = 60.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(80.dp))
-        Text(
-            "FurAgent",
-            fontSize = 42.sp,
-            fontWeight = FontWeight.Black,
-            letterSpacing = (-1.5).sp,
-            color = TextPrimary(),
-            modifier = Modifier.scale(scale)
-        )
-        Spacer(Modifier.height(10.dp))
-        Text(
-            "办公、创作、查资料，交给我就好",
-            fontSize = 14.sp,
-            color = TextSecondary()
-        )
-
-        if (!hasApiKey) {
-            Spacer(Modifier.height(32.dp))
-            GlassShadow(elevation = Shadow.MD, shape = RoundedCornerShape(Radius.LG)) {
-                Surface(
-                    color = CardColor(),
-                    shape = RoundedCornerShape(Radius.LG),
-                    border = BorderStroke(1.dp, BorderColor()),
-                    modifier = Modifier.width(400.dp)
-                ) {
-                    Column(Modifier.padding(20.dp)) {
-                        Text(
-                            "尚未配置 API Key",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = WarningColor()
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            "请先在设置中填入模型服务的 API Key",
-                            fontSize = 12.sp,
-                            color = TextSecondary()
-                        )
-                        Spacer(Modifier.height(14.dp))
-                        PrimaryButton(text = "打开设置") { onOpenSettings() }
-                    }
-                }
-            }
-        } else {
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "试试问我：你能做什么？",
-                fontSize = 13.sp,
-                color = TextMuted()
-            )
-        }
-    }
-}
-
-// ============================================================
-// 消息分发
-// ============================================================
-
-@Composable
-private fun MessageRow(msg: DesktopMessage, onImageClick: (String) -> Unit) {
-    when (msg.type) {
-        "tool_call" -> ToolCallRow(msg)
-        "tool_result" -> ToolResultRow(msg, onImageClick)
-        "system_note" -> SystemNoteRow(msg)
-        else -> TextMessageRow(msg, onImageClick = onImageClick)
-    }
-}
-
-// ============================================================
-// 文本气泡
-// ============================================================
-
-@Composable
-private fun TextMessageRow(
-    msg: DesktopMessage,
-    isStreaming: Boolean = false,
-    onImageClick: (String) -> Unit = {}
-) {
-    val isUser = msg.role == "user"
-    val shadowColor = glassShadowColor()
-
-    val contentImages = remember(msg.content) {
-        extractImagePathsFromContent(msg.content)
-    }
-    val allImages = remember(msg.imagePaths, contentImages) {
-        (msg.imagePaths + contentImages).distinct()
-    }
-    val displayContent = remember(msg.content, contentImages) {
-        if (contentImages.isEmpty()) msg.content
-        else {
-            var t = msg.content
-            contentImages.forEach { p ->
-                t = t.replace(Regex("""!\[[^\]]*]\(${Regex.escape(p)}\)"""), "")
-                t = t.lines().filter { line ->
-                    line.trim().trim('`', '*', '"', '\'').removePrefix("file://") != p
-                }.joinToString("\n")
-            }
-            t.trim()
-        }
-    }
-
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = if (isUser) Arrangement.End else Arrangement.Start
-    ) {
-        Column(
-            Modifier.widthIn(max = 1000.dp),
-            horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
-        ) {
-            if (!isUser && msg.reasoning.isNotBlank()) {
-                ReasoningPanel(msg.reasoning)
-                Spacer(Modifier.height(6.dp))
-            }
-            Box(
-                Modifier.shadow(
-                    elevation = Shadow.MD,
-                    shape = RoundedCornerShape(
-                        topStart = 16.dp, topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 16.dp
-                    ),
-                    clip = false,
-                    ambientColor = shadowColor,
-                    spotColor = shadowColor
-                )
-            ) {
-                Surface(
-                    color = if (isUser) AccentColor() else CardColor(),
-                    shape = RoundedCornerShape(
-                        topStart = 16.dp, topEnd = 16.dp,
-                        bottomStart = if (isUser) 16.dp else 4.dp,
-                        bottomEnd = if (isUser) 4.dp else 16.dp
-                    ),
-                    border = if (isUser) null else BorderStroke(1.dp, BorderColor()),
-                    contentColor = if (isUser) OnAccent() else TextPrimary()
-                ) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 11.dp)) {
-                        if (displayContent.isNotBlank()) {
-                            SelectionContainer {
-                                MarkdownText(
-                                    text = displayContent,
-                                    color = if (isUser) OnAccent() else TextPrimary()
-                                )
-                            }
-                        }
-                        if (allImages.isNotEmpty()) {
-                            if (displayContent.isNotBlank()) Spacer(Modifier.height(8.dp))
-                            allImages.forEach { path ->
-                                MessageImage(path) { onImageClick(path) }
-                                Spacer(Modifier.height(6.dp))
-                            }
-                        }
-                    }
-                }
-            }
-            if (!isStreaming) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    formatTime(msg.timestamp),
-                    fontSize = 11.sp,
-                    color = TextMuted(),
-                    modifier = Modifier.padding(horizontal = 4.dp)
-                )
-            }
-        }
-    }
-}
-
-// ============================================================
-// 图片展示
-// ============================================================
-
-@Composable
-private fun MessageImage(path: String, onClick: () -> Unit = {}) {
-    val ext = path.substringAfterLast('.', "").lowercase()
-    val unsupported = ext in UNSUPPORTED_IMAGE_EXTS
-    val bitmap by produceState<ImageBitmap?>(null, path) {
-        value = withContext(Dispatchers.IO) {
-            try {
-                if (unsupported) return@withContext null
-                val img = javax.imageio.ImageIO.read(File(path)) ?: return@withContext null
-                val maxDim = 320
-                val scale = minOf(maxDim.toFloat() / img.width, maxDim.toFloat() / img.height, 1f)
-                val w = (img.width * scale).toInt().coerceAtLeast(1)
-                val h = (img.height * scale).toInt().coerceAtLeast(1)
-                val buffered = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-                val g = buffered.createGraphics()
-                g.drawImage(img, 0, 0, w, h, null)
-                g.dispose()
-                buffered.toComposeImageBitmap()
-            } catch (_: Exception) { null }
-        }
-    }
-
-    val bmp = bitmap
-    when {
-        unsupported -> Text(
-            "（$ext 格式不支持，请用 JPG/PNG/WEBP）",
-            fontSize = 11.sp, color = ErrorColor(), modifier = Modifier.padding(4.dp)
-        )
-        bmp != null -> Image(
-            bitmap = bmp,
-            contentDescription = null,
-            modifier = Modifier
-                .heightIn(max = 320.dp)
-                .clip(RoundedCornerShape(Radius.XS))
-                .clickable(onClick = onClick),
-            contentScale = ContentScale.Fit
-        )
-        else -> Text(
-            "（图片加载失败：$path）",
-            fontSize = 11.sp, color = ErrorColor(), modifier = Modifier.padding(4.dp)
-        )
-    }
-}
-
-// ============================================================
-// 工具调用气泡
-// ============================================================
-//
-// 【B1 修复】原来外层 Row 上挂 clickable { expanded = !expanded }，
-// 会拦截所有 pointer 事件，SelectionContainer 拿不到手势/键盘焦点，
-// 导致"能选中但复制不了、Ctrl+C 无效、右键菜单也失效"。
-// 现在把展开/收起改到右上角的箭头 Box 上独立可点，外层不再拦截。
-
-@Composable
-private fun ToolCallRow(msg: DesktopMessage) {
-    val shadowColor = glassShadowColor()
-    var expanded by remember(msg.id) { mutableStateOf(false) }
-    val collapsible = remember(msg.content) { needsCollapse(msg.content) }
-
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        Box(
-            Modifier.shadow(
-                elevation = Shadow.MD,
-                shape = RoundedCornerShape(Radius.MD),
-                clip = false,
-                ambientColor = shadowColor,
-                spotColor = shadowColor
-            )
-        ) {
-            Row(
-                Modifier
-                    .widthIn(max = 1000.dp)
-                    .clip(RoundedCornerShape(Radius.MD))
-                    .background(CardColor())
-                    .border(1.dp, ToolColor().copy(alpha = 0.3f), RoundedCornerShape(Radius.MD))
-                    .animateContentSize(
-                        animationSpec = spring(
-                            dampingRatio = 0.78f,
-                            stiffness = Spring.StiffnessMediumLow
-                        )
-                    )
-            ) {
-                Box(Modifier.width(3.dp).fillMaxHeight().background(ToolColor()))
-                Column(Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "工具调用",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ToolColor()
-                        )
-                        if (collapsible && !expanded) {
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "共 ${msg.content.length} 字符",
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = TextMuted()
-                            )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (collapsible) {
-                            val rotation by animateFloatAsState(
-                                targetValue = if (expanded) 180f else 0f,
-                                animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
-                                label = "toolCallArrow"
-                            )
-                            Box(
-                                Modifier
-                                    .size(24.dp)
-                                    .clip(RoundedCornerShape(Radius.XS))
-                                    .clickable { expanded = !expanded },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Default.ExpandMore,
-                                    contentDescription = if (expanded) "收起" else "展开",
-                                    tint = TextSecondary(),
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .graphicsLayer { rotationZ = rotation }
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    SelectionContainer {
-                        Text(
-                            msg.content,
-                            fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = TextPrimary(),
-                            lineHeight = 18.sp,
-                            maxLines = if (expanded || !collapsible) Int.MAX_VALUE else 4,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ToolResultRow(msg: DesktopMessage, onImageClick: (String) -> Unit) {
-    val shadowColor = glassShadowColor()
-    var expanded by remember(msg.id) { mutableStateOf(false) }
-
-    val images = remember(msg.content) { extractImagePathsFromContent(msg.content) }
-    val displayContent = remember(msg.content, images) {
-        if (images.isEmpty()) msg.content
-        else {
-            var t = msg.content
-            images.forEach { p ->
-                t = t.replace(Regex("""!\[[^\]]*]\(${Regex.escape(p)}\)"""), "")
-                t = t.lines().filter { line ->
-                    line.trim().trim('`', '*', '"', '\'').removePrefix("file://") != p
-                }.joinToString("\n")
-            }
-            t.trim()
-        }
-    }
-
-    val collapsible = remember(displayContent) { needsCollapse(displayContent) }
-
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Start) {
-        Box(
-            Modifier.shadow(
-                elevation = Shadow.MD,
-                shape = RoundedCornerShape(Radius.MD),
-                clip = false,
-                ambientColor = shadowColor,
-                spotColor = shadowColor
-            )
-        ) {
-            Row(
-                Modifier
-                    .widthIn(max = 1000.dp)
-                    .clip(RoundedCornerShape(Radius.MD))
-                    .background(CardColor())
-                    .border(1.dp, ResultColor().copy(alpha = 0.3f), RoundedCornerShape(Radius.MD))
-                    .animateContentSize(
-                        animationSpec = spring(
-                            dampingRatio = 0.78f,
-                            stiffness = Spring.StiffnessMediumLow
-                        )
-                    )
-            ) {
-                Box(Modifier.width(3.dp).fillMaxHeight().background(ResultColor()))
-                Column(Modifier.padding(12.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "工具返回",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = ResultColor()
-                        )
-                        if (msg.durationMs > 0) {
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                formatDuration(msg.durationMs),
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = TextMuted()
-                            )
-                        }
-                        if (collapsible && !expanded) {
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                "共 ${displayContent.length} 字符",
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = TextMuted()
-                            )
-                        }
-                        Spacer(Modifier.weight(1f))
-                        if (collapsible) {
-                            val rotation by animateFloatAsState(
-                                targetValue = if (expanded) 180f else 0f,
-                                animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
-                                label = "toolResultArrow"
-                            )
-                            Box(
-                                Modifier
-                                    .size(24.dp)
-                                    .clip(RoundedCornerShape(Radius.XS))
-                                    .clickable { expanded = !expanded },
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Icon(
-                                    Icons.Default.ExpandMore,
-                                    contentDescription = if (expanded) "收起" else "展开",
-                                    tint = TextSecondary(),
-                                    modifier = Modifier
-                                        .size(16.dp)
-                                        .graphicsLayer { rotationZ = rotation }
-                                )
-                            }
-                        }
-                    }
-                    if (displayContent.isNotBlank()) {
-                        Spacer(Modifier.height(6.dp))
-                        SelectionContainer {
-                            Text(
-                                displayContent,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = TextPrimary(),
-                                lineHeight = 18.sp,
-                                maxLines = if (expanded || !collapsible) Int.MAX_VALUE else 4,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    if (images.isNotEmpty()) {
-                        Spacer(Modifier.height(8.dp))
-                        images.forEach { path ->
-                            MessageImage(path) { onImageClick(path) }
-                            Spacer(Modifier.height(6.dp))
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ============================================================
-// 系统提示胶囊
-// ============================================================
-
-@Composable
-private fun SystemNoteRow(msg: DesktopMessage) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-        Box(
-            Modifier.clip(RoundedCornerShape(50)).background(CardStrongColor())
-                .padding(horizontal = 12.dp, vertical = 4.dp)
-        ) {
-            Text(msg.content, fontSize = 11.sp, color = TextSecondary())
-        }
-    }
-}
-
-// ============================================================
-// 深度思考面板（默认折叠，可展开）
-// ============================================================
-
-/**
- * 展示模型返回的深度思考内容（reasoning_content / reasoning / thinking）。
- * 默认折叠，点标题栏展开。不持久化，仅实时展示。
- */
-@Composable
-private fun ReasoningPanel(text: String) {
-    var expanded by remember { mutableStateOf(false) }
-    Surface(
-        color = CardColor(),
-        shape = RoundedCornerShape(Radius.MD),
-        border = BorderStroke(1.dp, ToolColor().copy(alpha = 0.3f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Default.Psychology,
-                    contentDescription = null,
-                    tint = ToolColor(),
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(10.dp))
-                Text(
-                    "深度思考",
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = TextPrimary(),
-                    modifier = Modifier.weight(1f)
-                )
-                val rotation by animateFloatAsState(
-                    targetValue = if (expanded) 180f else 0f,
-                    animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
-                    label = "reasoningArrow"
-                )
-                Icon(
-                    Icons.Default.ExpandMore,
-                    contentDescription = if (expanded) "收起" else "展开",
-                    tint = TextSecondary(),
-                    modifier = Modifier
-                        .size(16.dp)
-                        .graphicsLayer { rotationZ = rotation }
-                )
-            }
-            if (expanded) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text,
-                    fontSize = 12.sp,
-                    color = TextSecondary()
-                )
-            }
-        }
-    }
-}
-
-// ============================================================
-// 思考状态行
-// ============================================================
-
-@Composable
-private fun StatusRow(text: String) {
-    // 【UI 统一】与 ReasoningPanel / ToolCallRow 同款卡片风格。
-    Surface(
-        color = CardColor(),
-        shape = RoundedCornerShape(Radius.MD),
-        border = BorderStroke(1.dp, ToolColor().copy(alpha = 0.3f)),
-        modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(12.dp),
-                strokeWidth = 2.dp,
-                color = AccentColor()
+    CollapsiblePanel(
+        accent = ToolColor(),
+        isRunning = group.toolResultCount < group.toolCallCount,
+        header = {
+            Icon(
+                Icons.Default.Build,
+                contentDescription = null,
+                tint = ToolColor(),
+                modifier = Modifier.size(16.dp)
             )
             Spacer(Modifier.width(10.dp))
-            Text(text, fontSize = 12.sp, color = TextSecondary())
-        }
-    }
-}
-
-// ============================================================
-// 输入卡片
-// ============================================================
-
-@Composable
-private fun ChatInputCard(
-    inputText: String,
-    onInputChange: (String) -> Unit,
-    onSend: () -> Unit,
-    onStop: () -> Unit,
-    isLoading: Boolean,
-    enabled: Boolean,
-    attachments: List<PendingAttachment>,
-    onAttachmentsChange: (List<PendingAttachment>) -> Unit,
-    onImageClick: (String) -> Unit,
-    modelName: String,
-    enableThinking: Boolean,
-    supportsThinking: Boolean,
-    chatProfiles: List<Pair<String, String>>,
-    currentProfileId: String,
-    onToggleThinking: (Boolean) -> Unit,
-    onSelectProfile: (String) -> Unit
-) {
-    val focusRequester = remember { FocusRequester() }
-    var focused by remember { mutableStateOf(false) }
-    var menuOpen by remember { mutableStateOf(false) }
-    var lastError by remember { mutableStateOf<String?>(null) }
-
-    var fieldValue by remember {
-        mutableStateOf(
-            TextFieldValue(inputText, TextRange(inputText.length))
-        )
-    }
-    LaunchedEffect(inputText) {
-        if (fieldValue.text != inputText) {
-            fieldValue = TextFieldValue(inputText, TextRange(inputText.length))
-        }
-    }
-
-    // 全局 Ctrl+V 图片粘贴
-    //
-    // 【修复】DisposableEffect(Unit) 只注册一次，闭包会捕获首次渲染时的
-    // attachments / onAttachmentsChange。第二次粘贴时 attachments 还是旧值（空），
-    // 导致“attachments + 新图”覆盖成一张。用 rememberUpdatedState 读最新值。
-    val currentAttachments by rememberUpdatedState(attachments)
-    val currentOnAttachmentsChange by rememberUpdatedState(onAttachmentsChange)
-    DisposableEffect(Unit) {
-        val dispatcher = object : java.awt.KeyEventDispatcher {
-            override fun dispatchKeyEvent(e: KeyEvent): Boolean {
-                if (!ChatFocusTracker.chatPageVisible) return false
-                if (e.id == KeyEvent.KEY_PRESSED &&
-                    e.keyCode == KeyEvent.VK_V &&
-                    (e.modifiersEx and InputEvent.CTRL_DOWN_MASK) != 0
-                ) {
-                    val img = SafeClipboard.getImage() ?: return false
-                    try {
-                        val w = img.getWidth(null)
-                        val h = img.getHeight(null)
-                        if (w <= 0 || h <= 0) return false
-                        val tmp = File.createTempFile("paste_", ".png")
-                        val buffered = java.awt.image.BufferedImage(w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB)
-                        val g = buffered.createGraphics()
-                        g.drawImage(img, 0, 0, null)
-                        g.dispose()
-                        javax.imageio.ImageIO.write(buffered, "png", tmp)
-                        currentOnAttachmentsChange(
-                            currentAttachments + PendingAttachment(tmp.absolutePath, tmp.name, true)
-                        )
-                        return true
-                    } catch (ex: Exception) {
-                        lastError = "粘贴失败：${ex.message}"
-                        return false
+            Text(
+                buildString {
+                    append("${group.toolCallCount} 次工具调用")
+                    if (group.toolResultCount != group.toolCallCount) {
+                        append(" · ${group.toolResultCount} 条返回")
                     }
-                }
-                return false
-            }
-        }
-        KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(dispatcher)
-        onDispose {
-            KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher)
-        }
-    }
-
-    fun pickImages() {
-        val chooser = JFileChooser().apply {
-            dialogTitle = "选择图片"
-            isMultiSelectionEnabled = true
-            fileFilter = FileNameExtensionFilter("图片 (PNG/JPG/WEBP/GIF/BMP)",
-                "png", "jpg", "jpeg", "gif", "webp", "bmp")
-        }
-        if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-            val files = chooser.selectedFiles ?: return
-            onAttachmentsChange(attachments + files.map {
-                PendingAttachment(path = it.absolutePath, name = it.name, isImage = true)
-            })
-        }
-    }
-
-    fun pickFiles() {
-        val chooser = JFileChooser().apply {
-            dialogTitle = "选择文件"
-            isMultiSelectionEnabled = true
-        }
-        if (chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION) {
-            val files = chooser.selectedFiles ?: return
-            onAttachmentsChange(attachments + files.map {
-                val ext = it.extension.lowercase()
-                PendingAttachment(path = it.absolutePath, name = it.name, isImage = ext in IMAGE_EXTS)
-            })
-        }
-    }
-
-    val shadowColor = glassShadowColor()
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .shadow(
-                elevation = Shadow.XL,
-                shape = RoundedCornerShape(Radius.LG),
-                clip = false,
-                ambientColor = shadowColor,
-                spotColor = shadowColor
+                },
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Medium,
+                color = TextPrimary()
             )
-    ) {
-        Surface(
-            color = CardColor(),
-            shape = RoundedCornerShape(Radius.LG),
-            border = BorderStroke(
-                1.dp,
-                if (focused) AccentColor().copy(alpha = 0.65f)
-                else BorderColor()
-            ),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Column(Modifier.padding(horizontal = 6.dp, vertical = 6.dp)) {
-                // 顶部工具行：深度思考开关 + 模型快捷选择（左上角，与工具调用同风格）
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (supportsThinking) {
-                        ThinkingToggleChip(
-                            enabled = enableThinking,
-                            onClick = { onToggleThinking(!enableThinking) }
-                        )
-                        Spacer(Modifier.width(8.dp))
-                    }
-                    ModelQuickSelector(
-                        modelName = modelName,
-                        profiles = chatProfiles,
-                        currentProfileId = currentProfileId,
-                        onSelect = onSelectProfile
-                    )
-                }
-
-                AnimatedVisibility(
-                    visible = attachments.isNotEmpty(),
-                    enter = fadeIn(tween(180)) +
-                            expandVertically(
-                                animationSpec = tween(220, easing = FastOutSlowInEasing),
-                                expandFrom = Alignment.Top
-                            ),
-                    exit = fadeOut(tween(140)) +
-                            shrinkVertically(
-                                animationSpec = tween(180, easing = FastOutSlowInEasing),
-                                shrinkTowards = Alignment.Top
-                            )
-                ) {
-                    FlowRow(
-                        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        attachments.forEach { att ->
-                            AnimatedVisibility(
-                                visible = true,
-                                enter = fadeIn(tween(160)) +
-                                        expandVertically(tween(200)) +
-                                        expandHorizontally(tween(200)),
-                                exit = fadeOut(tween(120)) +
-                                        shrinkVertically(tween(160)) +
-                                        shrinkHorizontally(tween(160))
-                            ) {
-                                AttachmentThumb(
-                                    att = att,
-                                    onClick = { if (att.isImage) onImageClick(att.path) },
-                                    onRemove = { onAttachmentsChange(attachments - att) }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                BasicTextField(
-                    value = fieldValue,
-                    onValueChange = { newValue ->
-                        fieldValue = newValue
-                        if (enabled) onInputChange(newValue.text)
-                    },
-                    enabled = enabled,
-                    textStyle = TextStyle(color = TextPrimary(), fontSize = 14.sp, lineHeight = 22.sp),
-                    cursorBrush = SolidColor(AccentColor()),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 44.dp, max = 180.dp)
-                        .padding(horizontal = 14.dp, vertical = 10.dp)
-                        .focusRequester(focusRequester)
-                        .onPreviewKeyEvent { event ->
-                            // 换行必须"按一次生效一次"。
-                            //
-                            // 旧实现：Shift+Enter 时手动插 \n 并返回 true（消费事件）。
-                            // 但 BasicTextField 在 Desktop 平台对 Enter 有自己的处理，
-                            // 返回 true 只阻止事件向上冒泡，拦不住它内部的默认行为，
-                            // 结果手动插入的 \n 被覆盖 → 要按两次才生效。
-                            //
-                            // 新实现：
-                            //   - 纯 Enter（无 Shift）→ 拦截，发送
-                            //   - Shift+Enter        → 返回 false，交给 BasicTextField 自己插换行
-                            //   - 其它键             → 返回 false
-                            if (event.type == KeyEventType.KeyDown && event.key == Key.Enter) {
-                                if (event.isShiftPressed) {
-                                    false
-                                } else {
-                                    if (!isLoading &&
-                                        (fieldValue.text.isNotBlank() || attachments.isNotEmpty())
-                                    ) {
-                                        onSend()
-                                    }
-                                    true
-                                }
-                            } else {
-                                false
-                            }
-                        },
-                    maxLines = 10,
-                    decorationBox = { inner ->
-                        Box {
-                            if (fieldValue.text.isEmpty()) {
-                                Text(
-                                    if (enabled) "发消息…（Shift+Enter 换行）"
-                                    else "请先在设置中配置 API Key",
-                                    fontSize = 14.sp, color = TextMuted()
-                                )
-                            }
-                            inner()
-                        }
-                    }
-                )
-
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box {
-                        IconActionButton(
-                            Icons.Default.Add,
-                            onClick = { menuOpen = true },
-                            contentDescription = "更多",
-                            tint = TextSecondary()
-                        )
-                        DropdownMenu(
-                            expanded = menuOpen,
-                            onDismissRequest = { menuOpen = false },
-                            containerColor = CardColor()
-                        ) {
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            Icons.Default.Image,
-                                            null,
-                                            tint = TextSecondary(),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                        Text("选择图片", fontSize = 13.sp, color = TextPrimary())
-                                    }
-                                },
-                                onClick = { menuOpen = false; pickImages() }
-                            )
-                            DropdownMenuItem(
-                                text = {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(
-                                            Icons.AutoMirrored.Filled.InsertDriveFile,
-                                            null,
-                                            tint = TextSecondary(),
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                        Spacer(Modifier.width(10.dp))
-                                        Text("选择文件", fontSize = 13.sp, color = TextPrimary())
-                                    }
-                                },
-                                onClick = { menuOpen = false; pickFiles() }
-                            )
-                        }
-                    }
-
-                    Spacer(Modifier.weight(1f))
-
-                    if (isLoading) {
-                        Box(
-                            Modifier.size(36.dp).clip(CircleShape).background(ErrorColor())
-                                .clickable(onClick = onStop),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.Default.Stop,
-                                "停止",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    } else {
-                        val canSend = (fieldValue.text.isNotBlank() || attachments.isNotEmpty()) && enabled
-                        Box(
-                            Modifier.size(36.dp).clip(CircleShape)
-                                .background(if (canSend) AccentColor() else CardStrongColor())
-                                .clickable(enabled = canSend) { onSend() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.Send, "发送",
-                                tint = if (canSend) OnAccent() else TextMuted(),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                    }
-                }
-
-                lastError?.let { msg ->
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            msg,
-                            fontSize = 11.sp,
-                            color = ErrorColor(),
-                            modifier = Modifier.weight(1f)
-                        )
-                        Text(
-                            "×",
-                            fontSize = 14.sp,
-                            color = TextSecondary(),
-                            modifier = Modifier.clickable { lastError = null }
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ============================================================
-// 输入框顶部：深度思考开关 + 模型快捷选择
-// ============================================================
-
-@Composable
-private fun ThinkingToggleChip(enabled: Boolean, onClick: () -> Unit) {
-    Surface(
-        color = if (enabled) AccentSoft() else CardStrongColor(),
-        shape = RoundedCornerShape(Radius.SM),
-        border = BorderStroke(
-            1.dp,
-            if (enabled) AccentColor().copy(alpha = 0.45f) else BorderSubtle()
-        ),
-        modifier = Modifier.clickable(onClick = onClick)
-    ) {
-        Text(
-            "深度思考",
-            fontSize = 12.sp,
-            fontWeight = if (enabled) FontWeight.Medium else FontWeight.Normal,
-            color = if (enabled) AccentColor() else TextSecondary(),
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
-        )
-    }
-}
-
-@Composable
-private fun ModelQuickSelector(
-    modelName: String,
-    profiles: List<Pair<String, String>>,
-    currentProfileId: String,
-    onSelect: (String) -> Unit
-) {
-    var open by remember { mutableStateOf(false) }
-    Box {
-        Surface(
-            color = CardStrongColor(),
-            shape = RoundedCornerShape(Radius.SM),
-            border = BorderStroke(1.dp, BorderSubtle()),
-            modifier = Modifier.clickable(enabled = profiles.isNotEmpty()) { open = true }
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            if (group.durationMs > 0) {
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    modelName,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = TextPrimary(),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.widthIn(max = 160.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Icon(
-                    Icons.Default.ArrowDropDown,
-                    contentDescription = null,
-                    tint = TextSecondary(),
-                    modifier = Modifier.size(16.dp)
+                    "· 耗时 ${formatDuration(group.durationMs)}",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = TextMuted()
                 )
             }
         }
-        DropdownMenu(
-            expanded = open,
-            onDismissRequest = { open = false },
-            containerColor = CardColor()
-        ) {
-            profiles.forEach { (id, name) ->
-                DropdownMenuItem(
-                    text = {
-                        Text(
-                            name,
-                            fontSize = 13.sp,
-                            color = if (id == currentProfileId) AccentColor() else TextPrimary(),
-                            fontWeight = if (id == currentProfileId) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    },
-                    onClick = { open = false; onSelect(id) }
-                )
-            }
-        }
-    }
-}
-
-// ============================================================
-// 附件缩略图
-// ============================================================
-
-@Composable
-private fun AttachmentThumb(
-    att: PendingAttachment,
-    onClick: () -> Unit,
-    onRemove: () -> Unit
-) {
-    Box(
-        Modifier
-            .size(64.dp)
-            .clip(RoundedCornerShape(Radius.SM))
-            .background(CardStrongColor())
-            .border(1.dp, BorderColor(), RoundedCornerShape(Radius.SM))
     ) {
-        if (att.isImage) {
-            val bitmap by produceState<ImageBitmap?>(null, att.path) {
-                value = withContext(Dispatchers.IO) {
-                    try {
-                        val img = javax.imageio.ImageIO.read(File(att.path))
-                            ?: return@withContext null
-                        val maxDim = 128
-                        val scale = minOf(
-                            maxDim.toFloat() / img.width,
-                            maxDim.toFloat() / img.height,
-                            1f
-                        )
-                        val w = (img.width * scale).toInt().coerceAtLeast(1)
-                        val h = (img.height * scale).toInt().coerceAtLeast(1)
-                        val buffered = java.awt.image.BufferedImage(
-                            w, h, java.awt.image.BufferedImage.TYPE_INT_ARGB
-                        )
-                        val g = buffered.createGraphics()
-                        g.drawImage(img, 0, 0, w, h, null)
-                        g.dispose()
-                        buffered.toComposeImageBitmap()
-                    } catch (_: Exception) { null }
-                }
-            }
-            val bmp = bitmap
-            if (bmp != null) {
-                Image(
-                    bitmap = bmp,
-                    contentDescription = att.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize().clickable(onClick = onClick)
-                )
-            } else {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Default.Image,
-                        null,
-                        tint = TextMuted(),
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-            }
-        } else {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(
-                        Icons.AutoMirrored.Filled.InsertDriveFile,
-                        null,
-                        tint = TextSecondary(),
-                        modifier = Modifier.size(22.dp)
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        att.name.take(6),
-                        fontSize = 8.sp, color = TextMuted(),
-                        maxLines = 1, overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-        }
-
-        Box(
-            Modifier
-                .align(Alignment.TopEnd)
-                .padding(2.dp)
-                .size(18.dp)
-                .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.55f))
-                .clickable(onClick = onRemove),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Default.Close,
-                "移除",
-                tint = Color.White,
-                modifier = Modifier.size(11.dp)
-            )
-        }
+        // 【体验修复】此前这里对每条消息直接渲染完整卡片（tool_call / tool_result 各一张大卡），
+        // 工具返回会像气泡一样“抛”在聊天流里。改为与工作过程一致的配对紧凑渲染：
+        // 一次调用一行，结果折成「输出 N 行」，点击才展开详情。
+        WorkProcessItemList(
+            items = group.items,
+            onCopy = onCopy,
+            onReExecute = onReExecute,
+            onDelete = onDelete,
+            onImageClick = onImageClick
+        )
     }
 }
 
-private fun formatTime(ts: Long): String =
-    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(ts))

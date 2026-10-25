@@ -31,6 +31,16 @@ import kotlin.time.Duration.Companion.seconds
  */
 object ConfirmationBroker {
 
+    /**
+     * 【P0-5 与桌面端对齐】子会话（后台子代理）协程名。
+     *
+     * 该上下文里的确认请求没人能点，会一直排队到 300s 超时，
+     * 表现为「子会话卡住 5 分钟」。这里做一件事：
+     * 给标题加"子代理 ·"前缀，用户知道是谁在请求，
+     * 不会误以为是主会话在要权限。
+     */
+    const val SUBSESSION_COROUTINE_NAME = "FurAgentSubSession"
+
     private class Entry(
         val confirm: PendingConfirm,
         val deferred: CompletableDeferred<Boolean>
@@ -43,8 +53,13 @@ object ConfirmationBroker {
     private val queue = ArrayDeque<Entry>()
 
     suspend fun request(title: String, message: String): Boolean {
-        AgentLogger.log("SYS", "[确认] 请求：$title")
-        val entry = Entry(PendingConfirm(title, message), CompletableDeferred())
+        // 【P0-5】子会话来源标注（与桌面端 DesktopConfirmation 保持一致）
+        val fromSub = kotlinx.coroutines.currentCoroutineContext()[
+            kotlinx.coroutines.CoroutineName
+        ]?.name == SUBSESSION_COROUTINE_NAME
+        val displayTitle = if (fromSub) "子代理 · $title" else title
+        AgentLogger.log("SYS", "[确认] 请求：$displayTitle")
+        val entry = Entry(PendingConfirm(displayTitle, message), CompletableDeferred())
 
         val toPublish: PendingConfirm?
         synchronized(lock) {
@@ -57,7 +72,7 @@ object ConfirmationBroker {
             withContext(Dispatchers.Main) { _pending = toPublish }
         }
 
-        AgentLogger.log("SYS", "[确认] 等待用户响应：$title")
+        AgentLogger.log("SYS", "[确认] 等待用户响应：$displayTitle")
         val approved = withTimeoutOrNull(300.seconds) { entry.deferred.await() } ?: false
 
         val removed: Boolean
@@ -71,9 +86,9 @@ object ConfirmationBroker {
         }
 
         if (!approved) {
-            AgentLogger.log("ERR", "[确认] 超时或拒绝：$title")
+            AgentLogger.log("ERR", "[确认] 超时或拒绝：$displayTitle")
         } else {
-            AgentLogger.log("SYS", "[确认] 用户允许：$title")
+            AgentLogger.log("SYS", "[确认] 用户允许：$displayTitle")
         }
         return approved
     }

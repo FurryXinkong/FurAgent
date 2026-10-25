@@ -2,12 +2,12 @@ package net.xinkong.furagent.desktop.data
 
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.SecretCodec
+import net.xinkong.furagent.shared.ThinkingLevel
 import net.xinkong.furagent.shared.util.FileRecovery
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.NetworkInterface
-import java.text.SimpleDateFormat
 import java.util.*
 
 data class DesktopModelProfile(
@@ -33,7 +33,11 @@ data class DesktopModelProfile(
      * 采样温度。默认 0.1（Agent 场景要稳定调工具，低温更可靠）。
      * 写作/创意场景可调高。
      */
-    val temperature: Double = 0.1
+    val temperature: Double = 0.1,
+    /** 存在惩罚（-2.0 ~ 2.0）。默认 0.0（不干预）。 */
+    val presencePenalty: Double = 0.0,
+    /** 频率惩罚（-2.0 ~ 2.0）。默认 0.0（不干预）。 */
+    val frequencyPenalty: Double = 0.0
 )
 
 data class ModelPreset(
@@ -81,6 +85,16 @@ data class DesktopSettings(
     val maxToolCallLoops: Int = 20,
     val maxTurns: Int = 20,
 
+    /**
+     * 【上下文预算】历史的 token 上限（单位：千 token，0 = 不限制）。
+     *
+     * 【为什么需要】maxTurns 只能按轮次数拦，拦不住“工具输出特别大”的会话：
+     * 一轮里读十个大文件就能吃掉几万 token。
+     * 这里按 token 预算裁「工具过程」（从旧的开始丢，保留人类消息和助手回复），
+     * 既大幅压住 token 消耗，又能让模型知道之前大概改了什么。
+     */
+    val contextTokenBudgetK: Int = 100,
+
     val systemPromptMode: String = "append",
     val systemPromptAddon: String = "",
     val systemPromptFull: String = "",
@@ -89,10 +103,10 @@ data class DesktopSettings(
     val port: Int = 8425,
 
     /**
-     * 是否主动开启深度思考（全局开关，ChatPage 输入框切换）。
-     * 开启后按厂商加"启用思考"参数。
+     * 思考强度（全局设置，ChatPage 输入框切换）。
+     * 四档：关闭 / 快速 / 标准 / 深度。默认关闭。
      */
-    val enableThinking: Boolean = false,
+    val thinkingLevel: ThinkingLevel = ThinkingLevel.DEFAULT,
 
     val requireConfirmWrite: Boolean = true,
     val requireConfirmDelete: Boolean = true,
@@ -115,6 +129,12 @@ data class DesktopSettings(
 
     val notificationsEnabled: Boolean = false,
 
+    /**
+     * 【常驻后台】关闭窗口时收进系统托盘，而不是退出进程。
+     * 开着时定时任务、手机互联、文件服务继续在后台跑。
+     */
+    val closeToTray: Boolean = true,
+
     val disabledTools: Set<String> = emptySet(),
 
     val hiddenSettings: Set<String> = emptySet(),
@@ -125,7 +145,16 @@ data class DesktopSettings(
 
     val floatingWindowEnabled: Boolean = true,
 
-    val tempCleanupDays: Int = 7
+    val tempCleanupDays: Int = 7,
+
+    /** 页面底部 token 消耗状态栏（轮次 / 工具步数 / 估算 token / 上下文占用） */
+    val showTokenBar: Boolean = false,
+    /** 输入区上方「本次修改的文件」折叠卡片 */
+    val showModifiedFiles: Boolean = false,
+    /** 智能体可建议开启新对话（对话里出现「新对话」按钮） */
+    val enableNewSessionSuggest: Boolean = false,
+    /** 写前备份 + 修改历史记录 + 一键回档 */
+    val fileBackupEnabled: Boolean = true
 ) {
     fun currentProfile(): DesktopModelProfile? =
         profiles.firstOrNull { it.id == currentProfileId } ?: profiles.firstOrNull()
@@ -165,6 +194,8 @@ data class DesktopSettings(
                             put("supportsThinking", p.supportsThinking)
                             put("supportsVision", p.supportsVision)
                             put("temperature", p.temperature)
+                            put("presencePenalty", p.presencePenalty)
+                            put("frequencyPenalty", p.frequencyPenalty)
                             put("kind", p.kind)
                         })
                     }
@@ -175,11 +206,12 @@ data class DesktopSettings(
                 put("apiKeySource", apiKeySource)
                 put("maxToolCallLoops", maxToolCallLoops)
                 put("maxTurns", maxTurns)
+        put("contextTokenBudgetK", contextTokenBudgetK)
                 put("systemPromptMode", systemPromptMode)
                 put("systemPromptAddon", systemPromptAddon)
                 put("systemPromptFull", systemPromptFull)
                 put("autoSpeak", autoSpeak)
-                put("enableThinking", enableThinking)
+                put("thinkingLevel", thinkingLevel.id)
                 put("port", port)
                 put("requireConfirmWrite", requireConfirmWrite)
                 put("requireConfirmDelete", requireConfirmDelete)
@@ -187,6 +219,10 @@ data class DesktopSettings(
                 put("requireConfirmPython", requireConfirmPython)
                 put("requireConfirmSkill", requireConfirmSkill)
                 put("requireConfirmFfmpegOverwrite", requireConfirmFfmpegOverwrite)
+                put("showTokenBar", showTokenBar)
+                put("showModifiedFiles", showModifiedFiles)
+                put("enableNewSessionSuggest", enableNewSessionSuggest)
+                put("fileBackupEnabled", fileBackupEnabled)
                 put("customToolPaths", JSONObject().apply {
                     customToolPaths.forEach { (k, v) -> put(k, v) }
                 })
@@ -196,6 +232,7 @@ data class DesktopSettings(
                 put("imageCompressQuality", imageCompressQuality)
                 put("imageCompressMaxDim", imageCompressMaxDim)
                 put("notificationsEnabled", notificationsEnabled)
+        put("closeToTray", closeToTray)
                 put("disabledTools", JSONArray().apply { disabledTools.forEach { put(it) } })
                 put("hiddenSettings", JSONArray().apply { hiddenSettings.forEach { put(it) } })
                 put("collapsedGroups", JSONArray().apply { collapsedGroups.forEach { put(it) } })
@@ -255,6 +292,8 @@ data class DesktopSettings(
                                 supportsThinking = p.optBoolean("supportsThinking", true),
                                 supportsVision = p.optBoolean("supportsVision", true),
                                 temperature = p.optDouble("temperature", 0.1),
+                                presencePenalty = p.optDouble("presencePenalty", 0.0),
+                                frequencyPenalty = p.optDouble("frequencyPenalty", 0.0),
                                 kind = p.optString("kind", "chat").ifBlank { "chat" }
                             ))
                         } catch (e: Exception) {
@@ -322,12 +361,15 @@ data class DesktopSettings(
                         .takeIf { it in listOf("profile", "env") } ?: "profile",
                     maxToolCallLoops = o.optInt("maxToolCallLoops", 20).coerceAtLeast(1),
                     maxTurns = o.optInt("maxTurns", 20).coerceAtLeast(1),
+        contextTokenBudgetK = o.optInt("contextTokenBudgetK", 100).coerceIn(0, 2000),
                     systemPromptMode = o.optString("systemPromptMode", "append")
                         .takeIf { it in listOf("append", "replace") } ?: "append",
                     systemPromptAddon = o.optString("systemPromptAddon", ""),
                     systemPromptFull = o.optString("systemPromptFull", ""),
                     autoSpeak = o.optBoolean("autoSpeak", false),
-                    enableThinking = o.optBoolean("enableThinking", false),
+                    thinkingLevel = if (o.has("thinkingLevel"))
+                        ThinkingLevel.fromId(o.optString("thinkingLevel", null))
+                    else ThinkingLevel.fromLegacyBoolean(o.optBoolean("enableThinking", false)),
                     port = o.optInt("port", 8425).coerceIn(1, 65535),
                     requireConfirmWrite = o.optBoolean("requireConfirmWrite", true),
                     requireConfirmDelete = o.optBoolean("requireConfirmDelete", true),
@@ -335,6 +377,10 @@ data class DesktopSettings(
                     requireConfirmPython = o.optBoolean("requireConfirmPython", true),
                     requireConfirmSkill = o.optBoolean("requireConfirmSkill", true),
                     requireConfirmFfmpegOverwrite = o.optBoolean("requireConfirmFfmpegOverwrite", true),
+                    showTokenBar = o.optBoolean("showTokenBar", false),
+                    showModifiedFiles = o.optBoolean("showModifiedFiles", false),
+                    enableNewSessionSuggest = o.optBoolean("enableNewSessionSuggest", false),
+                    fileBackupEnabled = o.optBoolean("fileBackupEnabled", true),
                     customToolPaths = customPaths,
                     receiveDir = receiveDir,
                     themeMode = o.optString("themeMode", "system"),
@@ -342,6 +388,7 @@ data class DesktopSettings(
                     imageCompressQuality = o.optInt("imageCompressQuality", 70).coerceIn(30, 100),
                     imageCompressMaxDim = o.optInt("imageCompressMaxDim", 1280).coerceIn(320, 4096),
                     notificationsEnabled = o.optBoolean("notificationsEnabled", false),
+            closeToTray = o.optBoolean("closeToTray", true),
                     disabledTools = disabled,
                     hiddenSettings = hidden,
                     collapsedGroups = collapsed,
@@ -396,7 +443,7 @@ object DesktopPaths {
         val d = File(rootDir(), "screenshots"); if (!d.exists()) d.mkdirs(); return d
     }
     fun receivedDir(): File {
-        val d = File(rootDir(), "received"); if (!d.exists()) d.mkdirs(); return d
+        val d = File(rootDir(), "downloads"); if (!d.exists()) d.mkdirs(); return d
     }
     fun tempDir(): File {
         val d = File(rootDir(), "temp"); if (!d.exists()) d.mkdirs(); return d
@@ -574,33 +621,6 @@ private fun queryLinuxXdg(kind: String): String? {
         p.waitFor()
         if (output.isNotBlank() && output.startsWith("/") && File(output).exists()) output else null
     } catch (_: Exception) { null }
-}
-
-fun extractFileName(path: String): String {
-    val s = path.trim().trimEnd('/', '\\')
-    val rawName = s.substringAfterLast('/').substringAfterLast('\\')
-    val cleaned = rawName.replace(Regex("[\\r\\n\\t\\u0000-\\u001F]"), "_")
-        .replace(Regex("[\\\\/:*?\"<>|]"), "_").trim()
-    return cleaned.ifBlank { "unnamed_${System.currentTimeMillis()}" }
-}
-
-fun resolveReceiveFile(dir: String, fileName: String): File {
-    val dirFile = File(dir)
-    if (!dirFile.exists()) dirFile.mkdirs()
-    val safeName = fileName.ifBlank { "unnamed_${System.currentTimeMillis()}" }
-    val target = File(dirFile, safeName)
-    if (!target.exists()) return target
-    val dot = safeName.lastIndexOf('.')
-    val base = if (dot > 0) safeName.substring(0, dot) else safeName
-    val ext = if (dot > 0) safeName.substring(dot) else ""
-    val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
-    var candidate = File(dirFile, "${base}_$ts$ext")
-    var tries = 0
-    while (candidate.exists() && tries < 10) {
-        candidate = File(dirFile, "${base}_${ts}_$tries$ext")
-        tries++
-    }
-    return candidate
 }
 
 fun getSystemHostname(): String = try {

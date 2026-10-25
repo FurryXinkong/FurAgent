@@ -5,8 +5,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import net.xinkong.furagent.shared.icons.Icons
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -19,6 +19,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
@@ -27,8 +29,12 @@ import net.xinkong.furagent.desktop.ui.theme.Spacing
  * 自定义脚本 —— 整屏页面。
  *
  * 【新格式 2026-10-15】脚本直接放 scripts/ 根目录，一个 .py 一个脚本，
- * 元数据写在文件头部（NAME / DESCRIPTION / PARAMS / TIMEOUT）。
+ * 元数据写在文件头部（NAME / DESCRIPTION / PARAMS / TIMEOUT / CONFIG）。
  * 每个脚本会注册成一个独立工具 pytool_<name>，AI 可直接调用。
+ *
+ * 【配置 2026-10-18】每个脚本的开关 / 超时 / 配置项存在
+ * scripts/<name>.config.json，不再写 settings.json 的 disabledTools。
+ * 卡片上的「配置」按钮可以编辑这些值。
  */
 @Composable
 fun SkillPage(
@@ -37,12 +43,29 @@ fun SkillPage(
 ) {
     var refreshKey by remember { mutableIntStateOf(0) }
     var searchText by remember { mutableStateOf("") }
-    val skills = remember(refreshKey) { SkillStore.list() }
-    // 【B21】从示例创建脚本
+    // SkillStore.list() 会 spawn Python 子进程做 AST 解析，
+    // 同步在 remember 里执行会卡 UI 线程（点击导航即卡一下）→ 改为异步加载。
+    var skills by remember { mutableStateOf<List<SkillMeta>>(emptyList()) }
+    var broken by remember { mutableStateOf<List<BrokenSkill>>(emptyList()) }
+    var loading by remember { mutableStateOf(true) }
+    // 【配置】脚本名 → 配置（异步加载，避免主线程读盘）
+    var configs by remember { mutableStateOf<Map<String, SkillConfig>>(emptyMap()) }
+    LaunchedEffect(refreshKey) {
+        loading = true
+        val loaded = withContext(Dispatchers.IO) { SkillStore.list() }
+        val brokenLoaded = withContext(Dispatchers.IO) { SkillStore.listBroken() }
+        val cfgLoaded = withContext(Dispatchers.IO) {
+            loaded.associate { it.name to SkillStore.loadConfig(it.name) }
+        }
+        skills = loaded
+        broken = brokenLoaded
+        configs = cfgLoaded
+        loading = false
+    }
+    // 从示例创建脚本
     fun createExample() {
         SkillRunBus.createExample { refreshKey++ }
     }
-    val broken = remember(refreshKey) { SkillStore.listBroken() }
     val rootDir = remember { DesktopPaths.scriptsDir() }
     val running by SkillRunBus.running.collectAsState()
 
@@ -54,7 +77,7 @@ fun SkillPage(
         }
     }
 
-    val enabledCount = skills.count { (SkillStore.TOOL_PREFIX + it.name) !in disabledTools }
+    val enabledCount = skills.count { configs[it.name]?.enabled ?: true }
 
     Column(Modifier.fillMaxSize()) {
         PageTitleBar(
@@ -97,6 +120,19 @@ fun SkillPage(
             }
 
             when {
+                loading -> item {
+                    Box(
+                        Modifier.fillMaxWidth().height(160.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(28.dp),
+                            strokeWidth = 2.5.dp,
+                            color = AccentColor()
+                        )
+                    }
+                }
+
                 skills.isEmpty() -> item {
                     EmptySkillState { refreshKey++ }
                 }
@@ -118,11 +154,16 @@ fun SkillPage(
                     SkillCard(
                         meta = meta,
                         runningName = running,
-                        enabled = (SkillStore.TOOL_PREFIX + meta.name) !in disabledTools,
+                        config = configs[meta.name] ?: SkillConfig(),
                         onToggleEnabled = { en ->
-                            val toolName = SkillStore.TOOL_PREFIX + meta.name
-                            val newSet = if (en) disabledTools - toolName else disabledTools + toolName
-                            onDisabledToolsChange(newSet)
+                            // 【配置】开关写脚本自己的 config.json，不再动 disabledTools
+                            configs = configs + (meta.name to (configs[meta.name] ?: SkillConfig()).copy(enabled = en))
+                            SkillRunBus.setEnabled(meta.name, en) { err ->
+                                if (err != null) refreshKey++
+                            }
+                        },
+                        onConfigSaved = { newCfg ->
+                            configs = configs + (meta.name to newCfg)
                         },
                         onDeleted = { refreshKey++ }
                     )
@@ -140,15 +181,13 @@ fun SkillPage(
     }
 }
 
-// ============================================================
 // 无效目录区块
-// ============================================================
 
 @Composable
 private fun BrokenSection(broken: List<BrokenSkill>, onRefresh: () -> Unit) {
     var confirmClearAll by remember { mutableStateOf(false) }
 
-    GlassCard(padding = PaddingValues(16.dp)) {
+    GlassCard(padding = PaddingValues(Spacing.CARD_PADDING)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Icon(
                 Icons.Default.Warning,
@@ -232,64 +271,61 @@ private fun BrokenRow(b: BrokenSkill, onDeleted: () -> Unit) {
     }
 }
 
-// ============================================================
 // 空状态
-// ============================================================
 
 @Composable
 private fun EmptySkillState(onRefresh: () -> Unit) {
-    Box(
-        Modifier.fillMaxWidth().height(240.dp),
-        contentAlignment = Alignment.Center
+    Column(
+        Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                Icons.Default.Extension,
-                contentDescription = null,
-                tint = TextMuted(),
-                modifier = Modifier.size(56.dp)
-            )
-            Spacer(Modifier.height(16.dp))
-            Text(
-                "还没有自定义脚本",
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = TextSecondary()
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "跟 AI 说「做个脚本，以后都用这个流程」就能创建",
-                fontSize = 12.sp,
-                color = TextMuted()
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "或直接把 .py 放进脚本目录（头部写 NAME / DESCRIPTION / PARAMS）",
-                fontSize = 11.sp,
-                color = TextMuted()
-            )
-            Spacer(Modifier.height(20.dp))
-            SecondaryButton(text = "已放好了，重新扫描", icon = Icons.Default.Refresh) { onRefresh() }
-        }
+        Icon(
+            Icons.Default.Extension,
+            contentDescription = null,
+            tint = TextMuted(),
+            modifier = Modifier.size(56.dp)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text(
+            "还没有自定义脚本",
+            fontSize = 15.sp,
+            color = TextSecondary()
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "跟 AI 说「做个脚本，以后都用这个流程」就能创建",
+            fontSize = 12.sp,
+            color = TextMuted()
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "或直接把 .py 放进脚本目录（头部写 NAME / DESCRIPTION / PARAMS）",
+            fontSize = 12.sp,
+            color = TextMuted()
+        )
+        Spacer(Modifier.height(20.dp))
+        PrimaryButton(text = "已放好了，重新扫描", icon = Icons.Default.Refresh) { onRefresh() }
     }
 }
 
-// ============================================================
 // 单个脚本卡片
-// ============================================================
 
 @Composable
 private fun SkillCard(
     meta: SkillMeta,
     runningName: String?,
-    enabled: Boolean,
+    config: SkillConfig,
     onToggleEnabled: (Boolean) -> Unit,
+    onConfigSaved: (SkillConfig) -> Unit,
     onDeleted: () -> Unit
 ) {
     var showInfo by remember { mutableStateOf(false) }
     var showRun by remember { mutableStateOf(false) }
+    var showConfig by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf(false) }
 
+    val enabled = config.enabled
     val isRunning = runningName == meta.name
 
     GlassCard(padding = PaddingValues(Spacing.CARD_PADDING)) {
@@ -345,6 +381,10 @@ private fun SkillCard(
                         Spacer(Modifier.width(8.dp))
                         Text("${meta.params.size} 个参数", fontSize = 11.sp, color = TextMuted())
                     }
+                    if (meta.configSpec.isNotEmpty()) {
+                        Spacer(Modifier.width(8.dp))
+                        Text("${meta.configSpec.size} 个配置项", fontSize = 11.sp, color = TextMuted())
+                    }
                 }
                 if (meta.description.isNotBlank()) {
                     Spacer(Modifier.height(4.dp))
@@ -356,7 +396,7 @@ private fun SkillCard(
                 }
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "${meta.file.name} · 超时 ${meta.timeout}s",
+                    "${meta.file.name} · 超时 ${SkillStore.effectiveTimeout(meta, config)}s",
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     color = TextMuted()
@@ -381,6 +421,7 @@ private fun SkillCard(
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 SecondaryButton(text = "详情") { showInfo = true }
+                SecondaryButton(text = "配置") { showConfig = true }
                 SecondaryButton(
                     text = "试运行",
                     icon = Icons.Default.PlayArrow,
@@ -394,8 +435,20 @@ private fun SkillCard(
     if (showInfo) {
         InfoDialog(
             title = meta.name,
-            message = buildSkillInfo(meta),
+            message = buildSkillInfo(meta, config),
             onDismiss = { showInfo = false }
+        )
+    }
+
+    if (showConfig) {
+        SkillConfigDialog(
+            meta = meta,
+            config = config,
+            onDismiss = { showConfig = false },
+            onSaved = { newCfg ->
+                showConfig = false
+                onConfigSaved(newCfg)
+            }
         )
     }
 
@@ -426,12 +479,14 @@ private fun SkillCard(
     }
 }
 
-private fun buildSkillInfo(meta: SkillMeta): String {
+private fun buildSkillInfo(meta: SkillMeta, config: SkillConfig): String {
     val sb = StringBuilder()
     sb.append("说明：").append(meta.description.ifBlank { "(无)" }).append("\n")
     sb.append("文件：").append(meta.file.absolutePath).append("\n")
+    sb.append("配置文件：").append(SkillStore.configFile(meta.name).absolutePath).append("\n")
     sb.append("工具名：").append(SkillStore.TOOL_PREFIX).append(meta.name).append("\n")
-    sb.append("超时：").append(meta.timeout).append(" 秒\n")
+    sb.append("启用：").append(if (config.enabled) "是" else "否").append("\n")
+    sb.append("超时：").append(SkillStore.effectiveTimeout(meta, config)).append(" 秒\n")
     if (meta.params.isEmpty()) {
         sb.append("参数：无")
     } else {
@@ -448,9 +503,165 @@ private fun buildSkillInfo(meta: SkillMeta): String {
     return sb.toString().trim()
 }
 
-// ============================================================
+// 配置弹窗
+
+/**
+ * 脚本配置编辑弹窗。
+ *
+ * 按脚本头部 CONFIG 声明渲染表单：
+ *   - boolean → Switch
+ *   - 其它 → 文本框（integer/number 提示数字）
+ *   - secret:true → 密码框（打码显示，留空表示不修改）
+ * 另外可以改超时（留空 = 用脚本默认）。
+ */
+@Composable
+private fun SkillConfigDialog(
+    meta: SkillMeta,
+    config: SkillConfig,
+    onDismiss: () -> Unit,
+    onSaved: (SkillConfig) -> Unit
+) {
+    // 初始值：声明里的项 + 配置里多出来的项
+    val keys = remember(meta.name) {
+        LinkedHashSet<String>().apply {
+            addAll(meta.configSpec.keys)
+            addAll(config.values.keys)
+        }.toList()
+    }
+    val values = remember(meta.name) {
+        mutableStateMapOf<String, String>().apply {
+            keys.forEach { k ->
+                val spec = meta.configSpec[k]
+                val v = config.valueOf(k, meta.configSpec)
+                put(
+                    k,
+                    when {
+                        spec?.secret == true -> ""          // 敏感项不回显，留空=不改
+                        v == null -> ""
+                        else -> v.toString()
+                    }
+                )
+            }
+        }
+    }
+    var timeoutText by remember(meta.name) {
+        mutableStateOf(config.timeout?.toString() ?: "")
+    }
+    var saving by remember { mutableStateOf(false) }
+
+    GlassDialog(
+        title = "配置 ${meta.name}",
+        onDismiss = onDismiss,
+        width = 520.dp,
+        content = {
+            Column(Modifier.fillMaxWidth()) {
+                HintText("这些值存在 ${SkillStore.configFile(meta.name).name}，运行时自动传给脚本。")
+                Spacer(Modifier.height(16.dp))
+
+                if (keys.isEmpty()) {
+                    Text(
+                        "该脚本没有声明配置项（头部没有 CONFIG）。",
+                        fontSize = 13.sp,
+                        color = TextSecondary()
+                    )
+                } else {
+                    keys.forEach { k ->
+                        val spec = meta.configSpec[k]
+                        Column(Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    k,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = TextPrimary()
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    (spec?.type ?: "string") + if (spec?.secret == true) " · 敏感" else "",
+                                    fontSize = 11.sp,
+                                    color = TextMuted()
+                                )
+                            }
+                            if (spec != null && spec.description.isNotBlank()) {
+                                Spacer(Modifier.height(2.dp))
+                                Text(spec.description, fontSize = 11.sp, color = TextSecondary())
+                            }
+                            Spacer(Modifier.height(6.dp))
+                            if (spec?.type == "boolean") {
+                                val cur = values[k] == "true"
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Switch(
+                                        checked = cur,
+                                        onCheckedChange = { values[k] = it.toString() },
+                                        colors = glassSwitchColors()
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        if (cur) "true" else "false",
+                                        fontSize = 12.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = TextSecondary()
+                                    )
+                                }
+                            } else {
+                                GlassTextField(
+                                    value = values[k] ?: "",
+                                    placeholder = when {
+                                        spec?.secret == true -> "留空表示不修改"
+                                        spec?.type == "integer" || spec?.type == "number" -> "数字"
+                                        else -> ""
+                                    },
+                                    monospace = spec?.secret == true,
+                                    onValueChange = { values[k] = it }
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(4.dp))
+                GlassTextField(
+                    value = timeoutText,
+                    label = "超时（秒，留空用脚本默认 ${meta.timeout}s）",
+                    placeholder = meta.timeout.toString(),
+                    onValueChange = { timeoutText = it }
+                )
+            }
+        },
+        actions = {
+            SecondaryButton(text = "取消", onClick = onDismiss)
+            PrimaryButton(text = "保存", loading = saving) {
+                // 组装新配置：敏感项留空则保留原值
+                val newValues = LinkedHashMap<String, Any?>()
+                keys.forEach { k ->
+                    val spec = meta.configSpec[k]
+                    val raw = values[k]?.trim().orEmpty()
+                    if (spec?.secret == true && raw.isEmpty()) {
+                        // 保留原值
+                        config.values[k]?.let { newValues[k] = it }
+                        return@forEach
+                    }
+                    if (raw.isEmpty()) return@forEach
+                    newValues[k] = when (spec?.type) {
+                        "integer" -> raw.toLongOrNull() ?: raw
+                        "number" -> raw.toDoubleOrNull() ?: raw
+                        "boolean" -> raw.equals("true", ignoreCase = true)
+                        else -> raw
+                    }
+                }
+                val newTimeout = timeoutText.trim().toIntOrNull()?.coerceIn(1, 3600)
+                val newCfg = config.copy(timeout = newTimeout, values = newValues)
+                saving = true
+                SkillRunBus.saveConfig(meta.name, newCfg) { err ->
+                    saving = false
+                    if (err == null) onSaved(newCfg)
+                }
+            }
+        }
+    )
+}
+
 // 试运行弹窗
-// ============================================================
 
 @Composable
 private fun SkillRunDialog(

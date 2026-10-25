@@ -85,9 +85,7 @@ object SystemIntegrationTools {
         }
     }
 
-    // ============================================================
     // 媒体
-    // ============================================================
 
     private suspend fun doMediaControl(args: JSONObject): ToolResult = withContext(Dispatchers.IO) {
         val action = args.optString("action", "").trim().lowercase()
@@ -230,9 +228,7 @@ object SystemIntegrationTools {
         return runProcess(listOf("xdotool", "key", key), 5) != null
     }
 
-    // ============================================================
     // 音量
-    // ============================================================
 
     private suspend fun doAudioVolume(args: JSONObject): ToolResult = withContext(Dispatchers.IO) {
         val action = args.optString("action", "").trim().lowercase()
@@ -305,9 +301,7 @@ object SystemIntegrationTools {
         }
     }
 
-    // ============================================================
     // 剪贴板
-    // ============================================================
 
     private suspend fun doClipboardRead(): ToolResult = withContext(Dispatchers.IO) {
         try {
@@ -328,9 +322,7 @@ object SystemIntegrationTools {
         } catch (e: Exception) { ToolResult.fail("剪贴板写入失败：${e.message}") }
     }
 
-    // ============================================================
     // 锁屏 / 电源 / 通知
-    // ============================================================
 
     private suspend fun doLockScreen(): ToolResult = withContext(Dispatchers.IO) {
         try {
@@ -414,9 +406,7 @@ object SystemIntegrationTools {
         return ToolResult.ok("已发送通知：$title")
     }
 
-    // ============================================================
     // 窗口控制
-    // ============================================================
 
     private suspend fun doWindowControl(args: JSONObject): ToolResult = withContext(Dispatchers.IO) {
         val action = args.optString("action", "").trim().lowercase()
@@ -510,9 +500,7 @@ object SystemIntegrationTools {
         return ToolResult.ok("已执行：$action $match")
     }
 
-    // ============================================================
     // 壁纸
-    // ============================================================
 
     private suspend fun doSetWallpaper(args: JSONObject): ToolResult = withContext(Dispatchers.IO) {
         val path = args.optString("path", "").trim()
@@ -550,9 +538,7 @@ object SystemIntegrationTools {
         } catch (e: Exception) { ToolResult.fail("设置壁纸失败：${e.message}") }
     }
 
-    // ============================================================
     // 系统信息
-    // ============================================================
 
     private suspend fun systemInfo(): ToolResult = withContext(Dispatchers.IO) {
         val sb = StringBuilder()
@@ -734,9 +720,7 @@ object SystemIntegrationTools {
         return sb.toString().ifBlank { "(无磁盘信息)\n" }
     }
 
-    // ============================================================
     // PowerShell / Process 辅助
-    // ============================================================
 
     /**
      * 固定名脚本文件（~/.furagent/temp/furagent_sys.ps1）。

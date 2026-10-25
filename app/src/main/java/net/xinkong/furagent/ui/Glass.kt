@@ -7,8 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,80 +28,53 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import net.xinkong.furagent.ui.theme.DarkSuccess
+import net.xinkong.furagent.ui.theme.AppRadius
+import net.xinkong.furagent.ui.theme.LightSuccess
 
-// ============================================================
 // 玻璃色
-// ============================================================
-@Composable
-fun glassSheetBg(): Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
 
-/**
- * 整屏 Page 的背景色。
- *
- * 和 glassSheetBg（半透明 96%）不同，Page 是整屏覆盖，必须完全不透明，
- * 否则会透出底下的聊天界面。
- */
-@Composable
-fun glassPageBg(): Color {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    return if (isDark) Color(0xFF0B0F16)
-    else Color(0xFFF8F9FC)
-}
-@Composable
-fun glassCardBg(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
-@Composable
-fun glassCardBorder(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)
-@Composable
-fun glassInputBg(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.72f)
-@Composable
-fun glassInputBorder(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f)
-@Composable
-fun glassDivider(): Color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-@Composable
-fun glassTopBarBg(): Color = MaterialTheme.colorScheme.background.copy(alpha = 0.85f)
-@Composable
-fun glassFloatingBg(): Color = MaterialTheme.colorScheme.surface.copy(alpha = 0.82f)
+// 【统一代码】语义状态色收口：页面不再硬编码 0x34C759/0xF59E0B/0xEF4444，
+// 与桌面端 ErrorColor/WarningColor/ResultColor 命名对称。
 
-// ============================================================
+/** 成功/在线绿：随明暗取主题 Success 值。 */
+@Composable
+fun SuccessColor(): Color =
+    if (MaterialTheme.colorScheme.background.luminance() < 0.5f) DarkSuccess else LightSuccess
+
+/** 警告琥珀（与桌面端双主题同值对齐）。 */
+@Composable
+fun WarningColor(): Color = Color(0xFFF59E0B)
+
+/** 状态错误红（与桌面端 ErrorColor 同值；区别于 colorScheme.error 的系统红）。 */
+@Composable
+fun ErrorColor(): Color = Color(0xFFEF4444)
+
+// 玻璃色委托到 shared（本地保留同名函数保持向后兼容，调用方无需改 import）
+
+@Composable fun glassSheetBg() = net.xinkong.furagent.shared.ui.glassSheetBg()
+@Composable fun glassCardBg() = net.xinkong.furagent.shared.ui.glassCardBg()
+@Composable fun glassCardBorder() = net.xinkong.furagent.shared.ui.glassCardBorder()
+@Composable fun glassInputBg() = net.xinkong.furagent.shared.ui.glassInputBg()
+@Composable fun glassInputBorder() = net.xinkong.furagent.shared.ui.glassInputBorder()
+@Composable fun glassDivider() = net.xinkong.furagent.shared.ui.glassDivider()
+@Composable fun glassTopBarBg() = net.xinkong.furagent.shared.ui.glassTopBarBg()
+@Composable fun glassFloatingBg() = net.xinkong.furagent.shared.ui.glassFloatingBg()
+@Composable fun glassPageBg() = net.xinkong.furagent.shared.ui.glassPageBg()
+
 // 玻璃高光
-// ============================================================
 @Composable
 fun GlassSheen(
     modifier: Modifier = Modifier,
     height: Dp = 80.dp,
     alpha: Float = 0.06f
-) {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    val sheenColor = if (isDark) {
-        Color.White.copy(alpha = alpha * 0.7f)
-    } else {
-        Color.White.copy(alpha = alpha * 1.6f)
-    }
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(height)
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(sheenColor, Color.Transparent)
-                )
-            )
-    )
-}
+) = net.xinkong.furagent.shared.ui.GlassSheen(modifier, height, alpha)
 
-// ============================================================
 // 阴影颜色
-// ============================================================
 @Composable
-fun glassShadowColor(): Color {
-    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
-    return if (isDark) Color.Black.copy(alpha = 0.55f)
-    else Color.Black.copy(alpha = 0.10f)
-}
+fun glassShadowColor() = net.xinkong.furagent.shared.ui.glassShadowColor()
 
-// ============================================================
 // 全局背景（多 stop 径向渐变，不用 blur）
-// ============================================================
 @Composable
 fun GlassBackground(content: @Composable () -> Unit = {}) {
     val config = LocalConfiguration.current
@@ -211,9 +183,7 @@ fun GlassBackground(content: @Composable () -> Unit = {}) {
     }
 }
 
-// ============================================================
 // 背景模糊
-// ============================================================
 @Composable
 fun ApplyBackgroundBlur(enabled: Boolean = true) {
     val view = LocalView.current
@@ -249,22 +219,20 @@ fun GlassDragHandle() {
             .padding(vertical = 12.dp)
             .width(36.dp)
             .height(4.dp)
-            .clip(RoundedCornerShape(2.dp))
+            .clip(RoundedCornerShape(AppRadius.HAIRLINE))
             .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f))
     )
 }
 
-// ============================================================
 // 【页面模板】PocoPageTopBar
-// ============================================================
-//
+
 // 所有整屏 Page 的顶部标题栏统一走这一个实现：
 //   - 标题：20sp Black + onBackground
 //   - 副标题：11sp + onSurfaceVariant
 //   - 返回按钮：ArrowBack + onBackground
 //   - actions：可选（RowScope）
 //   - 背景透明（透出 glassPageBg）
-//
+
 // 【为什么收口】10+ 个 Page 各写一份几乎一样的 TopAppBar，改一处要动 10+ 个文件。
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -276,7 +244,9 @@ fun PocoPageTopBar(
     /** 副标题颜色，默认 onSurfaceVariant。日志页副标题是 primary，需要覆盖。 */
     subtitleColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     /** 副标题可点击（如日志页点 Token 数看明细）。 */
-    onSubtitleClick: (() -> Unit)? = null
+    onSubtitleClick: (() -> Unit)? = null,
+    /** 自定义副标题插槽（如状态圆点 + 文本），非 null 时优先于 subtitle 文本。 */
+    subtitleContent: (@Composable () -> Unit)? = null
 ) {
     TopAppBar(
         title = {
@@ -288,14 +258,18 @@ fun PocoPageTopBar(
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(Modifier.height(2.dp))
-                Text(
-                    subtitle,
-                    fontSize = 11.sp,
-                    color = subtitleColor,
-                    modifier = if (onSubtitleClick != null) {
-                        Modifier.clickable(onClick = onSubtitleClick)
-                    } else Modifier
-                )
+                if (subtitleContent != null) {
+                    subtitleContent()
+                } else {
+                    Text(
+                        subtitle,
+                        fontSize = 11.sp,
+                        color = subtitleColor,
+                        modifier = if (onSubtitleClick != null) {
+                            Modifier.clickable(onClick = onSubtitleClick)
+                        } else Modifier
+                    )
+                }
             }
         },
         navigationIcon = {
@@ -315,27 +289,25 @@ fun PocoPageTopBar(
     )
 }
 
-// ============================================================
 // 【标准卡片】PocoCard
-// ============================================================
-//
+
 // Android 端所有页面级卡片统一走这一个实现：
 //   - 底色  glassCardBg()       (surfaceVariant 60% 半透明)
 //   - 边框  0.5dp glassCardBorder()
 //   - 圆角  24dp
 //   - 阴影  3dp
-//
+
 // 禁止再手写 GlassShadow + Surface(color=..., shape=...)，
 // 统一调用 PocoCard { ... }。若需特殊底色（警告/错误），
 // 直接内层 Column 加背景色，或明确注释原因手写 Surface。
-//
+
 // 分组的折叠标题用 PocoGroupTitle，分割线用 PocoDivider，
 // 输入框用 PocoTextField，开关行用 PocoSwitchRow。
 
 @Composable
 fun PocoCard(
     modifier: Modifier = Modifier,
-    /** true 时用 primary 描边，表示“选中/当前”状态。 */
+    /** true 时用 primary 描边，表示”选中/当前”状态。 */
     selectedBorder: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
@@ -343,13 +315,13 @@ fun PocoCard(
     val borderColor = if (selectedBorder) {
         MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
     } else glassCardBorder()
-    val borderWidth = if (selectedBorder) 1.dp else 0.5.dp
+    val borderWidth = if (selectedBorder) 1.5.dp else 1.dp
     Box(
         modifier = modifier
             .fillMaxWidth()
             .shadow(
-                elevation = 3.dp,
-                shape = RoundedCornerShape(24.dp),
+                elevation = 1.5.dp,
+                shape = RoundedCornerShape(AppRadius.XL),
                 clip = false,
                 ambientColor = shadowColor,
                 spotColor = shadowColor
@@ -357,11 +329,75 @@ fun PocoCard(
     ) {
         Surface(
             color = glassCardBg(),
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(AppRadius.XL),
             border = BorderStroke(borderWidth, borderColor),
             modifier = Modifier.fillMaxWidth()
         ) { Column(content = content) }
     }
+}
+
+// 【标准弹窗】PocoAlertDialog
+
+// 全项目 41 处 AlertDialog 都手写
+//   shape = RoundedCornerShape(AppRadius.DIALOG),
+//   containerColor = MaterialTheme.colorScheme.surface,
+// 现统一走这个包装，只传业务参数。
+
+@Composable
+fun PocoAlertDialog(
+    onDismiss: () -> Unit,
+    title: String,
+    text: @Composable (() -> Unit)? = null,
+    confirmText: String = "确定",
+    confirmColor: Color = MaterialTheme.colorScheme.primary,
+    onConfirm: () -> Unit,
+    dismissText: String? = "取消",
+    dismissColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onDismissClick: (() -> Unit)? = null,
+    /** 可选的第三个按钮（放在 dismiss 左侧），用于「追加/覆盖」这类三选一场景。 */
+    extraDismissText: String? = null,
+    extraDismissColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onExtraDismissClick: (() -> Unit)? = null,
+    titleContentColor: Color = MaterialTheme.colorScheme.onSurface,
+    textContentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    /** 确定按钮是否可点（如输入框为空时置 false）。 */
+    confirmEnabled: Boolean = true
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        shape = RoundedCornerShape(AppRadius.DIALOG),
+        containerColor = MaterialTheme.colorScheme.surface,
+        titleContentColor = titleContentColor,
+        textContentColor = textContentColor,
+        title = { Text(title) },
+        text = text,
+        confirmButton = {
+            TextButton(onClick = onConfirm, enabled = confirmEnabled) {
+                Text(
+                    confirmText,
+                    color = if (confirmEnabled) confirmColor
+                    else confirmColor.copy(alpha = 0.38f),
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        dismissButton = if (dismissText != null || extraDismissText != null) {
+            {
+                Row {
+                    if (extraDismissText != null) {
+                        TextButton(onClick = { onExtraDismissClick?.invoke() }) {
+                            Text(extraDismissText, color = extraDismissColor)
+                        }
+                    }
+                    if (dismissText != null) {
+                        TextButton(onClick = { onDismissClick?.invoke() ?: onDismiss() }) {
+                            Text(dismissText, color = dismissColor)
+                        }
+                    }
+                }
+            }
+        } else null
+    )
 }
 
 /**
@@ -454,10 +490,11 @@ fun PocoDivider(startIndent: Dp = 0.dp) {
 fun PocoGroupTitle(text: String) {
     Text(
         text = text,
-        style = MaterialTheme.typography.labelLarge,
+        fontSize = 12.sp,
         fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp)
+        letterSpacing = 0.3.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+        modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 2.dp)
     )
 }
 
@@ -482,7 +519,7 @@ fun PocoTextField(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = if (minLines > 1) 88.dp else 0.dp),
-            minLines = minLines, shape = RoundedCornerShape(16.dp),
+            minLines = minLines, shape = RoundedCornerShape(AppRadius.MD),
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = MaterialTheme.colorScheme.primary,
                 unfocusedBorderColor = glassInputBorder(),
@@ -492,6 +529,21 @@ fun PocoTextField(
         )
     }
 }
+
+/**
+ * 统一的 Switch 配色。全项目所有 Switch 都走这里。
+ *
+ * 选中 = primary 轨道 + onPrimary 滑块
+ * 未选 = surfaceVariant 轨道 + onSurfaceVariant 滑块 + outlineVariant 描边
+ */
+@Composable
+fun pocoSwitchColors() = SwitchDefaults.colors(
+    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+    checkedTrackColor = MaterialTheme.colorScheme.primary,
+    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+    uncheckedBorderColor = MaterialTheme.colorScheme.outlineVariant
+)
 
 @Composable
 fun PocoSwitchRow(
@@ -524,7 +576,12 @@ fun PocoSwitchRow(
             }
         }
         Spacer(Modifier.width(12.dp))
-        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
+        Switch(
+            checked = checked,
+            onCheckedChange = onChange,
+            enabled = enabled,
+            colors = pocoSwitchColors()
+        )
     }
 }
 

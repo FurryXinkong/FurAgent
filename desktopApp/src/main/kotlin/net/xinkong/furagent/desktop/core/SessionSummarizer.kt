@@ -1,5 +1,6 @@
 package net.xinkong.furagent.desktop.core
 
+import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.*
@@ -40,6 +41,8 @@ import java.util.concurrent.TimeUnit
  */
 object SessionSummarizer {
 
+    private val RE_WHITESPACE = Regex("""\s+""")
+
     private const val TAG = "Summary"
 
     /** 摘要模型单次请求超时（秒） */
@@ -78,9 +81,7 @@ object SessionSummarizer {
         "一下", "一点", "时候", "问题", "东西", "事情", "地方", "方式", "方法", "情况"
     )
 
-    // ============================================================
     // 脏标记状态（记录每个会话上次摘要时的 updatedAt / messageCount）
-    // ============================================================
 
     private fun stateFile(): File = File(DesktopPaths.rootDir(), "session_summary_state.json")
 
@@ -120,9 +121,7 @@ object SessionSummarizer {
         }
     }
 
-    // ============================================================
     // 入口：启动时异步跑一次
-    // ============================================================
 
     /**
      * App 启动时调用。内部异步，不阻塞调用方。
@@ -183,9 +182,28 @@ object SessionSummarizer {
         }
     }
 
-    // ============================================================
+    /**
+     * 【修复】会话删除后，摘要本体由 DesktopSessionStore.delete 级联清掉，
+     * 但 session_summary_state.json 里的脏标记会变成孤儿键（永久累积、无限增长）。
+     * 删除会话 / 清空会话后调用本方法，把已不存在会话的标记清掉。
+     */
+    fun pruneState() {
+        try {
+            val alive = DesktopSessionStore.list().map { it.id }.toHashSet()
+            val state = loadState()
+            if (state.isEmpty()) return
+            val before = state.size
+            state.keys.retainAll(alive)
+            if (state.size != before) {
+                saveState(state)
+                DesktopLogger.info(TAG, "清理孤儿摘要状态 ${before - state.size} 条")
+            }
+        } catch (e: Exception) {
+            DesktopLogger.warn(TAG, "清理摘要状态失败：${e.message}")
+        }
+    }
+
     // 单个会话摘要
-    // ============================================================
 
     private fun summarizeOne(
         session: DesktopSession,
@@ -213,7 +231,7 @@ object SessionSummarizer {
         if (label.isBlank()) return null
         DesktopLogger.info(TAG, "会话 ${session.id} 摘要结果：$label")
 
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA).format(Date(session.updatedAt))
+        val date = DateFormats.formatDate(session.updatedAt)
         val content = "$SUMMARY_PREFIX[$date] $label"
         // 【P1-3】构造摘要详情 JSON，供 UI 展示“摘要怎么来的”
         val detail = try {
@@ -230,9 +248,7 @@ object SessionSummarizer {
         return content to detail
     }
 
-    // ============================================================
     // 本地信号提取
-    // ============================================================
 
     private data class Signals(
         val tools: List<String>,
@@ -347,7 +363,7 @@ object SessionSummarizer {
      */
     private fun compactCommands(commands: List<String>): List<String> {
         return commands
-            .map { it.trim().replace(Regex("\\s+"), " ") }
+            .map { it.trim().replace(RE_WHITESPACE, " ") }
             .filter { it.isNotBlank() }
             .distinct()
             .take(3)
@@ -366,16 +382,14 @@ object SessionSummarizer {
         return sb.toString()
     }
 
-    // ============================================================
     // 调用摘要模型（非流式）
-    // ============================================================
 
     private fun callSummaryModel(
         settings: DesktopSettings,
         profile: DesktopModelProfile,
         prompt: String
     ): String? {
-        // 【关键】用 ApiKeyResolver 取 Key（支持 env / 配置文件 / profile 三种来源）
+        // 用 ApiKeyResolver 取 Key（支持 env / 配置文件 / profile 三种来源）
         val keyResult = ApiKeyResolver.resolve(settings, profile)
         if (keyResult !is ApiKeyResolver.Result.Found) {
             DesktopLogger.warn(TAG, "摘要模型无法获取 API Key，跳过")
@@ -393,7 +407,7 @@ object SessionSummarizer {
                 })
                 put("temperature", 1.0)
                 put("stream", false)
-                // 【关键】推理模型会先输出 reasoning_content，max_tokens 太小会被思考吃光
+                // 推理模型会先输出 reasoning_content，max_tokens 太小会被思考吃光
                 put("max_tokens", 2000)
             }
             // 【P1-2】按模型能力强制关闭思考（复用 DesktopAgent 的逻辑）
@@ -417,7 +431,7 @@ object SessionSummarizer {
                 val choice = o.optJSONArray("choices")?.optJSONObject(0)
                 val msg = choice?.optJSONObject("message")
                 val content = msg?.optString("content", "").orEmpty()
-                // 【关键】推理模型（如 deepseek-v4.1-flash）正文在 content，
+                // 推理模型（如 deepseek-v4.1-flash）正文在 content，
                 // 若为空则回退 reasoning_content（思考过程，质量差但聊胜于无）
                 val reasoning = msg?.optString("reasoning_content", "").orEmpty()
                 val finish = choice?.optString("finish_reason", "")

@@ -1,5 +1,6 @@
 package net.xinkong.furagent.tools
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
@@ -158,7 +159,7 @@ object VisionHelper {
     }
 
     fun newScreenshotPath(): String {
-        val ts = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.getDefault()).format(Date())
+        val ts = DateFormats.formatFileTs()
         return File(screenshotDir(), "screenshot_$ts.png").absolutePath
     }
 }

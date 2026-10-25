@@ -1,5 +1,6 @@
 package net.xinkong.furagent.core
 
+import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -66,8 +67,8 @@ object AgentLogger {
         Thread(r, "AgentLogger-writer").apply { isDaemon = true }
     }
 
-    private val fileSdf = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
-    private val dateSdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    private val fileSdf = DateFormats.fullMsFormatter()
+    private val dateSdf = DateFormats.dateFormatter()
 
     fun init(context: Context) {
         if (appContext != null) return
@@ -103,7 +104,7 @@ object AgentLogger {
             val baseName = dateSdf.format(Date(now))
             var target = File(dir, "$baseName.log")
             if (target.exists() && target.length() > MAX_FILE_SIZE) {
-                val ts = SimpleDateFormat("HHmmss", Locale.getDefault()).format(Date(now))
+                val ts = DateFormats.formatHourTs(now)
                 target.renameTo(File(dir, "${baseName}_$ts.log"))
                 target = File(dir, "$baseName.log")
             }
@@ -196,9 +197,7 @@ object AgentLogger {
         val tsStr = line.substring(0, open).trim()
         val type = line.substring(open + 1, close)
         val content = line.substring(close + 2)
-        val ts = try {
-            SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault()).parse(tsStr)?.time
-        } catch (_: Exception) { null } ?: return null
+        val ts = DateFormats.parseFullMs(tsStr) ?: return null
         return LogEntry(ts, type, content)
     }
 

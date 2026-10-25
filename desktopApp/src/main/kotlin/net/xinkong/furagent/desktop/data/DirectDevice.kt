@@ -18,7 +18,6 @@ object DirectDeviceStore {
     private fun file(): File = File(DesktopPaths.configDir(), FILE_NAME)
 
     private fun atomicWrite(target: File, content: String) {
-        // 【冗余清理 Batch 12a】实现已抽到 shared/util/JsonFile
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
 

@@ -1,11 +1,11 @@
 package net.xinkong.furagent.desktop.tools
 
+import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.*
 import net.xinkong.furagent.desktop.bridge.BridgeServer
 import net.xinkong.furagent.desktop.core.DownloadManager
 import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
-import net.xinkong.furagent.desktop.data.extractFileName
-import net.xinkong.furagent.desktop.data.resolveReceiveFile
+import net.xinkong.furagent.shared.util.FileNaming
 import net.xinkong.furagent.shared.BridgeMessage
 import net.xinkong.furagent.shared.BridgeToolList
 import net.xinkong.furagent.shared.EndpointId
@@ -270,7 +270,7 @@ object PhoneTools {
                 if (c.mac.isNotBlank()) sb.append("   MAC：${c.mac}\n")
                 sb.append("   连接时间：")
                     .append(
-                        SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+                        DateFormats.timeFormatter()
                         .format(Date(c.connectedAt)))
                     .append("\n")
                 sb.append("   HTTP 通道：$httpText\n\n")
@@ -329,7 +329,7 @@ object PhoneTools {
     private suspend fun phoneSendFile(args: JSONObject): ToolResult {
         val localPath = args.optString("local_path", "").trim()
         if (localPath.isBlank()) return ToolResult.fail("未提供 local_path")
-        val fileNameHint = extractFileName(args.optString("remote_path", ""))
+        val fileNameHint = FileNaming.extractFileName(args.optString("remote_path", ""))
         val localFile = File(localPath)
         if (!localFile.exists()) return ToolResult.fail("本地文件不存在：$localPath")
         if (localFile.isDirectory) return ToolResult.fail("这是目录而非文件：$localPath")
@@ -411,8 +411,8 @@ object PhoneTools {
                 val url = "http://$host:${httpInfo.port}/download" +
                         "?token=${URLEncoder.encode(httpInfo.token, "UTF-8")}" +
                         "&path=${URLEncoder.encode(remotePath, "UTF-8")}"
-                val fileName = extractFileName(remotePath)
-                val target = resolveReceiveFile(DesktopSettingsHolder.current.receiveDir, fileName)
+                val fileName = FileNaming.extractFileName(remotePath)
+                val target = FileNaming.resolveReceiveFile(DesktopSettingsHolder.current.receiveDir, fileName)
                 val taskId = DownloadManager.download(url, target.absolutePath)
                 return waitForDownload(taskId, timeoutMs = 5 * 60 * 1000L)
             }
@@ -428,8 +428,8 @@ object PhoneTools {
         return try {
             val bytes = Base64.getDecoder().decode(base64)
             if (bytes.size > MAX_FILE_BYTES) return ToolResult.fail("文件过大（${formatFileSize(bytes.size.toLong())}）")
-            val fileName = extractFileName(remotePath)
-            val target = resolveReceiveFile(DesktopSettingsHolder.current.receiveDir, fileName)
+            val fileName = FileNaming.extractFileName(remotePath)
+            val target = FileNaming.resolveReceiveFile(DesktopSettingsHolder.current.receiveDir, fileName)
             target.writeBytes(bytes)
             ToolResult.ok("已接收到：${target.absolutePath}（${formatFileSize(bytes.size.toLong())}）")
         } catch (e: Exception) { ToolResult.fail("写入本地文件失败：${e.message}") }
