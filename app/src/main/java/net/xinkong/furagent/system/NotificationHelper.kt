@@ -14,6 +14,8 @@ object NotificationHelper {
     private const val CHANNEL_ID = "furagent_tasks"
     private const val CHANNEL_NAME = "定时任务"
     private const val LIVE_NOTIFICATION_ID = 2002
+    /** 更新包下载进度通知的固定 ID（同一个 ID 反复 notify 才能原地刷新进度条） */
+    private const val UPDATE_DOWNLOAD_ID = 2003
 
     /**
      * 通知图标。
@@ -246,6 +248,125 @@ object NotificationHelper {
         "zip" -> "application/zip"
         "apk" -> "application/vnd.android.package-archive"
         else -> "*/*"
+    }
+
+    /**
+     * 更新包下载进度通知。
+     *
+     * 用固定 ID 反复 notify，系统会原地刷新进度条而不是堆一屏通知。
+     * 总大小未知时（total <= 0）走不确定进度条。
+     *
+     * @param cancelIntent 点「取消」时发的 PendingIntent，可为 null
+     */
+    fun showDownloadProgress(
+        context: Context,
+        fileName: String,
+        downloaded: Long,
+        total: Long,
+        cancelIntent: PendingIntent? = null
+    ) {
+        try {
+            ensureChannel(context)
+            val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setContentTitle("正在下载更新包")
+                .setContentText(
+                    if (total > 0) {
+                        "${formatBytes(downloaded)} / ${formatBytes(total)}"
+                    } else {
+                        formatBytes(downloaded)
+                    }
+                )
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setAutoCancel(false)
+
+            if (total > 0) {
+                val pct = ((downloaded * 100) / total).toInt().coerceIn(0, 100)
+                builder.setProgress(100, pct, false)
+                builder.setSubText("$pct%")
+            } else {
+                builder.setProgress(0, 0, true)
+            }
+
+            if (cancelIntent != null) {
+                builder.addAction(
+                    android.R.drawable.ic_menu_close_clear_cancel,
+                    "取消",
+                    cancelIntent
+                )
+            }
+
+            try {
+                NotificationManagerCompat.from(context)
+                    .notify(UPDATE_DOWNLOAD_ID, builder.build())
+            } catch (_: SecurityException) { }
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "SYS",
+                "发送下载进度通知失败：${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+    }
+
+    /** 下载失败/取消时把进度通知撤掉 */
+    fun cancelDownloadProgress(context: Context) {
+        try {
+            NotificationManagerCompat.from(context).cancel(UPDATE_DOWNLOAD_ID)
+        } catch (_: Exception) { }
+    }
+
+    /**
+     * 更新包下载完成通知：点击直接进系统安装器。
+     *
+     * 走 FileProvider 生成 content:// URI，Android 7.0+ 必须这样，
+     * 否则会抛 FileUriExposedException。
+     */
+    fun showApkInstall(context: Context, apk: java.io.File) {
+        try {
+            ensureChannel(context)
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apk
+            )
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            val pi = PendingIntent.getActivity(
+                context,
+                UPDATE_DOWNLOAD_ID,
+                installIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val builder = NotificationCompat.Builder(context, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("更新包已下载")
+                .setContentText("${apk.name}（${formatBytes(apk.length())}），点此安装")
+                .setPriority(NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pi)
+            try {
+                NotificationManagerCompat.from(context)
+                    .notify(UPDATE_DOWNLOAD_ID, builder.build())
+            } catch (_: SecurityException) { }
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "SYS",
+                "发送安装通知失败：${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+    }
+
+    /** 字节数转可读字符串 */
+    private fun formatBytes(bytes: Long): String = when {
+        bytes < 1024 -> "${bytes}B"
+        bytes < 1024 * 1024 -> "%.1fKB".format(bytes / 1024.0)
+        bytes < 1024L * 1024 * 1024 -> "%.1fMB".format(bytes / 1024.0 / 1024.0)
+        else -> "%.2fGB".format(bytes / 1024.0 / 1024.0 / 1024.0)
     }
 
     fun clearLiveActivity(context: Context) {

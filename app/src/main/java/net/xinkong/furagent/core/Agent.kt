@@ -24,10 +24,16 @@ import kotlin.time.Duration.Companion.milliseconds
 private const val TOOL_FAILURE_STREAK_LIMIT = 3
 
 /**
- * 截断历史时至少保留的消息条数（含工具消息）。
- * 防止极端情况下把上下文清空，导致 AI 完全失忆。
+ * 截断历史时的兜底下限（含工具消息）。
+ *
+ * 语义是「无论如何别把上下文清空」，不是「强制保留这么多条」。
+ * 原值 40 会让 maxTurns 完全失效：maxTurns=5 想保留 10 条，
+ * 却被 minStart = size-40 压到 0，一条都不截。
+ *
+ * 现在取 4（约 2 轮），只做极端兜底；真正的保留量由 maxTurns 决定。
+ * 实际生效值见 buildHistoryMessages 里的 minOf(MIN_KEEP_MESSAGES, maxTurns*2)。
  */
-private const val MIN_KEEP_MESSAGES = 40
+private const val MIN_KEEP_MESSAGES = 4
 
 /**
  * 管理正在进行的 OkHttp Call。
@@ -365,10 +371,14 @@ private fun buildHistoryMessages(
 ) {
     // 按「完整轮次」截断，绝不从一轮的中间切开。
     // 截断起点计算与桌面端共用（shared.computeTruncateStart）。
+    // minKeep 必须 <= maxTurns 想保留的量，否则两者互相打架：
+    // computeTruncateStart 里 startIdx 会被 minStart = size-minKeep 压回去，
+    // minKeep 过大就等于完全不截断。
+    val effectiveTurns = maxTurns.coerceAtLeast(1)
     val startIdx = computeTruncateStart(
         history = history,
-        maxTurns = maxTurns.coerceAtLeast(1),
-        minKeep = MIN_KEEP_MESSAGES,
+        maxTurns = effectiveTurns,
+        minKeep = minOf(MIN_KEEP_MESSAGES, effectiveTurns * 2),
         roleOf = { it.role },
         typeOf = { it.type }
     )

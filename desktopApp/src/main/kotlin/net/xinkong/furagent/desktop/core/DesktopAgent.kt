@@ -73,7 +73,14 @@ object DesktopAgent {
     /** 图片编码前的字节上限。与 DesktopTools.viewImage 的 5MB 对齐。 */
     private const val MAX_IMAGE_BYTES = 5L * 1024 * 1024
 
-    private const val MIN_KEEP_MESSAGES = 40
+    /**
+     * 截断历史时的兜底下限（含工具消息）。
+     *
+     * 语义是「无论如何别把上下文清空」，不是「强制保留这么多条」。
+     * 原值 40 配合 maxTurns 默认 20（=40 条）刚好相等，等于完全不截断。
+     * 现在取 4（约 2 轮），真正的保留量由 maxTurns 决定。
+     */
+    private const val MIN_KEEP_MESSAGES = 4
 
     /* 用量监控 单轮 prompt token 超过该值就打 warn 日志（不改变行为）。 */
     private const val PROMPT_TOKEN_WARN_THRESHOLD = 60_000
@@ -632,9 +639,12 @@ object DesktopAgent {
         if (history.isEmpty()) return history
         if (maxTurns <= 0) return history
 
-        // 原为 minOf，方向反了：maxTurns 调小时 minKeep 反而变小，
-        // 与“至少保留 MIN_KEEP_MESSAGES 条”的意图相反。改为 maxOf。
-        val minKeep = maxOf(MIN_KEEP_MESSAGES, maxTurns * 2)
+        // minKeep 必须 <= maxTurns 想保留的量，否则两者互相打架：
+        // computeTruncateStart 里 startIdx 会被 minStart = size-minKeep 压回去，
+        // minKeep 过大就等于完全不截断。
+        // 原为 maxOf(MIN_KEEP_MESSAGES, maxTurns*2)：maxTurns 越大 minKeep 越大，
+        // 截断越不可能发生，方向反了。改为 minOf。
+        val minKeep = minOf(MIN_KEEP_MESSAGES, maxTurns * 2)
         val startIdx = computeTruncateStart(
             history = history,
             maxTurns = maxTurns,

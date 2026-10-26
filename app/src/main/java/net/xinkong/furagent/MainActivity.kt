@@ -508,7 +508,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     var showSessionPrompt by remember { mutableStateOf(false) }
 
 
-    var maxTurns by remember { mutableIntStateOf(prefs.getInt("max_turns", 5)) }
+    var maxTurns by remember { mutableIntStateOf(prefs.getInt("max_turns", 20)) }
 
     // 启动时静默检查更新：后台 IO 线程跑，失败不打扰用户。
     // 结果只用来点亮设置页红点、改「关于我们」里的 GitHub 按钮文案。
@@ -897,7 +897,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             sessionList = SessionStore.list(context).filter { it.parentId == null }
             importResult.restoredSettings?.let { restored ->
                 settings = restored
-                maxTurns = prefs.getInt("max_turns", 5)
+                maxTurns = prefs.getInt("max_turns", 20)
                 themeMode = prefs.getString("theme_mode", "system") ?: "system"
                 onThemeModeChanged(themeMode)
                 try {
@@ -1373,6 +1373,16 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 PermissionRequestBroker.onAppResumed(context)
                 floatingOn = FloatingService.isRunning
                 PcBridgeClient.updateSettings(settings)
+                // 从「安装未知应用」设置页回来：权限给了就直接装
+                pendingInstallApk?.let { apk ->
+                    if (apk.exists() &&
+                        (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
+                            context.packageManager.canRequestPackageInstalls())
+                    ) {
+                        pendingInstallApk = null
+                        installApk(context, apk)
+                    }
+                }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -2706,7 +2716,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         onBack = {
                             currentPage = null
                             settings = SettingsStore.load(prefs)
-                            maxTurns = prefs.getInt("max_turns", 5)
+                            maxTurns = prefs.getInt("max_turns", 20)
                         },
                         onSettingsChanged = { newTurns, newSettings ->
                             maxTurns = newTurns
@@ -2832,11 +2842,23 @@ private fun openUrlSafely(context: android.content.Context, url: String, label: 
 }
 
 /**
+ * 等待安装的 APK。
+ *
+ * 用户被跳去「安装未知应用」设置页时，把 apk 路径记在这里；
+ * 回到 App 的 ON_RESUME 里检查权限，已授权就直接拉起安装器，
+ * 省得用户再点一次「下载更新」。
+ */
+private var pendingInstallApk: java.io.File? = null
+
+/**
  * 下载更新包并提示安装。
  *
- * 从「关于我们」弹窗的「下载更新」按钮调用。
- * 存到 /sdcard/FurAgent/downloads/，下完发通知，点通知进系统安装器。
- * 没有 apk 附件时退回 Release 页面。
+ * 从设置页「关于我们」的「下载更新」按钮调用。
+ * 存到 /sdcard/FurAgent/downloads/，下载过程用常驻通知显示实时进度，
+ * 下完点通知进系统安装器。
+ *
+ * 安装前必须确认「未知来源安装」权限（Android 8.0+ 是 per-app 授权），
+ * 没授权就跳系统设置页让用户开，回来后由 onResume 重新触发安装。
  */
 private fun downloadUpdateApk(
     context: android.content.Context,
@@ -2856,19 +2878,86 @@ private fun downloadUpdateApk(
         val dir = java.io.File("/sdcard/FurAgent/downloads")
         if (!dir.exists()) dir.mkdirs()
         val target = java.io.File(dir, name)
-        notifyToast(context, "开始下载 $name")
+
+        // 进度节流：最多每 300ms 刷一次通知，避免高频 notify 卡顿
+        var lastNotifyAt = 0L
         val result = net.xinkong.furagent.shared.util.DownloadEngine.download(
             url = url,
             target = target,
-            threads = 4
+            threads = 4,
+            onProgress = { done, total ->
+                val now = System.currentTimeMillis()
+                if (now - lastNotifyAt >= 300L || (total > 0 && done >= total)) {
+                    lastNotifyAt = now
+                    net.xinkong.furagent.system.NotificationHelper
+                        .showDownloadProgress(context, name, done, total)
+                }
+            }
         )
+
         if (result.ok) {
-            notifyToast(context, "下载完成，点通知安装")
-            net.xinkong.furagent.system.NotificationHelper
-                .showFileReceivedNotification(context, target)
+            net.xinkong.furagent.system.NotificationHelper.cancelDownloadProgress(context)
+            installApk(context, target)
         } else {
+            net.xinkong.furagent.system.NotificationHelper.cancelDownloadProgress(context)
             notifyToast(context, "下载失败：${result.message}")
         }
+    }
+}
+
+/**
+ * 拉起系统安装器。
+ *
+ * Android 8.0+ 每个应用要单独申请「安装未知应用」权限，
+ * 没授权时直接 startActivity 会被系统静默拦掉（或抛异常），
+ * 所以先查 canRequestPackageInstalls()，没有就跳设置页。
+ */
+private fun installApk(context: android.content.Context, apk: java.io.File) {
+    // 1. 权限检查（Android 8.0+）
+    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+        if (!context.packageManager.canRequestPackageInstalls()) {
+            pendingInstallApk = apk
+            notifyToast(context, "请先允许 FurAgent 安装应用")
+            try {
+                context.startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                        android.net.Uri.parse("package:${context.packageName}")
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            } catch (e: Exception) {
+                AgentLogger.log(
+                    "ERR",
+                    "跳转安装权限设置失败：${e.javaClass.simpleName}: ${e.message}"
+                )
+                notifyToast(context, "无法打开设置，请手动到「设置-应用-特殊权限」开启")
+            }
+            return
+        }
+    }
+
+    // 2. 拉起安装器
+    try {
+        val uri = androidx.core.content.FileProvider.getUriForFile(
+            context,
+            "${context.packageName}.fileprovider",
+            apk
+        )
+        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(intent)
+        pendingInstallApk = null
+    } catch (e: Exception) {
+        AgentLogger.log(
+            "ERR",
+            "拉起安装器失败：${e.javaClass.simpleName}: ${e.message}"
+        )
+        // 兜底：发通知让用户手动点
+        net.xinkong.furagent.system.NotificationHelper.showApkInstall(context, apk)
+        notifyToast(context, "无法直接安装，已发送通知，请点通知安装")
     }
 }
 

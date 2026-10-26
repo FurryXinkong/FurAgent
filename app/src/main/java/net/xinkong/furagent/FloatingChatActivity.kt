@@ -249,7 +249,7 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
             sessionId = sessionId,
             profile = profile,
             initialHistory = newHistory,
-            maxTurns = prefs.getInt("max_turns", 5),
+            maxTurns = prefs.getInt("max_turns", 20),
             prefs = prefs,
             settings = settings,
             onFinish = { finalHistory ->

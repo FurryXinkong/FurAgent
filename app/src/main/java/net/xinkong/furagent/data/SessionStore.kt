@@ -771,7 +771,7 @@ object SessionStore {
             root.put("settings", JSONObject().apply {
                 put("profiles", buildProfilesArray(prefs))
                 put("currentProfileId", prefs.getString("current_profile_id", "") ?: "")
-                put("maxTurns", prefs.getInt("max_turns", 5))
+                put("maxTurns", prefs.getInt("max_turns", 20))
                 put("maxToolCallLoops", prefs.getInt("max_tool_call_loops", 20))
                 put("systemPromptAddon", prefs.getString("custom_system", "") ?: "")
                 put("autoSpeak", prefs.getBoolean("auto_speak_replies", false))
@@ -955,7 +955,7 @@ object SessionStore {
                     }
 
                     putString("custom_system", s.optString("systemPromptAddon", ""))
-                    putInt("max_turns", s.optInt("maxTurns", 5).coerceIn(1, 100))
+                    putInt("max_turns", s.optInt("maxTurns", 20).coerceIn(1, 100))
                     putInt("max_tool_call_loops", s.optInt("maxToolCallLoops", 20).coerceIn(5, 100))
                     putBoolean("auto_speak_replies", s.optBoolean("autoSpeak", false))
                     putBoolean("confirm_write", s.optBoolean("requireConfirmWrite", true))
