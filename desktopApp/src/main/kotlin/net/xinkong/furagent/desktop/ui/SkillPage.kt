@@ -28,11 +28,11 @@ import net.xinkong.furagent.desktop.ui.theme.Spacing
 /**
  * 自定义脚本 —— 整屏页面。
  *
- * 【新格式 2026-10-15】脚本直接放 scripts/ 根目录，一个 .py 一个脚本，
+ * 新格式 2026-10-15 脚本直接放 scripts/ 根目录，一个 .py 一个脚本，
  * 元数据写在文件头部（NAME / DESCRIPTION / PARAMS / TIMEOUT / CONFIG）。
  * 每个脚本会注册成一个独立工具 pytool_<name>，AI 可直接调用。
  *
- * 【配置 2026-10-18】每个脚本的开关 / 超时 / 配置项存在
+ * 配置 2026-10-18 每个脚本的开关 / 超时 / 配置项存在
  * scripts/<name>.config.json，不再写 settings.json 的 disabledTools。
  * 卡片上的「配置」按钮可以编辑这些值。
  */
@@ -48,7 +48,7 @@ fun SkillPage(
     var skills by remember { mutableStateOf<List<SkillMeta>>(emptyList()) }
     var broken by remember { mutableStateOf<List<BrokenSkill>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
-    // 【配置】脚本名 → 配置（异步加载，避免主线程读盘）
+    // 配置 脚本名 → 配置（异步加载，避免主线程读盘）
     var configs by remember { mutableStateOf<Map<String, SkillConfig>>(emptyMap()) }
     LaunchedEffect(refreshKey) {
         loading = true
@@ -156,7 +156,7 @@ fun SkillPage(
                         runningName = running,
                         config = configs[meta.name] ?: SkillConfig(),
                         onToggleEnabled = { en ->
-                            // 【配置】开关写脚本自己的 config.json，不再动 disabledTools
+                            // 配置 开关写脚本自己的 config.json，不再动 disabledTools
                             configs = configs + (meta.name to (configs[meta.name] ?: SkillConfig()).copy(enabled = en))
                             SkillRunBus.setEnabled(meta.name, en) { err ->
                                 if (err != null) refreshKey++

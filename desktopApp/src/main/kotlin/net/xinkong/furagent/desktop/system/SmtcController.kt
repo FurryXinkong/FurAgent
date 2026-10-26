@@ -12,11 +12,11 @@ import java.util.concurrent.TimeUnit
  * 用途：读取"当前在放什么歌"以及精确控制（比键盘事件可靠）。
  * 依赖：Windows 10 1809+ 的 Windows.Media.Control WinRT API。
  *
- * 【临时文件策略】
+ * 临时文件策略
  *  固定名脚本落 ~/.furagent/temp/furagent_smtc.ps1（TempCleaner 会按 mtime 清理）。
  *  禁止落系统 %TEMP%——TempCleaner 扫不到那个目录，会永久残留。
  *
- * 【串行保证】
+ * 串行保证
  *  runPs 用协程 Mutex.withLock 串行，挂起而非阻塞线程。
  *  SMTC 是低频操作，串行代价可接受。
  */

@@ -493,7 +493,7 @@ private fun HistoryDetailView(
         loaded = true
     }
 
-    // 【P1-抽 shared】调用点统一走 LcsDiff.alignRows
+    // 调用点统一走 LcsDiff.alignRows
     val rows = remember(oldText, newText) {
         net.xinkong.furagent.shared.util.LcsDiff.alignRows(oldText, newText)
     }
@@ -722,7 +722,7 @@ private fun NavButton(
 }
 
 // ── 对齐算法（与桌面端同源：前缀/后缀裁剪 + 中段 LCS + 行配对） ──
-// 【P1-抽 shared】对齐行定义移入 shared/util/LcsDiff.Row
+// 对齐行定义移入 shared/util/LcsDiff.Row
 private typealias AlignRow = net.xinkong.furagent.shared.util.LcsDiff.Row
 
 private fun alignRows(oldText: String, newText: String): List<AlignRow> {

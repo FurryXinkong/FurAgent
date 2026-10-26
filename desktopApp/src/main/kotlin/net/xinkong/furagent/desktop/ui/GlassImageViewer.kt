@@ -49,7 +49,7 @@ import javax.imageio.ImageIO
 /**
  * 图片查看器。
  *
- * 【拆分】从 Glass.kt 抽出（原文件 1400+ 行，职责过杂）。同包，引用零改动。
+ * 拆分 从 Glass.kt 抽出（原文件 1400+ 行，职责过杂）。同包，引用零改动。
  */
 
 @Composable

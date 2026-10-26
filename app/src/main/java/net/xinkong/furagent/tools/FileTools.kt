@@ -25,7 +25,7 @@ object FileTools {
 
     val TOOLS = setOf("file_op", "zip", "base64", "download_file")
 
-    // 大小上限（【P2-8】从 ToolRegistry.kt 顶部移入）
+    // 大小上限（从 ToolRegistry.kt 顶部移入）
 
     // 这几个常量只被 FileTools 使用，放在通用 ToolRegistry 里是历史遗留。
     // 移到本类内部，作用域更清晰。

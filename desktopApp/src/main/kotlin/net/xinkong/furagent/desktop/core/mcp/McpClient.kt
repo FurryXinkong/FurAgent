@@ -37,7 +37,7 @@ import kotlin.time.Duration.Companion.milliseconds
  *      · 先 GET 建立 SSE 长连接，服务器通过该流推送所有响应
  *      · POST 只用于发送请求，响应从 SSE 流读取
  *
- * 【修复】旧实现只支持「POST 一次拿一次响应」，无法连接任何现代 MCP 服务器：
+ * 旧实现只支持「POST 一次拿一次响应」，无法连接任何现代 MCP 服务器：
  *   - 不处理 Mcp-Session-Id，Streamable HTTP 服务器会拒绝后续请求
  *   - 不建立 SSE 长连接，旧版 HTTP+SSE 服务器完全收不到响应
  *   - Accept 头缺少 text/event-stream

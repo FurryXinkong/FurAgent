@@ -7,11 +7,11 @@ import java.io.File
 /**
  * 自定义脚本（Skill）元数据。
  *
- * 【双端共用 2026-10-18】从桌面端 desktop.data.SkillStore 抽到 shared，
+ * 双端共用 2026-10-18 从桌面端 desktop.data.SkillStore 抽到 shared，
  * 桌面端（ProcessBuilder 跑 python）与安卓端（Chaquopy 内嵌 python）共用同一套
  * 脚本格式、元数据解析、配置管理。脚本文件本身两端完全通用。
  *
- * 【脚本格式】脚本直接放在 scripts/ 根目录，一个 .py 一个脚本。
+ * 脚本格式 脚本直接放在 scripts/ 根目录，一个 .py 一个脚本。
  * 元数据写在 .py 文件头部的模块级变量里：
  *
  *   # -*- coding: utf-8 -*-
@@ -37,7 +37,7 @@ import java.io.File
  *   - 结果以 JSON 写到 stdout：{"ok": true, "result": "..."}
  *   - 失败：{"ok": false, "error": "..."}
  *
- * 【配置】每个脚本可以有自己的配置文件：scripts/<name>.config.json
+ * 配置 每个脚本可以有自己的配置文件：scripts/<name>.config.json
  *
  *   {
  *     "enabled": true,

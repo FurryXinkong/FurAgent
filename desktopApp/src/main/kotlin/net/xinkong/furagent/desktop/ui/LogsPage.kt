@@ -35,7 +35,6 @@ import java.util.*
 /**
  * 日志页。
  *
- * 【本次改动】
  *  - 工具栏从 4 行压缩到 2 行：
  *      原 Row 3（复制可见 / 导出 / 刷新）拆解：
  *        · 导出 / 刷新 → 合并到 PageTitleBar.actions
@@ -71,9 +70,9 @@ fun LogsPage() {
     var availableDates by remember { mutableStateOf<List<String>>(emptyList()) }
     var refreshKey by remember { mutableIntStateOf(0) }
 
-    // 【新增】选中的日志行 id
+    // 选中的日志行 id
     var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    // 【新增】右键菜单归属的行 id
+    // 右键菜单归属的行 id
     var contextMenuFor by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(refreshKey) {
@@ -111,7 +110,7 @@ fun LogsPage() {
     /**
      * 当前可见列表里被选中的日志（按显示顺序）。
      *
-     * 【性能】用 remember 缓存：selectedIds / filtered 不变时直接复用，
+     * 性能 用 remember 缓存：selectedIds / filtered 不变时直接复用，
      * 避免每次重组都全表扫描（日志 1000 条时每帧扫 1000 次字符串拼接）。
      */
     val selectedEntries by remember(filtered, selectedIds) {
@@ -175,7 +174,7 @@ fun LogsPage() {
     }
 
     Column(Modifier.fillMaxSize()) {
-        // 【改动】导出 / 刷新 移到标题栏；原来的 Row 3 删除
+        // 导出 / 刷新 移到标题栏；原来的 Row 3 删除
         PageTitleBar(
             title = "日志",
             subtitle = "${sourceEntries.size} 条 · 显示 ${filtered.size} 条" +
@@ -281,7 +280,7 @@ fun LogsPage() {
         }
 
         // ===== 选中状态条（有选中时才显示）=====
-        // 【改动】"复制可见"从删除的 Row 3 挪到这里。
+        // "复制可见"从删除的 Row 3 挪到这里。
         if (selectedIds.isNotEmpty()) {
             Row(
                 Modifier.fillMaxWidth().padding(
@@ -558,7 +557,7 @@ private fun LogRow(
             modifier = Modifier.width(90.dp)
         )
         Spacer(Modifier.width(6.dp))
-        // 【体验优化 B4】超长日志折叠
+        // 体验优化 超长日志折叠
         val message = entry.message
         if (message.length > 2000) {
             var expanded by remember(entry.timestamp, entry.tag) { mutableStateOf(false) }

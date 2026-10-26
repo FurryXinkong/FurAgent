@@ -137,7 +137,7 @@ fun ModelProfileCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            // 【hover 移动修复】按钮行常驻占位，悬停/选中只改透明度——
+            // hover 移动修复 按钮行常驻占位，悬停/选中只改透明度——
             // 左侧文字宽度恒定，鼠标移入不再因按钮插入而挤压重排。
             // 未显示时鼠标不在行上，透明按钮不会被误触。
             Row(
@@ -240,7 +240,7 @@ fun EditModelProfileDialog(
                         checked = supportsVision
                     ) { supportsVision = it }
 
-                    // 【新增】采样温度
+                    // 采样温度
                     Column(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("采样温度", fontSize = 13.sp, color = TextPrimary())
@@ -262,7 +262,7 @@ fun EditModelProfileDialog(
                         )
                     }
 
-                    // 【新增】存在惩罚
+                    // 存在惩罚
                     Column(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("存在惩罚", fontSize = 13.sp, color = TextPrimary())
@@ -284,7 +284,7 @@ fun EditModelProfileDialog(
                         )
                     }
 
-                    // 【新增】频率惩罚
+                    // 频率惩罚
                     Column(Modifier.fillMaxWidth()) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text("频率惩罚", fontSize = 13.sp, color = TextPrimary())

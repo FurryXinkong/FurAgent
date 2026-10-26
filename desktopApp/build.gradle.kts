@@ -26,7 +26,7 @@ dependencies {
     // 修改历史 SQLite 存储：历史一条表（元数据+patch+改前备份），替代 manifest.jsonl
     implementation("org.xerial:sqlite-jdbc:3.47.1.0")
 
-    // 【文档生成】Apache POI：纯 Java，无外部依赖，同时支持 docx / xlsx / pptx。
+    // 文档生成 Apache POI：纯 Java，无外部依赖，同时支持 docx / xlsx / pptx。
     // 仅桌面端引入（Android 端不引，POI 在 Android 上兼容性差且体积大）。
     // 代价：安装包增大约 10MB，换来“零外部依赖、开箱即用”。
     implementation("org.apache.poi:poi-ooxml:5.5.1")

@@ -52,9 +52,9 @@ object HistoryTools {
         val op = args.optString("op", "list").trim().ifBlank { "list" }
         val pathFilter = args.optString("path", "").trim()
         val limit = args.optInt("limit", 30).coerceIn(1, 200)
-        // 【会话隔离】scope=session 只看当前会话（含子代理），scope=all 看全部
+        // 会话隔离 scope=session 只看当前会话（含子代理），scope=all 看全部
         val scope = args.optString("scope", "session").trim().ifBlank { "session" }
-        // 【P0-2 收尾】从协程上下文读 sessionId，不再读已删除的全局 var
+        // 从协程上下文读 sessionId，不再读已删除的全局 var
         val currentSession = net.xinkong.furagent.desktop.core.currentSessionId()
 
         val all = HistoryStore.listHistory(backupDir, 500)
@@ -94,7 +94,7 @@ object HistoryTools {
                     pathFilter.isNotBlank() -> filtered.firstOrNull()
                     else -> null
                 } ?: return ToolResult.fail("找不到对应记录（先用 op=list 看序号）")
-                // 【性能】patch 现在是独立文件，统一走 readPatch（兼容旧的内联记录）
+                // 性能 patch 现在是独立文件，统一走 readPatch（兼容旧的内联记录）
                 val patchText = HistoryStore.readPatch(entry)
                 if (patchText.isBlank()) {
                     ToolResult.ok(
@@ -118,7 +118,7 @@ object HistoryTools {
                 if (restoreBytes == null) {
                     return ToolResult.fail("该记录没有备份内容（新建文件无法回档到「不存在」状态）")
                 }
-                // 【语义说明】回档 = 把文件恢复到「这条记录发生之前」的状态，
+                // 语义说明 回档 = 把文件恢复到「这条记录发生之前」的状态，
                 // 不是重放 patch，也不是顺序回滚。只影响这一个文件。
                 // 如果该文件之后还有 N 条记录，回档会覆盖掉那 N 次修改。
                 val laterCount = all.count { it.path == entry.path && it.ts > entry.ts }
@@ -133,7 +133,7 @@ object HistoryTools {
                 val bytes = restoreBytes
                 return try {
                     val target = File(entry.path)
-                    // 【可撤销】回档前先把当前内容也备份一份，并记一条 restore 记录，
+                    // 可撤销 回档前先把当前内容也备份一份，并记一条 restore 记录，
                     // 这样回档本身也能被回档（否则回档后历史里没有任何痕迹）。
                     val currentBytes = try {
                         if (target.exists()) target.readBytes() else null

@@ -72,11 +72,11 @@ val HIDDEN_GROUPS: List<Pair<String, String>> = listOf(
 /**
  * 快捷设置 —— 整屏页面。
  *
- * 【UI 统一约定】
+ * UI 统一约定
  *   - 卡片统一 PocoCard
  *   - 页背景 glassPageBg() + 顶部 GlassSheen
  *   - 主色 / 危险色走 MaterialTheme.colorScheme
- *   - 【P1-15】分组可在「高级」里隐藏
+ * 分组可在「高级」里隐藏
  */
 @Composable
 fun SettingsPage(
@@ -92,7 +92,7 @@ fun SettingsPage(
     val scope = rememberCoroutineScope()
     var turnsInput by remember { mutableStateOf(maxTurns.toString()) }
     var local by remember { mutableStateOf(settings) }
-    // 【P1-15】用 local.hiddenSettings 判断分组可见性（quickSave 会更新 local）
+    // 用 local.hiddenSettings 判断分组可见性（quickSave 会更新 local）
     fun isVisible(key: String) = key !in local.hiddenSettings
     var expandedProfileId by remember { mutableStateOf<String?>(null) }
     var editingProfile by remember { mutableStateOf<ModelProfile?>(null) }
@@ -869,7 +869,7 @@ private fun AddModelButton(text: String = "添加自定义模型", onClick: () -
 
 // 模型卡片
 
-// 【UI 统一】用 PocoCard 承载，不再手写 GlassShadow + Surface。
+// UI 统一 用 PocoCard 承载，不再手写 GlassShadow + Surface。
 // 选中态用 primary 描边 + primary 半透明底。
 
 @Composable
@@ -884,7 +884,7 @@ private fun ModelProfileCard(
     onDelete: () -> Unit,
     onTest: () -> Unit
 ) {
-    // 【批次 22 UI 收口】用 PocoCard(selectedBorder) 替代「外层 Box 描边 + 内层 PocoCard」双层结构。
+    // 批次 22 UI 收口 用 PocoCard(selectedBorder) 替代「外层 Box 描边 + 内层 PocoCard」双层结构。
     PocoCard(selectedBorder = isCurrent) {
         Column(
             modifier = Modifier

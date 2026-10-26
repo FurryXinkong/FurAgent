@@ -55,7 +55,7 @@ data class ScheduledTask(
     val conditionMode: String = "and",
     val skipIfNotMet: Boolean = true,
     /**
-     * 【F4 新增】是否启用。
+     * 是否启用。
      * true（默认）：正常注册 AlarmManager，TaskReceiver 正常执行。
      * false：不注册 alarm（setEnabled 时会 cancel），TaskReceiver 会跳过。
      * 反序列化缺省 true，兼容旧数据。
@@ -63,12 +63,12 @@ data class ScheduledTask(
     val enabled: Boolean = true,
     val description: String = "",
     /**
-     * 【AI 主动说话】run_agent 动作专用：要发给 AI 的 prompt。
+     * AI 主动说话 run_agent 动作专用：要发给 AI 的 prompt。
      * action == "run_agent" 时必填。
      */
     val prompt: String = "",
     /**
-     * 【会话级任务】绑定到特定会话 ID。
+     * 会话级任务 绑定到特定会话 ID。
      * 非空时：
      *   - run_agent 结果写回该会话（作为 assistant 消息）
      *   - 会话删除时自动清理关联任务
@@ -80,7 +80,7 @@ data class ScheduledTask(
 object ScheduleStore {
     private const val FILE_NAME = "schedules.json"
 
-    // 【P1-10】从 shared 统一常量，双端一致
+    // 从 shared 统一常量，双端一致
     const val MIN_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MIN_INTERVAL_SECONDS
     const val MAX_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MAX_INTERVAL_SECONDS
 
@@ -201,7 +201,7 @@ object ScheduleStore {
     }
 
     /**
-     * 【性能】只更新单个任务的 triggerTime。
+     * 性能 只更新单个任务的 triggerTime。
      *
      * 定时任务每次触发后都要排下次，旧实现走 add() → list() + save()，
      * 每次都要反序列化 + 序列化整个 schedules.json。任务一多就是 O(n²)。
@@ -220,7 +220,7 @@ object ScheduleStore {
     }
 
     /**
-     * 【F4 新增】切换任务的启用状态。
+     * 切换任务的启用状态。
      *
      * Android 的特殊性：AlarmManager 注册是一次性的，禁用时要主动 cancel，
      * 启用时要重新 scheduleAlarm。
@@ -469,7 +469,7 @@ object ScheduleStore {
     // Cron 解析
 
     /**
-     * 【冗余清理】cron 解析抽到 shared/util/CronParser。
+     * cron 解析抽到 shared/util/CronParser。
      * 调用点保持不变（calculateNextTrigger 里依然调 nextCronTime）。
      */
     private fun nextCronTime(expr: String, fromMs: Long): Long? =

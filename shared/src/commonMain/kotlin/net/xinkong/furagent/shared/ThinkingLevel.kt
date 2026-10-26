@@ -9,11 +9,11 @@ package net.xinkong.furagent.shared
  *  - [HIGH] 标准（reasoning_effort = high，DeepSeek 官方默认）
  *  - [MAX]  深度（reasoning_effort = max）
  *
- * 【为什么用枚举而不是 Int】
+ * 为什么用枚举而不是 Int
  *  - 序列化到 SharedPreferences / JSON 时用 [id] 字符串，可读、可迁移
  *  - 旧数据 `enable_thinking=true` 迁移成 [HIGH]，`false` 迁移成 [OFF]
  *
- * 【厂商差异】
+ * 厂商差异
  * 各厂商支持程度不同，具体映射见 `applyEnableThinking`。
  * 不支持的档位会降级到最接近的可用值，不会报错。
  */

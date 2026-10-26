@@ -27,12 +27,12 @@ import kotlin.coroutines.resume
  *  4. 执行系统级动作（performGlobalAction）
  *  5. 在操作位置画涟漪，让用户看到"AI 点了这里"（ClickOverlay）
  *
- * 【节点 id 设计】
+ * 节点 id 设计
  *  id 是自增短序号（"1"、"2"、"15"…），不是路径串。
  *  原始路径（root→node 的 child 索引数组）保存在 NodeRef 里，
  *  用于 performAction 时重新定位节点。
  *
- * 【节点过滤（v3）】
+ * 节点过滤（v3）
  *
  *  三条判据：
  *    - mustKeep      = 有 text/contentDesc/hintText，或可交互（含 checked/selected）
@@ -45,7 +45,7 @@ import kotlin.coroutines.resume
  *    C. 非 mustKeep + 无子孙 + 有 id → 保底保留
  *    D. 非 mustKeep + 无子孙 + 无 id → 丢
  *
- *  【v3 修正的三处误判】
+ * 修正的三处误判
  *
  *  1. 不可见元素一刀切丢子树 → 改成"先看子孙有没有可见的，有就上提"
  *     原逻辑 !visible && !mustKeep → 丢整棵子树。isVisibleToUser 会误报
@@ -60,16 +60,16 @@ import kotlin.coroutines.resume
  *     这类控件本身是容器，状态在容器上，但容器会被穿透。加 checked/selected
  *     到 isInteractive 里，容器就不会被穿透，状态得以保留。
  *
- *  【穿透 group 标记】
+ * 穿透 group 标记
  *  穿透容器的子孙带同一个 groupId，AI 通过 {gN} 标记能识别
  *  "这几个节点来自同一个被压平的容器"（如 RecyclerView 里的一行）。
  *
- *  【为什么不缓存 AccessibilityNodeInfo】
+ * 为什么不缓存 AccessibilityNodeInfo
  *   它是系统池化对象，长期持有会影响系统回收。且 recycle() 在 API 33 起是 no-op，
  *   在更早版本上手动 recycle 又容易引入 use-after-recycle 崩溃。
  *   这里采取"只缓存路径 + 特征，操作时重新遍历"的方案。
  *
- *  【关于 CHECK / UNCHECK】
+ * 关于 CHECK / UNCHECK
  *   Android 无障碍 API 没有 ACTION_CHECK / ACTION_UNCHECK 常量。
  *   checkbox 的勾选切换用 ACTION_CLICK，但 ACTION_CLICK 是 toggle 语义，
  *   不能保证"勾上/取消"。所以 CHECK / UNCHECK 需要比较 isChecked 状态后再点。
@@ -97,7 +97,7 @@ class ScreenAccessibilityService : AccessibilityService() {
          *  3. bounds 相差 <= 30px（UI 微调场景）
          */
         fun matches(node: AccessibilityNodeInfo): Boolean {
-            // 【修复 C3】resourceId 相同不等于同一个节点。
+            // resourceId 相同不等于同一个节点。
             // RecyclerView 里所有行的标题都叫 "com.xxx:id/item_title"，
             // 只靠 resourceId 会误判为同一节点，操作错的元素。
             // 现在：resourceId 相同 + 至少还有一个特征匹配才认定同一节点。
@@ -227,7 +227,7 @@ class ScreenAccessibilityService : AccessibilityService() {
         val truncated = booleanArrayOf(false)
         // 序号从 1 开始，人类习惯
         val seq = intArrayOf(1)
-        // 【新增】穿透 group 计数器：从 1 开始
+        // 穿透 group 计数器：从 1 开始
         val groupCounter = intArrayOf(1)
 
         val rootList = collectNodes(
@@ -257,7 +257,7 @@ class ScreenAccessibilityService : AccessibilityService() {
     /**
      * 递归收集节点。
      *
-     * 【v4：不做豁免】
+     * 不做豁免
      *
      * 除 maxDepth / maxNodes 两个总量上限外，不丢弃任何节点：
      *  - 不可见节点照常保留（UiTreeFormatter 标记 (invisible)，AI 自行判断）
@@ -328,7 +328,7 @@ class ScreenAccessibilityService : AccessibilityService() {
         // 三判据
         val hasText = text.isNotBlank() || contentDesc.isNotBlank() || hintText.isNotBlank()
 
-        // 【改】checked / selected 也算交互性。
+        // 改 checked / selected 也算交互性。
         // 原因：RatingBar / StepView 这类控件是容器，状态在容器上，
         // 但容器会被穿透。加这两个到 isInteractive 里，
         // 有状态的容器不会被穿透，状态得以保留。
@@ -338,7 +338,7 @@ class ScreenAccessibilityService : AccessibilityService() {
 
         val mustKeepNormal = hasText || isInteractive
 
-        // 【不做豁免】原先对「不可见 / 零尺寸 / 无文本无 id」的节点会整棵丢弃。
+        // 不做豁免 原先对「不可见 / 零尺寸 / 无文本无 id」的节点会整棵丢弃。
         // 这类过滤会误杀（isVisibleToUser 在转场动画、多窗口、alpha 待淡入时误报；
         // 未布局完成的元素零尺寸），让 AI 变瞎子。
         // 现在除 maxDepth / maxNodes 上限外不做任何丢弃：
@@ -366,7 +366,7 @@ class ScreenAccessibilityService : AccessibilityService() {
             bounds = UiRect(rect.left, rect.top, rect.right, rect.bottom),
         )
 
-        // 【actions 精简】
+        // actions 精简
         // 只保留对 AI 有价值的动作名。
         // long_click / focus / select 之类的信息在 flags 里已经有（[long]/[focus]/[sel]）。
         val importantActions = setOf(
@@ -536,7 +536,7 @@ class ScreenAccessibilityService : AccessibilityService() {
             )
         }
 
-        // 【可视化】CLICK / LONG_CLICK 时先播个涟漪，让用户看到"AI 点了这里"
+        // 可视化 CLICK / LONG_CLICK 时先播个涟漪，让用户看到"AI 点了这里"
         if (action == UiAction.CLICK || action == UiAction.LONG_CLICK) {
             try {
                 val r = Rect()
@@ -547,7 +547,7 @@ class ScreenAccessibilityService : AccessibilityService() {
             } catch (_: Exception) { }
         }
 
-        // 【特殊处理】CHECK / UNCHECK。
+        // 特殊处理 CHECK / UNCHECK。
         // Android 无障碍 API 没有 ACTION_CHECK / ACTION_UNCHECK，
         // checkbox 的切换只能通过 ACTION_CLICK，但 CLICK 是 toggle 语义。
         // 所以先比较 isChecked 状态，只有目标状态和当前不同才点击。
@@ -646,7 +646,7 @@ class ScreenAccessibilityService : AccessibilityService() {
                 )
             }
 
-            // 【可视化】手势前先播涟漪
+            // 可视化 手势前先播涟漪
             when (type) {
                 "tap", "long_press" -> ClickOverlay.show(gesture.startX, gesture.startY)
                 "swipe" -> {

@@ -150,7 +150,7 @@ internal fun WorkProcessItemList(
             }
         }
     }
-    // 【实时思考】流式生成中的思考挂在工具列表末尾（最后一个工具调用之后），
+    // 实时思考 流式生成中的思考挂在工具列表末尾（最后一个工具调用之后），
     // 点开就是完整流式内容。不再丢在气泡外面单独占一行。
     if (liveReasoning.isNotBlank()) {
         key("live_reasoning") {
@@ -656,7 +656,7 @@ internal fun WorkProcessText(msg: DesktopMessage) {
 /**
  * 思考过程（工作过程内部的一步）。
  *
- * 【体验修复】原先是一个带背景的折叠面板，夹在紧凑的工具行里显得很空。
+ * 体验修复 原先是一个带背景的折叠面板，夹在紧凑的工具行里显得很空。
  * 现在与「输出 N 行」同构：一行小字「思考 N 行」，点击展开全文，无背景。
  */
 @Composable

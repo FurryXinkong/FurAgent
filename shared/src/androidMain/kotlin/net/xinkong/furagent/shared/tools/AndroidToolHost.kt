@@ -170,7 +170,7 @@ class AndroidToolHost(
     }
 
     /**
-     * 【性能修复】原来 `forEach` 里 `if (hits.size < maxResults) hits.add(...)`
+     * 性能修复 原来 `forEach` 里 `if (hits.size < maxResults) hits.add(...)`
      * 不会提前退出，仍要遍历完 5 万个文件才结束。
      *
      * 改用 Sequence.take(maxResults)：达到数量上限时自动停止上游遍历。
@@ -214,7 +214,7 @@ class AndroidToolHost(
         }
     }
 
-    // 【P1-11】统一到 shared/util/Format.formatFileSize
+    // 统一到 shared/util/Format.formatFileSize
     // 原来 host 版是 %.1fGB，shared 版是 %.2fGB，同一个文件在两个位置显示不同精度。
     override fun formatSize(bytes: Long): String =
         net.xinkong.furagent.shared.util.formatFileSize(bytes)

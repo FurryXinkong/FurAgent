@@ -35,7 +35,7 @@ object McpManager {
     val clientList: StateFlow<List<McpClient>> = _clients.asStateFlow()
 
     /**
-     * 【缓存关键】按 clientId 排序后的客户端列表。
+     * 缓存关键 按 clientId 排序后的客户端列表。
      *
      * ConcurrentHashMap 的遍历顺序不保证稳定（按 hash 桶，扩容时会变），
      * 直接遍历会导致 MCP 工具顺序每轮可能不同，进而使 tools 数组变化、
@@ -97,7 +97,7 @@ object McpManager {
      * 返回所有 MCP 工具。
      * 返回 (clientId, clientName, toolInfo)。
      *
-     * 【缓存关键】用 sortedClients() 而非 clients.values，保证顺序稳定。
+     * 缓存关键 用 sortedClients() 而非 clients.values，保证顺序稳定。
      * 否则每轮 tools 数组里 MCP 工具顺序可能变化，前缀缓存全部失效。
      */
     fun allTools(): List<Triple<String, String, McpClient.McpToolInfo>> {
@@ -116,7 +116,7 @@ object McpManager {
      * 调用 MCP 工具。
      * 工具名格式："mcp__<clientId8>__<toolName>"
      *
-     * 【修复】旧实现用 `id.startsWith(shortId)` 匹配，两个 clientId 前 8 位相同时会串到错误的服务器。
+     * 旧实现用 `id.startsWith(shortId)` 匹配，两个 clientId 前 8 位相同时会串到错误的服务器。
      * 改为精确匹配 `id.take(8) == shortId`。
      */
     suspend fun callTool(prefixedName: String, args: JSONObject): ToolResult {

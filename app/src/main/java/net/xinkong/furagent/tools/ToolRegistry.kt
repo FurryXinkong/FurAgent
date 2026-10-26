@@ -91,7 +91,7 @@ object ToolRegistry {
     @Volatile private var cachedMcpAt: Long = 0L
     private const val MCP_DISPLAY_CACHE_MS = 2000L
 
-    // 【批次 11 性能】buildToolSearchSpec 缓存。
+    // buildToolSearchSpec 缓存。
     // 每轮 Agent 循环都调，每次都走 getCatalogTools + 拼字符串（N 个 CatalogTool 构造 + 几百字符拼接）。
     // 一轮用 5 次工具 = 重建 5 次。缓存后 5 秒内只重建 1 次。
     // 键 = disabled hash + visionEnabled；MCP/skill 工具变化靠 5 秒窗口兜底。
@@ -109,8 +109,8 @@ object ToolRegistry {
         cachedMcpAt = now
     }
 
-    // 【批次 18】O(1) 路由表，消灭层层 if-else 判断
-    // 【修复】TOOLS 是 Set<String>，集合元素本身就是工具名（不是 ToolSpec）；
+    // O(1) 路由表，消灭层层 if-else 判断
+    // TOOLS 是 Set<String>，集合元素本身就是工具名（不是 ToolSpec）；
     // 各 *Tools.execute 都是 suspend 函数，所以路由表必须是 suspend 函数类型，
     // 否则在普通 lambda 里调用会报 "can only be called from a coroutine"。
     private val PRIVATE_ROUTER: Map<String, suspend (JSONObject, Context, AppSettings) -> String> by lazy {
@@ -212,7 +212,7 @@ object ToolRegistry {
             )
         }
 
-        // 【自定义脚本】pytool 常驻 + 每个脚本 pytool_<name> 动态工具
+        // 自定义脚本 pytool 常驻 + 每个脚本 pytool_<name> 动态工具
         out.add(
             CatalogTool(
                 name = "pytool",
@@ -221,7 +221,7 @@ object ToolRegistry {
                 paramsSchema = net.xinkong.furagent.shared.skill.SkillTools.TOOLS.first().paramsSchema
             )
         )
-        // 【临时执行 Python】与桌面端 python 工具对齐
+        // 临时执行 Python 与桌面端 python 工具对齐
         out.add(
             CatalogTool(
                 name = "python",
@@ -255,7 +255,7 @@ object ToolRegistry {
     private fun buildToolSearchSpec(settings: AppSettings): JSONObject {
         val profile = settings.currentProfile()
         val visionEnabled = profile?.supportsVision ?: true
-        // 【批次 11】5 秒缓存：每轮 Agent 循环都调，重建成本 O(N 工具数)。
+        // 5 秒缓存：每轮 Agent 循环都调，重建成本 O(N 工具数)。
         val cacheKey = "${settings.disabledTools.hashCode()}_$visionEnabled"
         val now = System.currentTimeMillis()
         val cached = cachedSearchSpec
@@ -275,7 +275,7 @@ object ToolRegistry {
         )
 
         val desc = buildString {
-            // 【token 优化】精简说明：与系统提示词重复的部分不再赘述，
+            // token 优化 精简说明：与系统提示词重复的部分不再赘述，
             // 只保留“怎么用”和目录本身。
             append("搜索非核心工具的完整定义。找到后下一轮可直接调用。\n")
             append("category 可选：file/system/media/network/screen/remote/mcp/skill/other\n")
@@ -304,7 +304,7 @@ object ToolRegistry {
                 })
             })
         }
-        // 【批次 11】写入缓存
+        // 写入缓存
         cachedSearchSpec = spec
         cachedSearchSpecKey = cacheKey
         cachedSearchSpecAt = now
@@ -332,7 +332,7 @@ object ToolRegistry {
     }
 
     /**
-     * 【P0 向后兼容】只返回核心工具 + 元工具。
+     * P0 向后兼容 只返回核心工具 + 元工具。
      *
      * 老调用方（如果有）用这个，不包含 tool_search 加载的工具。
      * 新调用方用 getToolsWithLoaded。
@@ -340,7 +340,7 @@ object ToolRegistry {
     fun getTools(settings: AppSettings): JSONArray = getToolsWithLoaded(settings, emptySet())
 
     /**
-     * 【P0 新增】核心工具 + 元工具 + 已加载工具的完整 schema。
+     * 核心工具 + 元工具 + 已加载工具的完整 schema。
      *
      * Agent 循环里每轮调用，传 loadedToolNames 让上一轮通过 tool_search /
      * tool_load 加载过的工具出现在 tools 数组里，AI 才能调用它们。
@@ -388,7 +388,7 @@ object ToolRegistry {
             }
         }
 
-        // 【自定义脚本】pytool 常驻 + 每个脚本 pytool_<name> 始终加入，
+        // 自定义脚本 pytool 常驻 + 每个脚本 pytool_<name> 始终加入，
         // 让 AI 一眼看到有哪些脚本可用（与桌面端一致）。
         if ("pytool" !in disabled) {
             val pt = net.xinkong.furagent.shared.skill.SkillTools.TOOLS.first()
@@ -401,7 +401,7 @@ object ToolRegistry {
                 })
             })
         }
-        // 【临时执行 Python】与桌面端 python 工具对齐：
+        // 临时执行 Python 与桌面端 python 工具对齐：
         // 不落盘，直接跑一段代码。适合“帮我算一下”“验证这段逻辑”。
         if ("python" !in disabled) {
             merged.put(JSONObject().apply {
@@ -431,7 +431,7 @@ object ToolRegistry {
                 })
             })
         }
-        // 【修改历史】与桌面端同能力（list / diff / restore，restore 带确认弹窗）
+        // 修改历史 与桌面端同能力（list / diff / restore，restore 带确认弹窗）
         if ("history" !in disabled) {
             HistoryTools.TOOLS.forEach { ht ->
                 merged.put(JSONObject().apply {
@@ -464,7 +464,7 @@ object ToolRegistry {
     }
 
     /**
-     * 【P0 新增】供 Agent 循环调用：搜索工具，返回 AI 易读的文本。
+     * 供 Agent 循环调用：搜索工具，返回 AI 易读的文本。
      */
     fun searchToolsForAgent(query: String, category: String, settings: AppSettings): String {
         val catalog = getCatalogTools()
@@ -483,7 +483,7 @@ object ToolRegistry {
     }
 
     /**
-     * 【P0 新增】供 Agent 循环调用：加载单个工具的详情。
+     * 供 Agent 循环调用：加载单个工具的详情。
      */
     fun loadToolForAgent(name: String, settings: AppSettings): String {
         val trimmed = name.trim()
@@ -505,7 +505,7 @@ object ToolRegistry {
     }
 
     /**
-     * 【P0 新增】按名查找 ToolSpec。
+     * 按名查找 ToolSpec。
      *
      * 只在工具已经在 tools 数组里时使用（用于 checkVision 等），
      * 不涉及分层。
@@ -564,7 +564,7 @@ object ToolRegistry {
     // 日志参数清理
 
     private fun sanitizeArgsForLog(name: String, args: JSONObject): String {
-        // 【批次 11 性能】原实现每次都 `JSONObject(args.toString())`：
+        // 原实现每次都 `JSONObject(args.toString())`：
         //   - args.toString() 分配一份完整 JSON 字符串（大参数是 MB 级）
         //   - JSONObject(...) 再解析一遍
         // 一次工具调用两次大字符串分配。改为按 key 逐字段复制：
@@ -641,7 +641,7 @@ object ToolRegistry {
         val data = args.optString("data", "")
         val append = args.optBoolean("append", false)
 
-        // 【批次 19】子会话不需要确认写入（通过 CoroutineName 识别）
+        // 子会话不需要确认写入（通过 CoroutineName 识别）
         val isSubSession = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.CoroutineName]?.name == ConfirmationBroker.SUBSESSION_COROUTINE_NAME
         
         if (settings.requireConfirmWrite && !isSubSession) {
@@ -735,7 +735,7 @@ object ToolRegistry {
             )
         }
 
-        /** 【可见性】子代理正在干什么 —— 阶段 + 最新一行内容 */
+        /* 可见性 子代理正在干什么 —— 阶段 + 最新一行内容 */
         @Synchronized fun updatePhase(id: String, phase: String, snippet: String) {
             val e = entries[id] ?: return
             if (e.phase == phase && e.snippet == snippet) return
@@ -766,7 +766,6 @@ object ToolRegistry {
         }
     }
 
-    // 【批次 19 隔离修复】
     // 废弃全局 CurrentTaskSession.id，改用协程上下文传递。
     // 全局静态变量在并发的子会话中会互相覆盖，导致写文件等历史归属错乱。
     class SessionIdElement(val id: String) : kotlin.coroutines.AbstractCoroutineContextElement(SessionIdElement) {
@@ -783,18 +782,18 @@ object ToolRegistry {
 
     // 并行子会话计数（原子操作，杜绝同毫秒并发绕过检查）
     private val subSessionActive = java.util.concurrent.atomic.AtomicInteger(0)
-    // 【P1-10】从 shared 统一常量，双端一致
+    // 从 shared 统一常量，双端一致
     private const val MAX_PARALLEL_SUB = net.xinkong.furagent.shared.data.SubSessionLimits.MAX_PARALLEL_SUB
 
     /**
-     * 【子会话硬上限】子代理最多跑多少轮。
+     * 子会话硬上限 子代理最多跑多少轮。
      * 不继承用户把主会话调到的高轮数，否则几个并行子代理能烧掉整月额度。
-     * 【P1-10】从 shared 统一常量，双端一致。
+     * 从 shared 统一常量，双端一致。
      */
     private const val SUB_MAX_LOOPS = net.xinkong.furagent.shared.data.SubSessionLimits.SUB_MAX_LOOPS
 
     /**
-     * 【截断补总结】子会话被强制截断后，让它自己回头总结一次。
+     * 截断补总结 子会话被强制截断后，让它自己回头总结一次。
      *
      * 只跑 1 轮：再多就是又一次全量上下文请求，
      * 子代理这时候还在回忆上一轮的工具输出，烧钱而不产出。
@@ -874,7 +873,7 @@ object ToolRegistry {
     }
 
     /**
-     * 【AI 主动终止】正在执行的子会话 Job 表（subId → Job）。
+     * AI 主动终止 正在执行的子会话 Job 表（subId → Job）。
      * sub_session(op=stop) 据此 cancel 对应协程。
      * 子会话结束时自行移除，避免泄漏。
      */
@@ -882,7 +881,7 @@ object ToolRegistry {
         java.util.concurrent.ConcurrentHashMap<String, kotlinx.coroutines.Job>()
 
     // 子会话后台执行作用域（独立于主任务，互不阻塞、互不误杀）
-    // 【P0-5】打上 CoroutineName 标记：ConfirmationBroker 据此识别"子代理"请求，
+    // 打上 CoroutineName 标记：ConfirmationBroker 据此识别"子代理"请求，
     // 在弹窗标题前加"子代理 ·"前缀，用户能知道是谁在请求。
     private val subSessionScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO +
@@ -917,7 +916,7 @@ object ToolRegistry {
         )
         val subId = "sub_${System.currentTimeMillis()}_$rndHex"
         val now = System.currentTimeMillis()
-        // 【批次 19】从协程上下文读取母会话 ID
+        // 从协程上下文读取母会话 ID
         val parentSessionId = currentSessionId().ifBlank { null }
         // 全新上下文：只有这条 task，不带父会话历史
         val initial = listOf(
@@ -944,10 +943,10 @@ object ToolRegistry {
         // 后台异步执行：主对话立即返回、互不阻塞；完成后覆盖保存全量过程
         SubSessionProgress.start(subId, title)
         val job = subSessionScope.launch {
-            // 【批次 19 隔离修复】用协程上下文标记子会话 ID，防止并发串台
+            // 用协程上下文标记子会话 ID，防止并发串台
             kotlinx.coroutines.withContext(SessionIdElement(subId)) {
                 var subHistory: List<ChatMessage> = initial
-                // 【硬上限】不继承用户的高轮数设置
+                // 硬上限 不继承用户的高轮数设置
                 val subLoops = minOf(settings.maxToolCallLoops, SUB_MAX_LOOPS)
                 val streamBuf = StringBuilder()
                 try {
@@ -987,7 +986,7 @@ object ToolRegistry {
                     )
                     // 回调经 mainHandler.post 派发，排空主线程队列确保 subHistory 已最新
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {}
-                    // 【截断补总结】跑到轮数上限也得给个交代，
+                    // 截断补总结 跑到轮数上限也得给个交代，
                     // 不能只剩一句「已达到最大工具调用轮数」
                     subHistory = summarizeIfTruncated(subHistory, profile, context, settings)
                 } catch (e: Exception) {
@@ -1064,7 +1063,7 @@ object ToolRegistry {
                 }
             }
             "list" -> {
-                // 【批次 19】改为按 parentId 判定，不再依赖 title 前缀
+                // 改为按 parentId 判定，不再依赖 title 前缀
                 val list = SessionStore.list(context).filter { it.parentId != null }
                 if (list.isEmpty()) {
                     "暂无子会话记录。"
@@ -1102,7 +1101,7 @@ object ToolRegistry {
     suspend fun execute(
         name: String, args: JSONObject, context: Context, settings: AppSettings
     ): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        // 【批次 20 修复】强制全部工具在 IO 线程执行。
+        // 强制全部工具在 IO 线程执行。
         // 防止个别工具内部（如联网搜索解析、写文件）未切线程导致 Agent 主循环和 UI 卡顿。
         if (name in settings.disabledTools) {
             return@withContext "工具 $name 已被用户在设置中关闭"
@@ -1117,7 +1116,7 @@ object ToolRegistry {
         }
 
         // 元工具拦截（必须在其他分发之前）
-        // 【批次 18】使用 JsonArgs 语法糖
+        // 使用 JsonArgs 语法糖
         val a = JsonArgs(args)
 
         if (name == "tool_search") {
@@ -1154,7 +1153,7 @@ object ToolRegistry {
                     else -> "失败：${mcpResult.output}"
                 }
             } else if (name == "python") {
-                // 【临时执行 Python】与桌面端 python 工具对齐。
+                // 临时执行 Python 与桌面端 python 工具对齐。
                 // 受 requireConfirmPython 控制（与 pytool run 同一个开关）。
                 val code = a.str("code")
                 if (code.isBlank()) return@withContext "失败：python 需要 code 参数"
@@ -1244,7 +1243,7 @@ object ToolRegistry {
                         if (commonResult.success) commonResult.output
                         else "失败：${commonResult.output}"
                     } else {
-                        // 【批次 18】查表路由，O(1) 速度
+                        // 查表路由，O(1) 速度
                         PRIVATE_ROUTER[name]?.invoke(args, context, settings) ?: "未知工具：$name"
                     }
                 }
@@ -1257,7 +1256,7 @@ object ToolRegistry {
             "工具执行异常：${e.message ?: "未知错误"}"
         }
 
-        // 【批次 11 修复】RESULT 日志截断。
+        // RESULT 日志截断。
         // 原实现全量写入 AgentLogger.logs，execute_command 跑一次 Gradle 输出几十 MB、
         // grep 返回 5000 条命中、read_file 读 900KB 文件——全进内存 list 会造成：
         //   - UI 日志页渲染卡顿

@@ -40,7 +40,7 @@ fun AndroidSubSessionListDialog(onDismiss: () -> Unit) {
     LaunchedEffect(Unit) {
         items = withContext(Dispatchers.IO) {
             SessionStore.list(context)
-                // 【子会话识别】按 parentId 判定（不再靠标题前缀）：
+                // 子会话识别 按 parentId 判定（不再靠标题前缀）：
                 // 标题被 persist 重算后会丢「↳」，子代理列表就再也找不到它了。
                 .filter { it.parentId != null }
                 .map { it.id to it.title }

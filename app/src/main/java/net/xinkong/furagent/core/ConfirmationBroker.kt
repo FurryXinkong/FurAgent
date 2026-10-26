@@ -13,7 +13,7 @@ import kotlin.time.Duration.Companion.seconds
 /**
  * 权限确认协调器（队列化）。
  *
- * 【为什么需要队列】
+ * 为什么需要队列
  *  工具并行执行时，多个需要确认的工具（write_file / execute_shell / ffmpeg /
  *  file_op）会同时调用 request()。单槽位实现（只有一个 pending + 一个 deferred）会：
  *    - UI 只弹一次（pending 被后到者覆盖）
@@ -21,18 +21,18 @@ import kotlin.time.Duration.Companion.seconds
  *  现在改成队列：每个请求各自持有 CompletableDeferred，UI 依次弹窗，
  *  resolve 只完成队首，完成后自动把下一个设为 pending。
  *
- * 【Compose State 线程约束】
+ * Compose State 线程约束
  *  _pending 是 mutableStateOf，只在主线程写（withContext(Dispatchers.Main)）。
  *  队列本身用 synchronized(lock) 保护，多线程并发安全。
  *
- * 【超时清理】
+ * 超时清理
  *  300 秒无响应视为拒绝。超时后 entry 仍在队列里时移除并推进队首；
  *  正常被 resolve 的路径下 entry 已被移除，此处不会重复处理。
  */
 object ConfirmationBroker {
 
     /**
-     * 【P0-5 与桌面端对齐】子会话（后台子代理）协程名。
+     * 5 与桌面端对齐 子会话（后台子代理）协程名。
      *
      * 该上下文里的确认请求没人能点，会一直排队到 300s 超时，
      * 表现为「子会话卡住 5 分钟」。这里做一件事：
@@ -53,7 +53,7 @@ object ConfirmationBroker {
     private val queue = ArrayDeque<Entry>()
 
     suspend fun request(title: String, message: String): Boolean {
-        // 【P0-5】子会话来源标注（与桌面端 DesktopConfirmation 保持一致）
+        // 子会话来源标注（与桌面端 DesktopConfirmation 保持一致）
         val fromSub = kotlinx.coroutines.currentCoroutineContext()[
             kotlinx.coroutines.CoroutineName
         ]?.name == SUBSESSION_COROUTINE_NAME

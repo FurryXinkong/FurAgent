@@ -38,7 +38,7 @@ import net.xinkong.furagent.ui.theme.AppRadius
  *
  * 对应 AndroidToolHost 里的 SharedPreferences("FurAgentEnv")，key 前缀 env_。
  *
- * 【UI 统一约定】
+ * UI 统一约定
  *   - 卡片统一 PocoCard
  *   - 页背景 glassPageBg() + 顶部 GlassSheen
  *   - 空状态图标 56dp
@@ -355,7 +355,7 @@ fun EnvStorePage(onBack: () -> Unit) {
 
 // 变量卡片
 
-// 【UI 统一】用 PocoCard 承载。
+// UI 统一 用 PocoCard 承载。
 
 @Composable
 private fun EnvEntryCard(

@@ -21,11 +21,11 @@ import java.util.concurrent.atomic.AtomicBoolean
  *  - 内存列表（Compose 直接订阅，给 UI 显示"实时"）
  *  - 文件（filesDir/logs/yyyy-MM-dd.log，按天滚动，保留 7 天，单文件超 10MB 切分）
  *
- * 【性能】
+ * 性能
  *  - 100ms 节流：主线程处理次数从"N 次 add"降为"1 次 addAll"
  *  - `_logs` 仍是 SnapshotStateList，Compose diff 机制不变
  *
- * 【完整性】
+ * 完整性
  *  - 单条 content 上限 1_000_000 字符（约 1MB），足够覆盖任何工具返回
  *  - 内存条数：panelOpen=true 保留 500 条，否则 200 条
  */
@@ -62,7 +62,7 @@ object AgentLogger {
     @Volatile private var appContext: Context? = null
     @Volatile private var workerStarted = false
 
-    // 【批次 12】加容量上限：原来无上限，execute_command 跑 Gradle 输出几十 MB 全塞队列，
+    // 加容量上限：原来无上限，execute_command 跑 Gradle 输出几十 MB 全塞队列，
     // 磁盘 IO 慢时能涨到几百 MB。给 256 条上限，满了用 offer 自动丢弃（日志系统的取舍）。
     private val writeQueue = LinkedBlockingQueue<String>(256)
     private val writer = Executors.newSingleThreadExecutor { r ->
@@ -155,7 +155,7 @@ object AgentLogger {
                 pendingQueue.clear()
             }
             _logs.addAll(batch)
-            // 【批次 12】原 `while (_logs.size > MAX) _logs.removeAt(0)` 是 O(n) × excess 次：
+            // 原 `while (_logs.size > MAX) _logs.removeAt(0)` 是 O(n) × excess 次：
             // SnapshotStateList.removeAt(0) 每次搬移全部元素。100 次 × 500 条 = 50000 次操作。
             // 改成一次性重建：O(4n) 一次，远好于 O(n²)。
             val excess = _logs.size - MAX_LOG_ENTRIES

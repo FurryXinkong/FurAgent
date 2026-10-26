@@ -38,7 +38,7 @@ object AndroidHttpFileServer {
     /**
      * 启动服务。
      *
-     * 【B4 改动】签名从 `start(preferredPort)` 改为 `start(context, preferredPort)`，
+     * 签名从 `start(preferredPort)` 改为 `start(context, preferredPort)`，
      * 以便持久化 token（写到 filesDir/http_token.txt）。
      * 调用方 MainActivity.onCreate 一处需要同步更新。
      */
@@ -109,7 +109,7 @@ object AndroidHttpFileServer {
     fun isRunning() = serverSocket != null
 
     /**
-     * 【B4 新增】从 token 派生的短码（6 位大写 HEX）。
+     * 从 token 派生的短码（6 位大写 HEX）。
      *
      * 用于用户在另一台设备上手工输入配对。
      * 算法：SHA-256(token) 前 3 字节转 16 进制。
@@ -118,7 +118,7 @@ object AndroidHttpFileServer {
     fun getShortCode(): String = deriveShortCode(token)
 
     /**
-     * 【B4 新增】主动刷新 token。
+     * 主动刷新 token。
      *
      * 用户可以在 UI 上点"刷新 token"，让已配对过的其他设备失效。
      * 服务本身不重启，只换 token，后续请求要用新 token。
@@ -319,7 +319,7 @@ object AndroidHttpFileServer {
                         "BRIDGE",
                         "upload 开始：$name len=$len chunked=${te.contains("chunked")} → ${target.absolutePath}"
                     )
-                    // 【F6 修复】writeBody 在字节数不符时会抛异常，这里捕获并 500，
+                    // writeBody 在字节数不符时会抛异常，这里捕获并 500，
                     // 不能让它漏到最外层 catch（那样只有日志，客户端看不到响应，只能超时）。
                     try {
                         if (te.contains("chunked")) {
@@ -448,7 +448,7 @@ object AndroidHttpFileServer {
                 written += n
             }
         }
-        // 【F6 修复】声明长度与实际写入不一致时拒绝 rename，避免半截文件被当成功接收。
+        // 声明长度与实际写入不一致时拒绝 rename，避免半截文件被当成功接收。
         // 抛异常给上层 upload 分支（会捕获并 500），不再假装 200 ok。
         if (written != len) {
             try { tmp.delete() } catch (_: Exception) { }
@@ -461,7 +461,7 @@ object AndroidHttpFileServer {
     }
 
     /**
-     * 【新增】处理 HTTP/1.1 chunked 传输编码的请求体。
+     * 处理 HTTP/1.1 chunked 传输编码的请求体。
      *
      * OkHttp 的 asRequestBody 在部分情况下（尤其小文件）会使用 chunked 编码，
      * 不带 Content-Length。旧实现只认 Content-Length，导致小文件上传直接 400。

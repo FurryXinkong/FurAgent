@@ -32,7 +32,7 @@ import java.util.*
 
 // 通用输入对话框
 
-// 【UI 统一】所有弹窗均 28dp 圆角 + surface 底色 + 主色走 colorScheme。
+// UI 统一 所有弹窗均 28dp 圆角 + surface 底色 + 主色走 colorScheme。
 
 @Composable
 fun InputDialog(
@@ -178,7 +178,7 @@ fun EditModelDialog(
                         )
                     }
                 }
-                // 【新增】采样温度
+                // 采样温度
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -206,7 +206,7 @@ fun EditModelDialog(
                         steps = 29
                     )
                 }
-                // 【新增】存在惩罚
+                // 存在惩罚
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -234,7 +234,7 @@ fun EditModelDialog(
                         steps = 39
                     )
                 }
-                // 【新增】频率惩罚
+                // 频率惩罚
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
@@ -517,7 +517,7 @@ fun EditScheduleDialog(
 /**
  * 新建定时任务。
  *
- * 【与桌面端对齐】旧版只支持「打开应用 / Shell 命令」两种动作、
+ * 与桌面端对齐 旧版只支持「打开应用 / Shell 命令」两种动作、
  * 「单次 / 间隔」两种重复，而 ScheduleStore 和 TaskExecutionService
  * 早就支持 notify / run_tool / run_workflow / run_agent 和 daily / weekly / cron。
  * 结果就是：用户在安卓上根本建不出 AI 定时任务，只能靠 AI 自己调工具建。

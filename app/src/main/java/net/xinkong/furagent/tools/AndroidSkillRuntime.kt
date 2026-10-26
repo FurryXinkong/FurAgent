@@ -21,20 +21,20 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * 安卓端脚本运行时：Chaquopy 内嵌 CPython（2026-10-18）。
  *
- * 【为什么用 Chaquopy 而不是 Termux】
+ * 为什么用 Chaquopy 而不是 Termux
  *   - 用户零门槛：Python 打进 APK，装完就能用，不用教用户装 Termux。
  *   - 进程内执行：不像 Termux 要跨 App 通信，链路稳定。
  *   - 协议一致：与桌面端（ProcessBuilder 调系统 python）遵守同一套
  *     stdin/stdout JSON 协议，同一份 .py 脚本两端行为一致。
  *
- * 【怎么模拟 stdin/stdout】
+ * 怎么模拟 stdin/stdout
  *   Chaquopy 没有真正的子进程，脚本里 sys.stdin.readline() / print() 需要
  *   一个"假"的 stdin/stdout。做法：在 Python 侧把 sys.stdin 换成 io.StringIO
  *   （预置一行 JSON 参数），sys.stdout 换成 io.StringIO（收集输出），
  *   再用 runpy.run_path(script, run_name="__main__") 执行脚本。
  *   脚本代码零改动，两端通用。
  *
- * 【超时】
+ * 超时
  *   Chaquopy 是进程内执行，无法像子进程那样 destroyForcibly。
  *   用独立线程 + join(timeout) 做软超时：超时后返回失败，线程继续跑但结果丢弃。
  *   脚本里若有死循环会一直占一个线程，但不会卡住主流程。
@@ -46,7 +46,7 @@ class AndroidSkillRuntime(private val context: Context) : SkillRuntime {
     /**
      * 确保 Python 已启动。
      *
-     * 【关键】Chaquopy 在 Android 上必须显式调用
+     * 关键 Chaquopy 在 Android 上必须显式调用
      * Python.start(AndroidPlatform(context))，否则 getInstance() 会抛
      * "Cannot use GenericPlatform on Android"。
      * start() 只能调一次，重复调用会抛异常，所以用 @Volatile 标记 + 双重检查。
@@ -64,18 +64,18 @@ class AndroidSkillRuntime(private val context: Context) : SkillRuntime {
     }
 
     override fun scriptsDir(): File {
-        // 【缓存】list/find/create 都会频繁调本方法，
+        // 缓存 list/find/create 都会频繁调本方法，
         // 不能每次都写探针文件 + 遍历迁移目录。
         cachedScriptsDir?.let { return it }
         synchronized(this) {
             cachedScriptsDir?.let { return it }
-            // 【优先用开放目录】/sdcard/FurAgent/scripts，用户能用文件管理器直接看到、
+            // 优先用开放目录 /sdcard/FurAgent/scripts，用户能用文件管理器直接看到、
             // 手动放脚本、用编辑器改。之前用 filesDir（App 私有目录）导致：
             //   1. 用户看不到也放不进去
             //   2. 卸载 App 脚本全丢
             //   3. “AI 说创建成功但找不到文件”
 
-            // 【回退】没给 MANAGE_EXTERNAL_STORAGE 权限时，外部目录不可写，
+            // 回退 没给 MANAGE_EXTERNAL_STORAGE 权限时，外部目录不可写，
             // 回退到私有目录，保证功能不崩（只是用户看不到）。
             val external = File(
                 SDCARD_PATH,
@@ -140,7 +140,7 @@ class AndroidSkillRuntime(private val context: Context) : SkillRuntime {
             }
             JSONObject(out)
         } catch (e: Throwable) {
-            // 【诊断】把完整堆栈记下来，否则“create 成功但 list 为空”无法排查
+            // 诊断 把完整堆栈记下来，否则“create 成功但 list 为空”无法排查
             AgentLogger.log(
                 "Skill",
                 "解析 ${file.name} 异常：${e.javaClass.simpleName}: ${e.message}\n" +
@@ -158,7 +158,7 @@ class AndroidSkillRuntime(private val context: Context) : SkillRuntime {
         cfg: SkillConfig,
         timeout: Int
     ): ToolResult = withContext(Dispatchers.IO) {
-        // 【并发串结果修复】Chaquopy 是单进程单解释器，sys.stdin/stdout 是全局状态。
+        // 并发串结果修复 Chaquopy 是单进程单解释器，sys.stdin/stdout 是全局状态。
         // 两个脚本同时跑时，A 把 sys.stdout 换成自己的 buffer，B 又换一次，
         // A 的输出就写进了 B 的 buffer——表现为“拿到另一个脚本的结果”、
         // “参数丢失”、“报别的脚本的参数校验错误”。
@@ -175,14 +175,14 @@ class AndroidSkillRuntime(private val context: Context) : SkillRuntime {
     /**
      * 临时执行一段 Python 代码，不写文件。
      *
-     * 【与 runScript 的区别】
+     * 与 runScript 的区别
      *   runScript 执行 scripts/ 下的 .py 文件（持久化脚本）；
      *   execCode 执行传入的代码字符串（一次性，用完即弃）。
      *
-     * 【为什么需要】用户说“帮我算一下”“验证这段逻辑”时，
+     * 为什么需要 用户说“帮我算一下”“验证这段逻辑”时，
      * 不应该为了跑一次就往 scripts/ 里塞个文件。
      *
-     * 【并发】同样受 scriptMutex 保护：Chaquopy 单解释器，
+     * 并发 同样受 scriptMutex 保护：Chaquopy 单解释器，
      * sys.stdout 是全局状态，并发会串结果。
      */
     override suspend fun execCode(
@@ -284,7 +284,7 @@ class AndroidSkillRuntime(private val context: Context) : SkillRuntime {
     ): ToolResult = withContext(Dispatchers.IO) {
         val start = System.currentTimeMillis()
 
-        // 【配置注入】与桌面端一致：stdin 的 _config 字段 + 环境变量
+        // 配置注入 与桌面端一致：stdin 的 _config 字段 + 环境变量
         val cfgJson = SkillStore.configValuesJson(meta, cfg)
         val stdinArgs = JSONObject(args.toString())
         if (cfgJson.length() > 0) stdinArgs.put("_config", cfgJson)

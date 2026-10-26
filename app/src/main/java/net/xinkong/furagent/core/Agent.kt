@@ -32,7 +32,7 @@ private const val MIN_KEEP_MESSAGES = 40
 /**
  * 管理正在进行的 OkHttp Call。
  *
- * 【A12 修复】旧实现是单槽位（一个 currentCall），并发调用时后到的 Call 会
+ * 旧实现是单槽位（一个 currentCall），并发调用时后到的 Call 会
  * 覆盖前一个，导致 cancelAll() 只能取消最后一个，"停止"按钮有时不生效。
  * 现在改成 LinkedHashSet：
  *   - setCall(call)    加入
@@ -48,7 +48,7 @@ object AgentSession {
     /**
      * 取消代际。
      *
-     * 【用途】让阻塞式 IO（如下载）能感知「用户点了停止」。
+     * 用途 让阻塞式 IO（如下载）能感知「用户点了停止」。
      *   - beginTask()  新任务开始，代际 +1，返回新代际
      *   - cancelAll()  用户点停止，代际 +1（所有旧代际立即失效）
      *   - isCancelled(gen)  传入任务开始时拿到的代际，比对当前代际
@@ -144,7 +144,7 @@ val httpClient: OkHttpClient = OkHttpClient.Builder()
 suspend fun httpWithRetry(
     maxAttempts: Int = 3,
     /**
-     * 【UI 提示】重试时回调，让界面能显示“服务端繁忙，3s 后重试”。
+     * UI 提示 重试时回调，让界面能显示“服务端繁忙，3s 后重试”。
      * 之前只写日志，用户看到界面卡住不知道在干什么。
      */
     onRetry: ((code: Int, attempt: Int, maxAttempts: Int, waitMs: Long) -> Unit)? = null,
@@ -227,7 +227,7 @@ suspend fun runAgentTurn(
     onHistoryChanged: (List<ChatMessage>) -> Unit,
     onThinking: (String) -> Unit,
     /**
-     * 【错误回调】API 错误（HTTP 错误码 / 网络异常）。
+     * 错误回调 API 错误（HTTP 错误码 / 网络异常）。
      *
      * 与 onThinking 分开的原因：错误要渲染成状态小气泡并保留到下次发消息，
      * 而 thinking 在任务结束时会被清空。也不走 assistant_text，
@@ -239,16 +239,16 @@ suspend fun runAgentTurn(
     onStreamCommit: () -> Unit,
     onFinish: () -> Unit,
     /**
-     * 【取消代际】调用方（AgentRunner）在任务开始时通过 AgentSession.beginTask() 拿到。
+     * 取消代际 调用方（AgentRunner）在任务开始时通过 AgentSession.beginTask() 拿到。
      * 工具执行前会比对当前代际，不一致就立即中止，不再执行任何工具。
      *
-     * 【为什么需要】之前只靠协程 cancel()，但工具执行是阻塞调用
+     * 为什么需要 之前只靠协程 cancel()，但工具执行是阻塞调用
      * （Thread.join / readLine / Process.waitFor），取消不会立即中断。
      * 结果就是：UI 上显示已停止，但工具已经真实执行了（删文件、发请求）。
      * 传 0 表示不检查（兼容旧调用）。
      */
     cancelGen: Long = 0L,
-    /** 【P0-3】会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
+    /* 会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
     sessionPrompt: String = ""
 ) {
     var currentHistory = history
@@ -275,7 +275,7 @@ suspend fun runAgentTurn(
                                     type = "reasoning"
                                 )
                                 onHistoryChanged(currentHistory)
-                                // 【清空实时缓冲】思考已落库，运行时缓冲必须清掉，
+                                // 清空实时缓冲 思考已落库，运行时缓冲必须清掉，
                                 // 否则最后一条工作过程会把旧思考永远悬在那里，
                                 // 既与已保存的消息重复，又看不到最新内容。
                                 // 此刻助手正文尚未开始流式输出，清空 streaming 无副作用。
@@ -352,7 +352,7 @@ suspend fun runAgentTurn(
  * 把连续的 (tool_call, tool_result) 对合并到同一条 assistant 消息里，
  * 使其结构对齐真实响应（一条 assistant + N 条 tool），而不是 N 条 assistant + N 条 tool。
  *
- * 【缓存关键】
+ * 缓存关键
  * tool_call_id 优先用 ChatMessage.toolCallId（那是 API 返回的原始 id）。
  * 只有老会话没有这个字段时才 fallback 到 "call_" + UUID。
  */
@@ -373,7 +373,7 @@ private fun buildHistoryMessages(
         typeOf = { it.type }
     )
     val byTurns = history.subList(startIdx, history.size)
-    // 【token 预算二次裁剪】轮次截断拦不住工具输出特别大的会话：
+    // token 预算二次裁剪 轮次截断拦不住工具输出特别大的会话：
     // 一轮里读十个大文件就能吃掉几万 token。这里再按预算从最旧的工具过程开始丢。
     val recent = if (budgetKTokens > 0) {
         trimToolProcessByBudget(
@@ -406,7 +406,7 @@ private fun buildHistoryMessages(
                 val toolResultMessages = mutableListOf<JSONObject>()
                 var idx = i
 
-                // 【并行分批】先把这一批连续的 tool_call 收集起来。
+                // 并行分批 先把这一批连续的 tool_call 收集起来。
                 // 并行执行时它们是一条接一条追加的，结果再按完成顺序陆续追加。
                 val batch = mutableListOf<ChatMessage>()
                 while (idx < recent.size && recent[idx].type == "tool_call") {
@@ -443,7 +443,7 @@ private fun buildHistoryMessages(
                         })
                     })
 
-                    // 【关键修复】按 toolCallId 配对，不能只看位置相邻。
+                    // 关键修复 按 toolCallId 配对，不能只看位置相邻。
                     // 并行跑一批工具时，历史里是「A的call, B的call, C的call,
                     // B的result, A的result, C的result」这种错开的顺序。
                     // 旧逻辑只看下一条是不是 tool_result，于是 A 被判成
@@ -576,11 +576,11 @@ suspend fun runAgentLoop(
     onEvent: (AgentEvent) -> Unit,
     onStreamChunk: (String) -> Unit,
     onReasoning: (String) -> Unit = {},
-    /** 【错误回调】API 错误走这里，不走 assistant_text（不占 AI 聊天气泡）。 */
+    /* 错误回调 API 错误走这里，不走 assistant_text（不占 AI 聊天气泡）。 */
     onError: (String) -> Unit = {},
-    /** 【取消代际】0 表示不检查。见 runAgentTurn 的说明。 */
+    /* 取消代际 0 表示不检查。见 runAgentTurn 的说明。 */
     cancelGen: Long = 0L,
-    /** 【P0-3】会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
+    /* 会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
     sessionPrompt: String = ""
 ): String {
     // 工具执行前调用。代际不一致 = 用户已点停止。
@@ -613,7 +613,7 @@ suspend fun runAgentLoop(
         systemPrompt += "\n\n【用户附加指令】\n" + settings.customSystemPrompt
     }
 
-    // 【P0-3】会话专用提示词：与桌面端 DesktopAgent.runTurn 的 sessionPrompt 参数对齐
+    // 会话专用提示词：与桌面端 DesktopAgent.runTurn 的 sessionPrompt 参数对齐
     if (sessionPrompt.isNotBlank()) {
         systemPrompt += "\n\n【本会话专用指令】\n" + sessionPrompt
     }
@@ -832,7 +832,7 @@ suspend fun runAgentLoop(
         }
         messages.put(cleanAssistant)
 
-        // 【并行化改造】工具执行
+        // 并行化改造 工具执行
         //   1. 先按顺序把 tool_call 占位 emit 出去（保持 UI 顺序）
         //   2. 判断是否含元工具：含则整体串行（元工具会改 loadedToolNames）
         //   3. 否则并行执行，用 supervisorScope 保证单个失败不取消整批
@@ -844,7 +844,7 @@ suspend fun runAgentLoop(
         }
 
         // 1. 推 tool_call 占位
-        // 【并行可见性】并行批次给同批调用写同一个 parallelGroup，
+        // 并行可见性 并行批次给同批调用写同一个 parallelGroup，
         // UI 据此把同批条目収进「并行 N」分组，用户能看出这几个是一起跑的。
         val parallelTag = if (!hasMetaTool && sortedCalls.size > 1) {
             "pg_${System.currentTimeMillis()}_$loopIndex"

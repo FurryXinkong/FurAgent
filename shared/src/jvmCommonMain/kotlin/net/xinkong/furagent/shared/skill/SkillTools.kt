@@ -8,15 +8,15 @@ import org.json.JSONObject
  *
  * 从桌面端 desktop.tools.SkillTools 抽到 shared。
  *
- * 【设计】
+ * 设计
  *  - `pytool` 常驻：op=list / info / run / create / delete / config，负责管理脚本。
  *  - 每个脚本额外动态注册成一个独立工具 `pytool_<脚本名>`，AI 一眼看到有哪些脚本、
  *    参数是什么，可直接调用，不用先 list 再 run。
  *
- * 【配置】每个脚本有自己的配置文件 scripts/<name>.config.json，
+ * 配置 每个脚本有自己的配置文件 scripts/<name>.config.json，
  * 存 enabled / timeout / values。op=config 读写它，运行时自动注入脚本。
  *
- * 【确认弹窗】由端侧负责：本类只做协议层，不弹窗。端侧在调用 [execute] 前
+ * 确认弹窗 由端侧负责：本类只做协议层，不弹窗。端侧在调用 [execute] 前
  * 自行决定是否弹确认（桌面端 requireConfirmSkill，安卓端 ConfirmationBroker）。
  */
 object SkillTools {
@@ -68,7 +68,7 @@ object SkillTools {
      *
      * 工具名 = `pytool_<脚本名>`，参数 schema 直接来自脚本的 PARAMS。
      *
-     * 【异常保护】list() 会调 Python 解析脚本元数据。若 Python 运行时未就绪
+     * 异常保护 list() 会调 Python 解析脚本元数据。若 Python 运行时未就绪
      * （首次启动 Chaquopy 还在解压、或初始化失败），这里必须返回空列表，
      * 绝不能让异常冒到工具列表构建处——否则整个 tools 数组构建失败，
      * Agent 拿不到任何工具，表现为“工具全没了 / 回复异常”。

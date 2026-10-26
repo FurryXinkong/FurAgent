@@ -4,7 +4,7 @@ import net.xinkong.furagent.shared.ThinkingLevel
 import java.util.*
 
 /**
- * 【冗余清理 Batch 8】ChatMessage 抽到 shared/data/ChatMessage.kt。
+ * ChatMessage 抽到 shared/data/ChatMessage.kt。
  * 保留 typealias 让既有 import（ChatMessage）继续有效，
  * 同包内引用（AgentRunner / ChatUI / SessionStore 等）无需改动。
  * 下一批再清理 typealias，改成直接 import shared 的 ChatMessage。
@@ -108,14 +108,14 @@ data class AppSettings(
     val requireConfirmWrite: Boolean = true,
     val requireConfirmShell: Boolean = true,
     /**
-     * 【与桌面端对齐】所有 Python 相关操作前确认：
+     * 与桌面端对齐 所有 Python 相关操作前确认：
      * 执行代码（python）、运行脚本（pytool run）、创建/删除脚本。
      *
-     * 【已删除 requireConfirmSkill】之前拆成两个开关，用户看到两个
+     * 已删除 requireConfirmSkill 之前拆成两个开关，用户看到两个
      * “权限确认”很困惑，且与桌面端不一致。现在统一由本字段控制。
      */
     val requireConfirmPython: Boolean = true,
-    /** 【B13 新增】FFmpeg 输出文件已存在时是否弹覆盖确认 */
+    /* FFmpeg 输出文件已存在时是否弹覆盖确认 */
     val requireConfirmFfmpegOverwrite: Boolean = true,
     val enableMemory: Boolean = true,
     val allowedPaths: List<String> = listOf("/sdcard"),
@@ -134,9 +134,9 @@ data class AppSettings(
     val autoSpeakReplies: Boolean = false,
     val maxToolCallLoops: Int = 20,
     /**
-     * 【上下文预算】历史 token 上限（单位：千 token，0 = 不限制）。
+     * 上下文预算 历史 token 上限（单位：千 token，0 = 不限制）。
      *
-     * 【为什么需要】maxTurns 只能按轮次拦，拦不住工具输出特别大的会话：
+     * 为什么需要 maxTurns 只能按轮次拦，拦不住工具输出特别大的会话：
      * 一轮里读十个大文件就能吃掉几万 token。
      * 超预算时从最旧的工具过程开始丢（人类消息和助手回复保留），
      * 既压住 token 消耗，又能让模型知道之前大概改了什么。
@@ -170,7 +170,7 @@ data class AppSettings(
     val fileBackupEnabled: Boolean = true,
 
     /**
-     * 【P1-15】隐藏的设置分组 key 集合。
+     * 隐藏的设置分组 key 集合。
      *
      * 与桌面端 DesktopSettings.hiddenSettings 对齐：
      * 用户在「高级」分组里勾选后，对应分组从设置页隐藏。

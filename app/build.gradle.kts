@@ -5,11 +5,11 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
     // compose resources：消费 shared 的 Res.font.* 共享字体
     id("org.jetbrains.compose")
-    // 【自定义脚本】Chaquopy：把 CPython 打进 APK，安卓端本地跑 Python 脚本
+    // 自定义脚本 Chaquopy：把 CPython 打进 APK，安卓端本地跑 Python 脚本
     id("com.chaquo.python")
 }
 
-// 【25.75 修复】签名配置不再硬编码。
+// 签名配置不再硬编码。
 // 读取优先级：local.properties（key: furagent.storeFile / furagent.storePassword / furagent.keyPassword）
 //            → 环境变量（FURAGENT_STORE_FILE / FURAGENT_STORE_PASSWORD / FURAGENT_KEY_PASSWORD）。
 // 密码类字段无兜底默认值（fallback 为空串）：读不到就构建失败，避免真实密码回写源码。
@@ -107,7 +107,7 @@ android {
     }
 }
 
-// 【自定义脚本】Chaquopy：内嵌 CPython 3.12（与构建机 Python 版本一致，
+// 自定义脚本 Chaquopy：内嵌 CPython 3.12（与构建机 Python 版本一致，
 // 避免构建时找不到对应版本导致 .pyc 预编译失败；脚本语法与桌面端兼容）
 chaquopy {
     defaultConfig {

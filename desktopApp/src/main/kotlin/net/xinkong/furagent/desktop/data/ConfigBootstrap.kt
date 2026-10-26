@@ -6,7 +6,7 @@ import java.io.File
 /**
  * 首次运行配置初始化。
  *
- * 【P2-9 修复】从 `Main.kt` 抽出来，落到 `data/` 包（TOAI §22.1）。
+ * 从 `Main.kt` 抽出来，落到 `data/` 包（TOAI §22.1）。
  *
  * 职责：
  *   - 触发所有子目录 mkdirs（rootDir / config / sessions / screenshots /

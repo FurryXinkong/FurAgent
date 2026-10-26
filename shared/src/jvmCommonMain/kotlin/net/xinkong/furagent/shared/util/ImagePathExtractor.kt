@@ -10,7 +10,7 @@ import java.io.File
  * 提取三类：
  *  1. Markdown 图片：`![alt](path)`
  *  2. 独立成行的绝对路径（Unix `/` 开头或 Windows 盘符）
- *  3. 【新增】行内嵌的绝对路径（如工具返回“已生成图片：D:\a.png（12KB）”）
+ * 3. 行内嵌的绝对路径（如工具返回“已生成图片：D:\a.png（12KB）”）
  *
  * 只返回本地已存在的文件。
  */
@@ -64,7 +64,7 @@ object ImagePathExtractor {
             }
         }
 
-        // 【新增】行内嵌的绝对路径（如“已生成图片：D:\a.png（12KB）”）。
+        // 行内嵌的绝对路径（如“已生成图片：D:\a.png（12KB）”）。
         // 只对尚未命中的行做，避免重复。
         content.lineSequence().forEach { rawLine ->
             if (rawLine.isBlank()) return@forEach

@@ -29,7 +29,7 @@ import java.util.*
 /**
  * 定时任务执行服务。
  *
- * 【为什么需要】
+ * 为什么需要
  *  TaskReceiver 是 BroadcastReceiver，goAsync() 只有 10 秒窗口。
  *  run_workflow / run_command / ffmpeg 这类任务可能跑几分钟到几小时，必然超时被 KILL。
  *  用一个前台服务承载：
@@ -37,11 +37,11 @@ import java.util.*
  *    - 可持 WakeLock 防止 CPU 休眠
  *    - 用户可见进度（前台通知）
  *
- * 【生命周期】
+ * 生命周期
  *  每次触发 startForegroundService → onCreate → onStartCommand(处理) →
  *  执行完 stopSelf。不在 AndroidManifest 里写 STOP 策略，由 Service 自管理。
  *
- * 【并发保护】
+ * 并发保护
  *  taskJob?.isActive 判断：同一时间只跑一个任务。
  *  定时任务本身通常不会重叠（重叠的会被忽略 + 日志记录）。
  */
@@ -169,7 +169,7 @@ class TaskExecutionService : Service() {
             "[定时任务] 触发：task=${storedTask?.description ?: taskId} action=$action"
         )
 
-        // 【修复 F6】定时任务和 Agent 是两条独立前台服务，可能同时跑。
+        // 定时任务和 Agent 是两条独立前台服务，可能同时跑。
         // 不阻止并行（用户可能确实希望），但记一条日志，方便排查资源争抢。
         if (net.xinkong.furagent.core.AgentRunner.isRunning()) {
             AgentLogger.log(
@@ -290,7 +290,7 @@ class TaskExecutionService : Service() {
     }
 
     /**
-     * 【能力对齐桌面】run_tool 动作执行：调用 ToolRegistry 里的任意工具。
+     * 能力对齐桌面 run_tool 动作执行：调用 ToolRegistry 里的任意工具。
      * 工具名来自 task.toolName，参数是 task.toolArgs（JSON 对象字符串）。
      */
     private suspend fun executeTool(intent: Intent, task: ScheduledTask?) {
@@ -336,15 +336,15 @@ class TaskExecutionService : Service() {
     }
 
     /**
-     * 【AI 主动说话】run_agent 动作执行。
+     * AI 主动说话 run_agent 动作执行。
      *
      * 调用 LLM API 获取回复，如果任务绑定了 sessionId，
      * 将结果作为 assistant 消息写回该会话（结果回流）。
      */
     /**
-     * 【AI 主动说话】run_agent 动作执行。
+     * AI 主动说话 run_agent 动作执行。
      *
-     * 【与桌面端对齐】旧实现是手写的非流式 HTTP 单轮问答，导致三个问题：
+     * 与桌面端对齐 旧实现是手写的非流式 HTTP 单轮问答，导致三个问题：
      *   1. 没有工具能力（AI 只能空口说话，不能查天气/读文件/发消息）
      *   2. 没有记忆、没有系统提示词、没有会话上下文
      *   3. 结果只发通知，不朗读 —— 用户问的「为什么只能通知不能说话」就是这个
@@ -392,7 +392,7 @@ class TaskExecutionService : Service() {
         var finalHistory: List<ChatMessage> = history
         var errorText = ""
 
-        // 【P0-3】会话专用提示词：与聊天页 AgentRunner.start 保持一致
+        // 会话专用提示词：与聊天页 AgentRunner.start 保持一致
         val sessionPrompt = if (sessionId.isNotBlank()) {
             withContext(Dispatchers.IO) { SessionStore.load(this@TaskExecutionService, sessionId) }
                 ?.systemPrompt ?: ""
@@ -457,7 +457,7 @@ class TaskExecutionService : Service() {
             }
         }
 
-        // 【让 AI 说话】与聊天页 autoSpeakReplies 同一开关、同一实现
+        // 让 AI 说话 与聊天页 autoSpeakReplies 同一开关、同一实现
         speakIfEnabled(settings.autoSpeakReplies, reply)
 
         NotificationHelper.showGeneric(this, "AI 已回复", reply.take(200))
@@ -471,7 +471,7 @@ class TaskExecutionService : Service() {
      */
     private fun speakIfEnabled(enabled: Boolean, text: String) {
         if (!enabled) return
-        // 【P1-抽 shared】统一走 shared/util/SpeechCleaner，与桌面端完全同源
+        // 统一走 shared/util/SpeechCleaner，与桌面端完全同源
         val clean = net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
         if (clean.isBlank()) return
 
@@ -492,7 +492,7 @@ class TaskExecutionService : Service() {
     /**
      * 把本轮完整历史写回会话。
      *
-     * 【修复】旧实现手写 sessions/$id.json，绕过了 SessionStore 的索引维护和
+     * 旧实现手写 sessions/$id.json，绕过了 SessionStore 的索引维护和
      * 500ms 节流，导致：会话列表的 messageCount / updatedAt 不更新、
      * 与聊天页并发写时互相覆盖。现在统一走 SessionStore.save。
      *
@@ -560,7 +560,7 @@ class TaskExecutionService : Service() {
         if (next != null) {
             val updated = task.copy(triggerTime = next)
             withContext(Dispatchers.IO) {
-                // 【性能】只改 triggerTime，不再 add() 全量重写整个 schedules.json
+                // 性能 只改 triggerTime，不再 add() 全量重写整个 schedules.json
                 ScheduleStore.updateTriggerTime(this@TaskExecutionService, task.id, next)
                 ScheduleStore.scheduleAlarm(this@TaskExecutionService, updated)
             }
@@ -569,7 +569,7 @@ class TaskExecutionService : Service() {
                 "[定时任务] 已排下次：" + DateFormats.formatDateTime(next)
             )
         } else if (task.repeatMode == "cron") {
-            // 【体验优化 B8】cron 非法：不删任务，日志 + 通知，让用户改
+            // 体验优化 cron 非法：不删任务，日志 + 通知，让用户改
             AgentLogger.log(
                 "ERR",
                 "[定时任务] cron 表达式可能非法（${task.cronExpression}），已保留但暂停调度：${task.id.take(8)}"

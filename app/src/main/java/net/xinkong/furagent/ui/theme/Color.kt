@@ -3,7 +3,7 @@ package net.xinkong.furagent.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // ===== Light =====
-// 【改】主题色从纯蓝 #3B82F6 换成蓝紫 #6E7CFA，
+// 改 主题色从纯蓝 #3B82F6 换成蓝紫 #6E7CFA，
 // 与流体渐变（#4A9EFF -> #A78BFA）同一色系
 val LightPrimary = Color(0xFF6E7CFA)
 val LightOnPrimary = Color(0xFFFFFFFF)
@@ -22,7 +22,7 @@ val LightError = Color(0xFFFF3B30)
 val LightSuccess = Color(0xFF34C759)
 
 // ===== Dark =====
-// 【改】对应提亮版蓝紫
+// 改 对应提亮版蓝紫
 val DarkPrimary = Color(0xFF8B93FF)
 val DarkOnPrimary = Color(0xFF0A0A0C)
 val DarkPrimaryContainer = Color(0xFF2A2C52)

@@ -64,7 +64,7 @@ private val ITEM_SHAPE = RoundedCornerShape(Radius.SM)
 
 // 侧边栏
 
-// 【色板约定】
+// 色板约定
 //   SidebarBg()          —— 侧边栏整体底色（半透明，透出背景渐变）
 //   SidebarItemActive()  —— 选中项底色
 //   SidebarItemHover()   —— hover 项底色
@@ -73,7 +73,7 @@ private val ITEM_SHAPE = RoundedCornerShape(Radius.SM)
 //   TextSecondary()      —— 未选中项图标
 //   CardColor()          —— 下拉菜单容器色
 
-// 【圆角约定】
+// 圆角约定
 //   所有侧边栏项统一 10dp，靠两侧 padding 14~12dp 留白，视觉对齐。
 
 @Composable
@@ -320,7 +320,7 @@ private fun NewChatButton(expanded: Boolean, onClick: () -> Unit) {
         label = "newChatBg"
     )
 
-    // 【动画修复】原来 horizontal padding 直接用 if 切换、horizontalArrangement 也用
+    // 动画修复 原来 horizontal padding 直接用 if 切换、horizontalArrangement 也用
     // if 切换，两者都在布尔变化时"跳变"。同时 AnimatedVisibility 里的文字在展开，
     // 三者不同步 → 图标先跳、文字才跟上，视觉上乱跳。
 
@@ -408,7 +408,7 @@ private fun NavItem(
         label = "navTextColor"
     )
 
-    // 【动画修复】同 NewChatButton：图标位置用动画，Arrangement 固定。
+    // 动画修复 同 NewChatButton：图标位置用动画，Arrangement 固定。
     // 展开：start = 12.dp
     // 折叠：start = 15.dp（48dp 可用宽度里让 18dp 图标居中）
     val startPadding by animateDpAsState(
@@ -488,7 +488,7 @@ private fun SessionItem(
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
-    // 【动画清理】选中/悬停颜色直接切换，不再做渐变动画
+    // 动画清理 选中/悬停颜色直接切换，不再做渐变动画
     val bg = when {
         selected -> SidebarItemActive()
         hovered -> SidebarItemHover()
@@ -522,7 +522,7 @@ private fun SessionItem(
                 .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 【多会话并发】运行中的会话在标题前显示一个脉冲小圆点。
+            // 多会话并发 运行中的会话在标题前显示一个脉冲小圆点。
             if (running) {
                 val pulse by rememberInfiniteTransition(label = "sessionRunning").animateFloat(
                     initialValue = 0.35f,
@@ -551,7 +551,7 @@ private fun SessionItem(
                 modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(4.dp))
-            // 【hover 移动修复】菜单按钮常驻占位：标题宽度恒定，鼠标悬停不再
+            // hover 移动修复 菜单按钮常驻占位：标题宽度恒定，鼠标悬停不再
             // 插入/移除按钮导致整行文字重排位移。悬停只改变按钮存在感（纯视觉）。
             Box(
                 Modifier

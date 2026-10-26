@@ -215,7 +215,7 @@ fun GlassDragHandle() {
     )
 }
 
-// 【标准卡片】GlassCard / PocoCard
+// 标准卡片 GlassCard / PocoCard
 
 // 桌面端所有页面级卡片统一走这一个实现：
 //   - 底色  CardColor()       (#242629 深色不透明)
@@ -286,7 +286,7 @@ fun GlassCard(
  *   - 边框 1dp（默认 BorderColor，可自定义）
  *   - 阴影 Shadow.LG
  *
- * 【为什么收口】三处曾各写一份 Surface(...) 参数，改一处要动三处。
+ * 为什么收口 三处曾各写一份 Surface(...) 参数，改一处要动三处。
  */
 @Composable
 fun GlassFloatingCard(
@@ -310,7 +310,7 @@ fun GlassDivider(modifier: Modifier = Modifier, startIndent: Dp = 0.dp, color: C
     Box(Modifier.fillMaxWidth().padding(start = startIndent).height(1.dp).background(color).then(modifier))
 }
 
-// 【通用阴影包装】GlassShadow
+// 通用阴影包装 GlassShadow
 
 // 用途：给任意 content 套一层统一阴影（不改变底色/边框）。
 // 典型场景：空状态提示卡片、对话空状态里的 "未配置 API Key" 卡片。
@@ -658,7 +658,7 @@ fun WindowTitleBar(
     onMinimize: () -> Unit,
     onMaximize: () -> Unit,
     onClose: () -> Unit,
-    // 【P1-10 修复】最大化状态下拖拽，先还原再拖，避免无边框窗口乱跳
+    // 最大化状态下拖拽，先还原再拖，避免无边框窗口乱跳
     isMaximized: Boolean = false,
     onRestoreIfMaximized: (() -> Unit)? = null
 ) {
@@ -726,7 +726,7 @@ private fun WindowControlButton(kind: WindowControlKind, onClick: () -> Unit) {
 
 // 对话框
 
-// 【复用收口】弹入动画（0.92→1 缩放 + 淡入）三处对话框共用一份，
+// 复用收口 弹入动画（0.92→1 缩放 + 淡入）三处对话框共用一份，
 
 /**
  * 对话框弹入动画 Modifier：挂到对话框内容上即可获得统一的缩放淡入进场。
@@ -769,8 +769,8 @@ fun GlassDialog(
             }
         },
         text = {
-            // 【P2-19 修复】长内容可滚动，防超长内容超出屏幕。
-            // 【批次 2 修复】桌面端 Compose 没有 LocalConfiguration（那是 Android 专属 API），
+            // 长内容可滚动，防超长内容超出屏幕。
+            // 桌面端 Compose 没有 LocalConfiguration（那是 Android 专属 API），
             // 用固定 600dp 上限：1080p / 1440p 都能容纳，不会溢出；
             // AlertDialog 自身还有平台最大宽度限制，双保险。
             Box(

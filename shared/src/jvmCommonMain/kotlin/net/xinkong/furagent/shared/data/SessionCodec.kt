@@ -12,7 +12,7 @@ import java.util.UUID
 /**
  * 会话通用编解码（双端共用）。
  *
- * 【冗余清理 Batch 11a】Android SessionStore 和桌面 DesktopSessionStore 里
+ * Android SessionStore 和桌面 DesktopSessionStore 里
  * 有一批逐字相同的纯函数（generateTitle / duplicate / parseMessageFromJson）。
  * 现统一到这里。
  *
@@ -21,7 +21,7 @@ import java.util.UUID
  *   - 桌面用 java.util.Base64.getDecoder().decode()（严格）
  * 调用方通过 lambda 传入自己的实现。
  *
- * 【缓存关键】parseMessageFromJson 必须保留 toolCallId，
+ * 缓存关键 parseMessageFromJson 必须保留 toolCallId，
  * 否则跨请求 tool_call_id 不一致，DeepSeek/OpenAI 前缀缓存全部失效。
  */
 object SessionCodec {
@@ -132,7 +132,7 @@ object SessionCodec {
      * 消息 → JSONObject（只含 imagePaths，不含 imageData）。
      * 用于 save / doWriteSessionsNow 等"本机持久化"场景。
      *
-     * 【缓存关键】必须序列化 toolCallId（原始 API call_id），
+     * 缓存关键 必须序列化 toolCallId（原始 API call_id），
      * 否则重启后前缀缓存全部 miss。
      */
     fun messageToJson(m: ChatMessage): JSONObject = JSONObject().apply {

@@ -29,7 +29,7 @@ import java.util.concurrent.TimeUnit
  * setEnabled / setEnabledAll 也走这里，因为写盘是 IO 操作，
  * 不能在 Compose 主线程直接调。
  *
- * 【配置 2026-10-18】setEnabled / saveConfig 写 scripts/<name>.config.json，
+ * 配置 2026-10-18 setEnabled / saveConfig 写 scripts/<name>.config.json，
  * 不再往 settings.json 的 disabledTools 里塞 pytool_xxx。
  */
 object SkillRunBus {

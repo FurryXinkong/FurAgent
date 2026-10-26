@@ -171,7 +171,7 @@ object FfmpegTools {
 
         val outPath = extractOutputPath(argList)
         if (outPath != null && File(outPath).exists()) {
-            // 【B13 改动】覆盖确认改用独立开关 requireConfirmFfmpegOverwrite
+            // 覆盖确认改用独立开关 requireConfirmFfmpegOverwrite
             if (DesktopSettingsHolder.current.requireConfirmFfmpegOverwrite) {
                 val approved = net.xinkong.furagent.desktop.core.DesktopConfirmation.request(
                     "FFmpeg 覆盖确认",
@@ -334,7 +334,7 @@ object FfmpegTools {
 
             val argList = parseCommandLine(cmd)
             if (File(output).exists()) {
-                // 【B13 改动】独立开关
+                // 独立开关
                 if (DesktopSettingsHolder.current.requireConfirmFfmpegOverwrite) {
                     val approved = net.xinkong.furagent.desktop.core.DesktopConfirmation.request(
                         "FFmpeg 覆盖确认",

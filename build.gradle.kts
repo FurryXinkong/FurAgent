@@ -14,7 +14,7 @@ plugins {
 }
 
 // ============================================================
-// 【版本号自动化】
+// 版本号自动化
 // Android versionName：构建时刻的 yyyyMMddHHmm（如 202610161751）。
 // 桌面端 version：jpackage 要求 MAJOR.MINOR.BUILD 三段，且
 //   MAJOR≤255 / MINOR≤255 / BUILD≤65535，故用：

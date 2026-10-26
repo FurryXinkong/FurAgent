@@ -59,7 +59,7 @@ object DownloadManager {
     }
 
     /**
-     * 【外部任务旁路登记】DownloadEngine 走的是 shared 里的跨端下载引擎，
+     * 外部任务旁路登记 DownloadEngine 走的是 shared 里的跨端下载引擎，
      * 不经过本类的 scope/jobs，但用户希望右下角 DownloadToastBar 也能看到进度。
      * 这里提供三个方法让调用方自主上报：
      *   - beginExternal 返回 id，把任务加进 tasks（状态 DOWNLOADING）

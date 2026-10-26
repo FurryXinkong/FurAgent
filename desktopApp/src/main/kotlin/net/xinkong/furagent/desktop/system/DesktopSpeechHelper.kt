@@ -20,7 +20,7 @@ import java.util.concurrent.TimeUnit
  *  - stderr 全部内容 → 写 DesktopLogger，同时保留在 state.error 里
  *  - state.error 持久保留，直到用户点"关闭"或开始新朗读
  *
- * 【临时文件策略】
+ * 临时文件策略
  *  - 朗读脚本固定落 ~/.furagent/temp/furagent_speak.ps1（TempCleaner 会管）
  *  - 探测脚本固定落 ~/.furagent/temp/furagent_tts_probe.ps1
  *  - 都不 deleteOnExit（文件是持久的，由 TempCleaner 按 mtime 清理）

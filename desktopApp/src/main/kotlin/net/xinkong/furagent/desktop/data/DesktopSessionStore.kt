@@ -183,7 +183,7 @@ object DesktopSessionStore {
                 updatedAt = o.optLong("updatedAt"),
                 parentId = o.optString("parentId", "").takeIf { it.isNotBlank() },
                 systemPrompt = if (o.has("systemPrompt")) o.getString("systemPrompt") else null,
-                // 【P0-4】三态：null 表示磁盘上还没有此字段（旧数据）
+                // 三态：null 表示磁盘上还没有此字段（旧数据）
                 titleLocked = if (o.has("titleLocked")) o.optBoolean("titleLocked", false) else null,
                 messages = msgs
             )
@@ -209,7 +209,7 @@ object DesktopSessionStore {
                 val f = sessionFile(session.id)
                 if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optString("systemPrompt", "") else ""
             }.getOrDefault("")
-            // 【P0-4】titleLocked 三态兜底：null 保留磁盘原值（同 systemPrompt 语义）
+            // titleLocked 三态兜底：null 保留磁盘原值（同 systemPrompt 语义）
             val titleLocked = session.titleLocked ?: runCatching {
                 val f = sessionFile(session.id)
                 if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optBoolean("titleLocked", false)
@@ -308,7 +308,7 @@ object DesktopSessionStore {
     }
 
     /**
-     * 【冗余清理 Batch 11a】duplicate 的 Session 构造抽到 shared/data/SessionCodec。
+     * duplicate 的 Session 构造抽到 shared/data/SessionCodec。
      * 本端只负责 load + save。
      */
     fun duplicate(id: String): DesktopSession? {
@@ -319,7 +319,7 @@ object DesktopSessionStore {
     }
 
     /**
-     * 【冗余清理 Batch 11a】generateTitle 抽到 shared/data/SessionCodec。
+     * generateTitle 抽到 shared/data/SessionCodec。
      */
     fun generateTitle(messages: List<DesktopMessage>): String =
         net.xinkong.furagent.shared.data.SessionCodec.generateTitle(messages)
@@ -334,7 +334,7 @@ object DesktopSessionStore {
      * @return 解析成功返回 DesktopMessage；单条解析失败返回 null
      */
     /**
-     * 【冗余清理 Batch 11a】parseDesktopMessageFromJson 抽到 shared/data/SessionCodec。
+     * parseDesktopMessageFromJson 抽到 shared/data/SessionCodec。
      * 桌面传严格版 java.util.Base64 解码器。
      */
     private fun parseDesktopMessageFromJson(
@@ -486,7 +486,7 @@ object DesktopSessionStore {
             }
 
             if (replaceExisting) {
-                // 【修复 A7】先删会话并检查结果，成功后再清记忆。
+                // 先删会话并检查结果，成功后再清记忆。
                 // 旧实现先删会话（listFiles() 返回 null 时静默跳过）再清记忆，
                 // 若删除失败会出现「记忆没了但会话还在」的不一致状态。
                 val sessionDir = DesktopPaths.sessionDir()
@@ -667,7 +667,7 @@ object DesktopSessionStore {
     }
 
     fun importSingleSession(file: File): ImportSingleResult {
-        // 【P1-4】按扩展名分流：.md 走 Markdown 解析，其余走 JSON
+        // 按扩展名分流：.md 走 Markdown 解析，其余走 JSON
         if (file.extension.equals("md", ignoreCase = true)) {
             return importMarkdown(file)
         }
@@ -730,7 +730,7 @@ object DesktopSessionStore {
     }
 
     /**
-     * 【P1-4】导入 Markdown 会话（与手机端 exportMarkdown 格式对齐）。
+     * 导入 Markdown 会话（与手机端 exportMarkdown 格式对齐）。
      *
      * 格式：
      *   # 标题

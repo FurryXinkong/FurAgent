@@ -3,7 +3,7 @@ package net.xinkong.furagent.shared.tools
 /**
  * 工具分类与分层策略。
  *
- * 【P0 优化：分层工具系统】
+ * P0 优化：分层工具系统
  *
  * 背景：
  *   现有实现把所有工具的完整 JSON Schema 塞进每次 API 请求的 `tools` 数组。
@@ -39,7 +39,7 @@ object ToolCategory {
         "list_files",
         "read_file",
         "write_file",
-        // 【P2-2】grep 已并入 list_files（mode=content），不再常驻。
+        // grep 已并入 list_files（mode=content），不再常驻。
         // execute() 仍保留 "grep" 入口做向后兼容，但不再占 tools 数组。
         // 网络
         "web",
@@ -58,7 +58,7 @@ object ToolCategory {
     /**
      * 工具的中文关键词。
      *
-     * 【为什么需要】ToolCatalog.score 原本只拿 query 去撞 name / displayName /
+     * 为什么需要 ToolCatalog.score 原本只拿 query 去撞 name / displayName /
      * description 的英文子串，中文 query（如“搜代码”“找定义”）永远 0 分，
      * 中文用户和中文思考的 AI 第一跳必踩空。
      *

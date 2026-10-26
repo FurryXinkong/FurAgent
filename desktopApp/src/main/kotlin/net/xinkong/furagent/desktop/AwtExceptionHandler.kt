@@ -5,14 +5,14 @@ import net.xinkong.furagent.desktop.system.DesktopLogger
 /**
  * AWT 事件分发线程（EDT）的未捕获异常处理器。
  *
- * 【为什么需要】
+ * 为什么需要
  * `Thread.setDefaultUncaughtExceptionHandler` 对 EDT 不生效 —— AWT 的
  * `EventDispatchThread.processException` 有自己的处理链，优先于全局处理器。
  * 当 EDT 上抛出未捕获异常（典型：剪贴板被占用时 `WClipboard.openClipboard`
  * 抛 `IllegalStateException: cannot open system clipboard`），AWT 会回退到
  * 默认行为：弹一个原生错误对话框（“cannot open system clipboard”）。
  *
- * 【修法】
+ * 修法
  * 把本类名设给系统属性 `sun.awt.exception.handler`，AWT 会实例化它作为
  * EDT 的异常处理器，从而拦住弹框。要求：无参构造函数 + 实现
  * `Thread.UncaughtExceptionHandler`。

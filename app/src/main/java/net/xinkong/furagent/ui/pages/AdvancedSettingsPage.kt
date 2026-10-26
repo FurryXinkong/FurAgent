@@ -32,7 +32,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 /**
  * 高级设置 —— 整屏页面。
  *
- * 【UI 统一约定】
+ * UI 统一约定
  *   - 卡片统一 PocoCard
  *   - 页背景 glassPageBg() + 顶部 GlassSheen
  */
@@ -164,7 +164,7 @@ fun AdvancedSettingsPage(
             ) {
 
                 // ============ 记忆 ============
-                // 【去重】安全确认开关已统一到「设置 → 安全确认」，
+                // 去重 安全确认开关已统一到「设置 → 安全确认」，
                 // 这里不再重复一份（之前两处都有，用户看到两个“安全确认”很困惑，
                 // 且这里缺 requireConfirmPython，两边不一致）。
                 item { PocoGroupTitle("记忆") }

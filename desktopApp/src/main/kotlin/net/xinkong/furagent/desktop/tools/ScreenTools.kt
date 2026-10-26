@@ -9,7 +9,7 @@ import org.json.JSONObject
  *
  * 底层走 UiaScreenController，通过 PowerShell 桥接 Windows UI Automation。
  *
- * 【不截断】
+ * 不截断
  *  UI 树的文本量本身不大，不设上限。
  */
 object ScreenTools {

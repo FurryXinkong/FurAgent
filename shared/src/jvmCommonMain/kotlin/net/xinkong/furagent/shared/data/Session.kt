@@ -3,7 +3,7 @@ package net.xinkong.furagent.shared.data
 /**
  * 一次会话（双端共用）。
  *
- * 【冗余清理 Batch 9】Android 的 Session 和桌面的 DesktopSession 字段完全一致，
+ * Android 的 Session 和桌面的 DesktopSession 字段完全一致，
  * 只是类名不同（Desktop 前缀没有信息量）。现合并到 shared。
  */
 data class Session(
@@ -20,7 +20,7 @@ data class Session(
      */
     val systemPrompt: String? = null,
     /**
-     * 【P0-4】标题是否被用户手动锁定（重命名后为 true）。
+     * 标题是否被用户手动锁定（重命名后为 true）。
      *
      * persist 自动生成标题时会检查此字段：true 则保留用户设的标题，
      * 不再用 generateTitle 覆盖。三态语义与 systemPrompt 一致：

@@ -53,7 +53,7 @@ object ToastBus {
 
     fun push(text: String, level: Level = Level.INFO) {
         if (text.isBlank()) return
-        // 【体验优化 B24】5 秒内相同内容去重，避免密集报错时同一消息堆 3 条
+        // 体验优化 5 秒内相同内容去重，避免密集报错时同一消息堆 3 条
         val now = System.currentTimeMillis()
         if (_messages.value.any { it.text == text && now - it.timestamp < 5000L }) {
             return
@@ -102,7 +102,7 @@ fun ToastHost(modifier: Modifier = Modifier) {
 @Composable
 private fun ToastItem(msg: ToastBus.Message, onDismiss: () -> Unit) {
     LaunchedEffect(msg.id) {
-        // 【体验优化 B12】错误级不自动消失（15s 兜底，避免永远堆着），
+        // 体验优化 错误级不自动消失（15s 兜底，避免永远堆着），
         // 用户手动点 × 才会关，这样重要错误不会被后续消息顶掉。
         val ttl = if (msg.level == ToastBus.Level.ERROR) 15_000L else 3_000L
         delay(ttl.milliseconds)

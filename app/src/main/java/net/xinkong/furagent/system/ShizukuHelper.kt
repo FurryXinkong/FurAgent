@@ -76,7 +76,7 @@ object ShizukuHelper {
      * 支持取消：等待期间每 50ms 检查一次 isCancelled。
      * 支持实时回调：每读到一行通过 onLine 回调出去。
      *
-     * 【不截断】返回的 stdout / stderr 完整拼接，不设长度上限。
+     * 不截断 返回的 stdout / stderr 完整拼接，不设长度上限。
      *  用户如果想控制发给 AI 的长度，应该在 Agent 层处理，而不是在工具实现层偷砍。
      */
     fun executeCommand(

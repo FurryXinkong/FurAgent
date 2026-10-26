@@ -384,7 +384,7 @@ fun SettingsPage(
                                 )
                             }
 
-                            // 【P1-2】会话摘要模型选择
+                            // 会话摘要模型选择
                             Spacer(Modifier.height(8.dp))
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -433,7 +433,7 @@ fun SettingsPage(
                                 }
                             }
 
-                            // 【新增】文生图模型选择（同会话摘要模型样式）
+                            // 文生图模型选择（同会话摘要模型样式）
                             Spacer(Modifier.height(8.dp))
                             Row(
                                 Modifier.fillMaxWidth(),
@@ -879,7 +879,7 @@ fun SettingsPage(
 
                         GlassDivider(color = BorderSubtle())
 
-                        // 【关闭行为】关闭主窗口时是真退出，还是缩到托盘继续跑。
+                        // 关闭行为 关闭主窗口时是真退出，还是缩到托盘继续跑。
                         // 放在「服务」组：它和开机自启动一样，都属于
                         // 「这个程序在后台怎么活着」。
                         GlassSwitchRow(
@@ -905,7 +905,7 @@ fun SettingsPage(
                     onToggle = { toggleGroup("advanced") }
                 ) {
                     HintText("勾选后，对应设置分组会在上方隐藏。此分组本身不可隐藏。")
-                    // 【体验优化 B22】一键恢复所有隐藏分组
+                    // 体验优化 一键恢复所有隐藏分组
                     if (settings.hiddenSettings.isNotEmpty()) {
                         SecondaryButton(
                             text = "全部恢复显示",
@@ -1032,7 +1032,7 @@ fun SettingsPage(
 
 // 分组组件（唯一一层折叠）
 
-// 【本次改动】内部卡片从"手写 Column + background + border"
+// 内部卡片从"手写 Column + background + border"
 // 改为统一用 GlassCard 承载，圆角/底色/边框/阴影自动和全站一致。
 
 @Composable

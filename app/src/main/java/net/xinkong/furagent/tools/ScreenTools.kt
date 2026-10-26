@@ -18,7 +18,7 @@ import org.json.JSONObject
  *
  * node_id 只在下一次 dump/find 之前有效。UI 变化后需重新获取。
  *
- * 【不截断】
+ * 不截断
  *  UI 树的文本量本身不大（复杂屏幕也就几万字符），不设上限。
  *  node 数量靠 max_depth / max_nodes 参数控制，默认已放宽到 30/2000。
  */
@@ -74,7 +74,7 @@ object ScreenTools {
     private suspend fun doDump(args: JSONObject): String {
         val controller = ScreenControlRegistry.get() ?: return "失败：无障碍服务未开启"
         val maxDepth = args.optInt("max_depth", 30)
-        // 【P0-7】默认从 2000 提到 4000。复杂屏幕（微信聊天页、电商详情页）
+        // 默认从 2000 提到 4000。复杂屏幕（微信聊天页、电商详情页）
         // 常常超过 2000 节点，被截断后 AI 只能看到前半部分，看不到底部操作栏。
         // 4000 覆盖 95% 场景，超过时 UiTreeFormatter 会标记 (truncated)。
         val maxNodes = args.optInt("max_nodes", 4000)

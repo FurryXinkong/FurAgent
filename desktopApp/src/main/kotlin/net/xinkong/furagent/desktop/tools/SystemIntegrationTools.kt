@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit
  * 从原 SystemIntegrationTools 拆分而来，只保留 system 工具。
  * apps / screenshot 已拆到 AppTools / ScreenshotTools。
  *
- * 【临时文件策略】
+ * 临时文件策略
  *  - PowerShell 脚本固定落 ~/.furagent/temp/furagent_sys.ps1
  *    （避免 File.createTempFile 落到系统 %TEMP% 导致 TempCleaner 无法清理）
  *  - 用 synchronized 串行保护 + try-finally 删除
@@ -725,7 +725,7 @@ object SystemIntegrationTools {
     /**
      * 固定名脚本文件（~/.furagent/temp/furagent_sys.ps1）。
      *
-     * 【为什么要固定名】
+     * 为什么要固定名
      * 旧实现用 File.createTempFile("furagent_", ".ps1")，落在系统 %TEMP%，
      * TempCleaner 根本不扫那个目录，导致 PS 脚本永远残留。
      */

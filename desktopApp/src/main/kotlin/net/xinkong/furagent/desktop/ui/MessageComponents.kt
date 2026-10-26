@@ -138,7 +138,7 @@ internal fun MessageItemWithMenu(
                         onClick = { menuOpen = false; onReExecute(msg) }
                     )
                 }
-                // 【体验优化 B7/B20】任意 text 类型都可编辑
+                // 体验优化 任意 text 类型都可编辑
                 if (msg.type == "text") {
                     DropdownMenuItem(
                         text = {
@@ -189,7 +189,7 @@ internal fun MessageItemWithMenu(
 
 @Composable
 internal fun EmptyChatState(hasApiKey: Boolean, onOpenSettings: () -> Unit, onPromptClick: ((String) -> Unit)? = null) {
-    // 【动画清理】标题不再做呼吸缩放，静态展示
+    // 动画清理 标题不再做呼吸缩放，静态展示
     Column(
         Modifier.fillMaxSize().padding(vertical = 60.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -369,7 +369,7 @@ internal fun TextMessageRow(
             Modifier.widthIn(max = 1000.dp),
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start
         ) {
-            // 【思考归位】reasoning 已作为 type="reasoning" 消息收进「工作过程」面板，
+            // 思考归位 reasoning 已作为 type="reasoning" 消息收进「工作过程」面板，
             // 不再在普通气泡上方重复流派一份。
             if (isUser) {
                 // 用户消息：柔和浅色气泡
@@ -549,7 +549,7 @@ internal fun MessageImage(path: String, onClick: () -> Unit = {}) {
 
 // 工具调用气泡
 
-// 【B1 修复】原来外层 Row 上挂 clickable { expanded = !expanded }，
+// 原来外层 Row 上挂 clickable { expanded = !expanded }，
 // 会拦截所有 pointer 事件，SelectionContainer 拿不到手势/键盘焦点，
 // 导致"能选中但复制不了、Ctrl+C 无效、右键菜单也失效"。
 // 现在把展开/收起改到右上角的箭头 Box 上独立可点，外层不再拦截。
@@ -736,7 +736,7 @@ internal fun ToolResultRow(msg: DesktopMessage, onImageClick: (String) -> Unit) 
                     }
                     if (displayContent.isNotBlank()) {
                         Spacer(Modifier.height(6.dp))
-                        // 【P1-16】大文本分段统一：与 Android 端一致
+                        // 大文本分段统一：与 Android 端一致
                         // 未展开：前 200 行 + "..."；展开：前 2000 行 + 尾注
                         val maxInitialLines = 200
                         val lines = remember(displayContent) { displayContent.lines() }
@@ -799,7 +799,7 @@ internal fun SystemNoteRow(msg: DesktopMessage) {
  * 展示模型返回的深度思考内容（reasoning_content / reasoning / thinking）。
  * 默认折叠，点标题栏展开。不持久化，仅实时展示。
  *
- * 【体验修复】原先用带背景的 CollapsiblePanel，内容少时显得很空；
+ * 体验修复 原先用带背景的 CollapsiblePanel，内容少时显得很空；
  * 改为与工作过程内「思考 N 行」一致的无背景紧凑行。
  */
 @Composable
@@ -926,7 +926,7 @@ internal fun ThinkingBubble(text: String) {
 /**
  * API 错误状态气泡。
  *
- * 【为什么不用 AI 聊天气泡】
+ * 为什么不用 AI 聊天气泡
  * 「HTTP 429 · 用量配额已用尽」不是 AI 说的话，是系统状态。
  * 用聊天气泡会让用户以为 AI 在回答，而且会污染对话历史。
  *
@@ -980,7 +980,7 @@ internal fun ErrorBubble(text: String, onRetry: (() -> Unit)? = null) {
 
 @Composable
 internal fun StatusRow(text: String) {
-    // 【UI 统一】与 ReasoningPanel / ToolCallRow 同款卡片风格。
+    // UI 统一 与 ReasoningPanel / ToolCallRow 同款卡片风格。
     Surface(
         color = CardColor(),
         shape = RoundedCornerShape(Radius.MD),
@@ -1025,7 +1025,7 @@ internal fun openLocalFile(path: String) {
 }
 @Composable
 internal fun ModifiedFilesCard(files: List<SessionAnalytics.ModifiedFile>) {
-    // 【体验】默认展开路径列表（不再需要先点一下才看到文件）
+    // 体验 默认展开路径列表（不再需要先点一下才看到文件）
     var showPaths by remember { mutableStateOf(true) }
     // 展开的路径列表在 LazyColumn 里，滚轮会被外层吃掉；
     // 这里自己接管滚轮事件，保证列表能滚。
@@ -1062,7 +1062,7 @@ internal fun ModifiedFilesCard(files: List<SessionAnalytics.ModifiedFile>) {
             }
             Spacer(Modifier.height(10.dp))
 
-            // 【体验】不再显示横滑文件方块（占地方且与下方列表重复），
+            // 体验 不再显示横滑文件方块（占地方且与下方列表重复），
             // 直接展开完整路径列表，每行可点击打开文件。
             if (showPaths) {
                 Spacer(Modifier.height(10.dp))
@@ -1144,7 +1144,7 @@ internal fun ChatTopBar(
             Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // 【三个入口固定在最左边】子代理 / 修改历史 / 提示词
+            // 三个入口固定在最左边 子代理 / 修改历史 / 提示词
             // 以前子会话进度段在最前面，一跑子代理就把这三个按钮顶到右边、
             // 甚至被弹窗盖住点不到。现在固定顺序：按钮在左，进度在右。
             // 在子会话内：一键返回来路会话（标准带边框按钮）
@@ -1199,7 +1199,7 @@ internal fun ChatTopBar(
                 }
             }
 
-            // 【子会话进度】放在最右边：占剩余空间，永远不会挤掉左边的按钮
+            // 子会话进度 放在最右边：占剩余空间，永远不会挤掉左边的按钮
             if (progress.running) {
                 Spacer(Modifier.width(10.dp))
                 Box(Modifier.weight(1f).padding(end = 8.dp), contentAlignment = Alignment.CenterEnd) {
@@ -1233,7 +1233,7 @@ internal fun ChatTopBar(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
-                            // 【关键】最新一行内容：不开子会话也能看到它在写什么
+                            // 关键 最新一行内容：不开子会话也能看到它在写什么
                             if (progress.snippet.isNotBlank()) {
                                 Text(
                                     progress.snippet,

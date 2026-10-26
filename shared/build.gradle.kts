@@ -51,7 +51,7 @@ kotlin {
         val androidMain = getByName("androidMain")
         androidMain.dependsOn(jvmCommonMain)
         androidMain.dependencies {
-            // 【构建修复】Android 自带 org.json，不需要额外打包三方库，防 Duplicate Class
+            // 构建修复 Android 自带 org.json，不需要额外打包三方库，防 Duplicate Class
             compileOnly("org.json:json:20260814")
         }
 

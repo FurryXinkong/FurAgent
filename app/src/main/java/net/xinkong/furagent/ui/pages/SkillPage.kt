@@ -54,7 +54,7 @@ fun SkillPage(onBack: () -> Unit) {
     var configEditing by remember { mutableStateOf<SkillMeta?>(null) }
     var runEditing by remember { mutableStateOf<SkillMeta?>(null) }
     var deleteTarget by remember { mutableStateOf<SkillMeta?>(null) }
-    // 【P0-6】软超时警告：安卓端 Python 是进程内执行，超时只返回失败，
+    // 软超时警告：安卓端 Python 是进程内执行，超时只返回失败，
     // 线程还在后台跑。这里给用户一个持续警告 banner。
     var backgroundWarning by remember { mutableStateOf<String?>(null) }
 
@@ -100,7 +100,7 @@ fun SkillPage(onBack: () -> Unit) {
                 }
             )
 
-            // 【P0-6】软超时警告 banner
+            // 软超时警告 banner
             backgroundWarning?.let { warn ->
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f),
@@ -266,7 +266,7 @@ fun SkillPage(onBack: () -> Unit) {
                     }
                     runResult = r.output
                     runningName = null
-                    // 【P0-6】软超时提示：安卓端是进程内执行，超时只返回失败，
+                    // 软超时提示：安卓端是进程内执行，超时只返回失败，
                     // 线程还在后台跑。给一个持续警告，避免用户误以为已终止。
                     if (!r.success && r.output.contains("后台继续运行")) {
                         backgroundWarning =

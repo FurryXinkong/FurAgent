@@ -73,7 +73,7 @@ private const val MAX_EXTRA_ROWS = 3
 /**
  * 收起态在屏幕上露出的宽度/高度。
  *
- * 【关键修复】不再用「缩小窗口尺寸」的方式做收起，
+ * 关键修复 不再用「缩小窗口尺寸」的方式做收起，
  * 改成窗口尺寸恒定为卡片尺寸、只把窗口移到屏幕外。
  * 原来每帧都调 windowState.size，透明分层窗口每次 resize 都要重建
  * 渲染表面 → 拉出/拉回时一闪一闪、还掉帧。
@@ -334,18 +334,23 @@ fun FloatingStatusWindow(
     themeMode: String,
     onOpenMainWindow: () -> Unit,
 ) {
-    if (!visible) return
+    // 不要在这里 `if (!visible) return`。
+    // 那会让整个 DialogWindow 在「正在显示」的过程中离开组合：AWT 队列里
+    // setVisible(true) 还没跑完，ComposeContainer 就已经被 dispose，
+    // ComposeWindowPanel.setBounds -> getComposeContainer 会抛
+    // IllegalArgumentException: ComposeContainer is disposed。
+    // 改为把 visible 透传给 DialogWindow 自己处理：窗口常驻组合，只切换可见性。
     FurAgentTheme(themeMode = themeMode) {
-        FloatingStatusWindowInner(onOpenMainWindow)
+        FloatingStatusWindowInner(visible = visible, onOpenMainWindow = onOpenMainWindow)
     }
 }
 
 @Composable
-private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
+private fun FloatingStatusWindowInner(visible: Boolean, onOpenMainWindow: () -> Unit) {
     val runtimeState by AgentRuntimeState.state.debounce(50).collectAsState(initial = AgentRuntimeState.state.value)
     val taskList by TaskRuntime.tasks.collectAsState()
 
-    // 【多会话并发】运行中的会话数决定卡片高度（最多额外 3 行）。
+    // 多会话并发 运行中的会话数决定卡片高度（最多额外 3 行）。
     val extraRows = (runtimeState.runningCount - 1).coerceIn(0, MAX_EXTRA_ROWS)
     val cardSize = CARD_SIZE.copy(height = CARD_SIZE.height + EXTRA_ROW_HEIGHT * extraRows)
 
@@ -361,7 +366,7 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
         size = cardSize,
     )
 
-    // 【修复闪烁】窗口尺寸恒定为卡片尺寸，收起靠移动到屏幖外实现。
+    // 修复闪烁 窗口尺寸恒定为卡片尺寸，收起靠移动到屏幖外实现。
     // 只有会话数变化（多会话 +1 行）才改一次尺寸。
     val targetSize: DpSize = cardSize
 
@@ -372,7 +377,8 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
     //   - 和 Compose 的渲染循环天然同步
 
     // 拖动时（isDragging=true）完全不动画，跟随鼠标走。
-    LaunchedEffect(dockSide, collapsed, isDragging, cardSize) {
+    LaunchedEffect(dockSide, collapsed, isDragging, cardSize, visible) {
+        if (!visible) return@LaunchedEffect
         if (isDragging) return@LaunchedEffect
 
         val target = computeDockPosition(dockSide, freeX, freeY, targetSize, collapsed)
@@ -410,7 +416,8 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
     }
 
     // 热区轮询 + 自动收起
-    LaunchedEffect(dockSide, isDragging, runtimeState.isRunning) {
+    LaunchedEffect(dockSide, isDragging, runtimeState.isRunning, visible) {
+        if (!visible) return@LaunchedEffect
         if (dockSide == DockSide.NONE || isDragging) {
             if (collapsed) collapsed = false
             return@LaunchedEffect
@@ -464,6 +471,7 @@ private fun FloatingStatusWindowInner(onOpenMainWindow: () -> Unit) {
     }
 
     DialogWindow(
+        visible = visible,
         onCloseRequest = { /* 禁用关闭，只能从设置里关 */ },
         state = windowState,
         title = "FurAgent",
@@ -589,7 +597,7 @@ private fun ExpandedCard(
     onOpenMain: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    // 【性能】不做 hover 检测（展开动画期间会与窗口动画争帧）
+    // 性能 不做 hover 检测（展开动画期间会与窗口动画争帧）
     val bg = CardColor()
     val borderColor by animateColorAsState(
         targetValue = if (runtimeState.isRunning) {
@@ -652,7 +660,7 @@ private fun ExpandedCard(
                 )
             }
 
-            // 【信息增强】多会话：每个会话两行（会话名 + 当前工具 / 最新输出）
+            // 信息增强 多会话：每个会话两行（会话名 + 当前工具 / 最新输出）
             //           单会话：「正在执行的任务 + 耗时」+ 「工具最新一行输出」
             val running = runtimeState.sessions.values.toList()
             if (running.size > 1) {
@@ -901,7 +909,7 @@ private fun sessionProgressText(s: AgentRuntimeState.SessionRuntime): String {
     return when {
         s.currentToolName.isNotBlank() -> "调用：${s.currentToolName}"
         s.streamingText.isNotBlank() -> {
-            // 【优化】从 40 字符扩到 120
+            // 从 40 字符扩到 120
             val preview = s.streamingText.takeLast(120).replace("\n", " ").trim()
             preview.ifBlank { "生成中…" }
         }
@@ -915,7 +923,7 @@ private fun detailText(state: AgentRuntimeState.State): String {
         !state.isRunning -> "空闲"
         state.currentToolName.isNotBlank() -> "正在调用：${state.currentToolName}"
         state.streamingText.isNotBlank() -> {
-            // 【优化】从 60 字符扩到 200，让悬浮窗能看到更多 AI 输出
+            // 从 60 字符扩到 200，让悬浮窗能看到更多 AI 输出
             val preview = state.streamingText.takeLast(200).replace("\n", " ").trim()
             preview.ifBlank { "生成中…" }
         }

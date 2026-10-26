@@ -33,7 +33,7 @@ import kotlin.time.Duration.Companion.milliseconds
  *      · 先 GET 建立 SSE 长连接，服务器通过该流推送所有响应
  *      · POST 只用于发送请求，响应从 SSE 流读取
  *
- * 【P2-4 修复】`connectSse` 改为 suspend，去掉 runBlocking。
+ * `connectSse` 改为 suspend，去掉 runBlocking。
  *   调用方 connect() 本身就是 suspend，无需阻塞线程等建流完成。
  */
 class McpClient(val config: McpServerConfig) {
@@ -64,7 +64,7 @@ class McpClient(val config: McpServerConfig) {
 
     private var sseJob: Job? = null
     /**
-     * 【M3】SSE 断线自动重连。
+     * SSE 断线自动重连。
      *
      * 只在 disconnect() / shutdown()（用户主动断开）时置 false。
      * connect() 失败**不**关它——原实现 connect() 失败调 disconnect()，
@@ -87,7 +87,7 @@ class McpClient(val config: McpServerConfig) {
 
     suspend fun connect() {
         if (_state.value == State.Ready || _state.value == State.Connecting) return
-        // 【M3】用户主动调 connect 意味着"允许自动重连"
+        // 用户主动调 connect 意味着"允许自动重连"
         autoReconnect = true
         _state.value = State.Connecting
         try {
@@ -105,7 +105,7 @@ class McpClient(val config: McpServerConfig) {
             )
         } catch (e: Exception) {
             AgentLogger.log("ERR", "MCP [${config.name}] 连接失败：${e.message}")
-            // 【M3 修复】原实现在这里调 disconnect()，会把 autoReconnect 关掉，
+            // 原实现在这里调 disconnect()，会把 autoReconnect 关掉，
             // 导致"一次失败永久不重连"，用户只能重启 App。改为只清理内部状态，
             // 由 scheduleReconnect 负责重试；只有用户主动 disconnect() 才关开关。
             cleanupInternal()
@@ -115,7 +115,7 @@ class McpClient(val config: McpServerConfig) {
     }
 
     fun disconnect() {
-        // 【M3】用户主动断开：关掉自动重连，取消正在跑的重连 Job
+        // 用户主动断开：关掉自动重连，取消正在跑的重连 Job
         autoReconnect = false
         reconnectJob?.cancel()
         reconnectJob = null
@@ -140,7 +140,7 @@ class McpClient(val config: McpServerConfig) {
     }
 
     /**
-     * 【M3】SSE 断线自动重连调度。
+     * SSE 断线自动重连调度。
      *
      * 退避 2s → 4s → 8s → 16s → 30s（封顶）。
      * 只在 _state 变 Ready 时退出循环；用户 disconnect() 时取消。
@@ -205,7 +205,7 @@ class McpClient(val config: McpServerConfig) {
             var resp: Response? = null
             var cancelHandle: kotlinx.coroutines.DisposableHandle? = null
             try {
-                // 【M1 修复】executeCancellable 让协程 cancel 时主动 call.cancel()
+                // executeCancellable 让协程 cancel 时主动 call.cancel()
                 // 之前直接 execute() 是阻塞调用，cancel 后要等 TCP 超时才退出，
                 // 导致 reload() 场景下旧连接未死新连接又建，服务器看到多个客户端。
                 resp = executeCancellable(httpClient.newCall(req))
@@ -218,7 +218,7 @@ class McpClient(val config: McpServerConfig) {
                 }
                 latch.complete(Unit)
 
-                // 【M2 修复】读之前注册取消回调：cancel 时主动 close response，
+                // 读之前注册取消回调：cancel 时主动 close response，
                 // 让 readSseStream 里阻塞的 readUtf8Line 立即抛异常退出。
                 val r = resp
                 val job = currentCoroutineContext()[Job]
@@ -239,7 +239,7 @@ class McpClient(val config: McpServerConfig) {
                     AgentLogger.log("MCP", "[${config.name}] SSE 流中断：${e.message}")
                     if (_state.value == State.Ready) {
                         _state.value = State.Error("SSE 流已断开")
-                        // 【M3】已 Ready 后流断开：自动重连（原来只能手动重连或重启 App）
+                        // 已 Ready 后流断开：自动重连（原来只能手动重连或重启 App）
                         if (autoReconnect) scheduleReconnect()
                     }
                     // 若 _state 还是 Connecting，说明 connect() 主协程还在 initialize 阶段，

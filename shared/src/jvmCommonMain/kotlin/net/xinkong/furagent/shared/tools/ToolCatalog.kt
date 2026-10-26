@@ -28,7 +28,7 @@ object ToolCatalog {
     /**
      * 构建"目录"文本，会拼进 tool_search 工具的 description。
      *
-     * 【token 优化】只输出工具名，不再附 brief 描述。
+     * token 优化 只输出工具名，不再附 brief 描述。
      * 原因：目录每轮请求都要重发，是固定开销。而 tool_search 本身
      * 就能按关键词搜到工具，目录只需让模型"知道存在哪些工具"即可，
      * 不需要每个工具都带一句话描述。实测可省 60%+ 目录 token。
@@ -85,7 +85,7 @@ object ToolCatalog {
         if (query.isBlank()) return emptyList()
         val q = query.lowercase()
         val terms = q.split(RE_WHITESPACE).filter { it.isNotBlank() }
-        // 【新增】category 支持中文（“文件”“屏幕控制”等）
+        // category 支持中文（“文件”“屏幕控制”等）
         val catFilter = category?.trim()?.takeIf { it.isNotBlank() }
             ?.let { ToolCategory.normalizeCategory(it) }
             ?.takeIf { it.isNotBlank() }
@@ -106,7 +106,7 @@ object ToolCatalog {
     /**
      * 打分。分数越高越相关。0 表示不匹配。
      *
-     * 【中文支持】除了工具自带的英文 name / displayName / description，
+     * 中文支持 除了工具自带的英文 name / displayName / description，
      * 额外把 ToolCategory 里挂的中文关键词也拿来撞一遍，
      * 否则中文 query 会全部得 0 分。
      */
@@ -166,7 +166,7 @@ object ToolCatalog {
             arr.put(JSONObject().apply {
                 put("name", t.name)
                 put("category", ToolCategory.categorize(t.name))
-                // 【token 优化】description 从 400 降到 200 字符，
+                // token 优化 description 从 400 降到 200 字符，
                 // 且不再重复输出 displayName（模型用 name 调用，displayName 无用）。
                 put("description", t.description.take(200))
                 put("parameters", try {

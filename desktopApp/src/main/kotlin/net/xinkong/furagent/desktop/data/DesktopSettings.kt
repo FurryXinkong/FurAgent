@@ -69,13 +69,13 @@ data class DesktopSettings(
     val currentProfileId: String = "default-deepseek",
 
     /**
-     * 【P1-2】会话摘要专用模型 id。
+     * 会话摘要专用模型 id。
      * 空串 = 不启用会话摘要。选项来自 profiles。
      */
     val summaryProfileId: String = "",
 
     /**
-     * 【新增】文生图专用模型 id（kind == "image"）。
+     * 文生图专用模型 id（kind == "image"）。
      * 空串 = 不启用独立生图模型。
      */
     val imageProfileId: String = "",
@@ -86,9 +86,9 @@ data class DesktopSettings(
     val maxTurns: Int = 20,
 
     /**
-     * 【上下文预算】历史的 token 上限（单位：千 token，0 = 不限制）。
+     * 上下文预算 历史的 token 上限（单位：千 token，0 = 不限制）。
      *
-     * 【为什么需要】maxTurns 只能按轮次数拦，拦不住“工具输出特别大”的会话：
+     * 为什么需要 maxTurns 只能按轮次数拦，拦不住“工具输出特别大”的会话：
      * 一轮里读十个大文件就能吃掉几万 token。
      * 这里按 token 预算裁「工具过程」（从旧的开始丢，保留人类消息和助手回复），
      * 既大幅压住 token 消耗，又能让模型知道之前大概改了什么。
@@ -112,9 +112,9 @@ data class DesktopSettings(
     val requireConfirmDelete: Boolean = true,
     val requireConfirmShell: Boolean = true,
     val requireConfirmPython: Boolean = true,
-    /** 【新增】运行自定义脚本（Skill）前是否弹确认框 */
+    /* 运行自定义脚本（Skill）前是否弹确认框 */
     val requireConfirmSkill: Boolean = true,
-    /** 【B13 新增】FFmpeg 输出文件已存在时是否弹覆盖确认 */
+    /* FFmpeg 输出文件已存在时是否弹覆盖确认 */
     val requireConfirmFfmpegOverwrite: Boolean = true,
 
     val customToolPaths: Map<String, String> = emptyMap(),
@@ -130,7 +130,7 @@ data class DesktopSettings(
     val notificationsEnabled: Boolean = false,
 
     /**
-     * 【常驻后台】关闭窗口时收进系统托盘，而不是退出进程。
+     * 常驻后台 关闭窗口时收进系统托盘，而不是退出进程。
      * 开着时定时任务、手机互联、文件服务继续在后台跑。
      */
     val closeToTray: Boolean = true,

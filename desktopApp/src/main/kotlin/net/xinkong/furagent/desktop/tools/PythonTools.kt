@@ -175,7 +175,7 @@ object PythonTools {
     /**
      * 检测 Python 源码里是否包含删除/破坏性操作。
      *
-     * 【为什么】AI 可以通过 python 跑 os.remove / shutil.rmtree 绕过
+     * 为什么 AI 可以通过 python 跑 os.remove / shutil.rmtree 绕过
      * delete_file 的回收站机制。这里做一道静态拦截。
      *
      * 返回 null 表示安全；非 null 是拒绝文案。

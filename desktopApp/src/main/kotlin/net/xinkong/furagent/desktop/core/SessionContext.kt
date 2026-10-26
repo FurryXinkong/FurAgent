@@ -5,7 +5,7 @@ import kotlin.coroutines.AbstractCoroutineContextElement
 import kotlin.coroutines.CoroutineContext
 
 /**
- * 【P0-2】协程级的会话归属标记。
+ * 协程级的会话归属标记。
  *
  * 背景：原实现用全局 @Volatile var CurrentTaskSession.id 承载「当前是哪个会话在执行工具」，
  * 多会话并发时互相覆盖：

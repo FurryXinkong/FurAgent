@@ -26,9 +26,9 @@ import kotlin.time.Duration.Companion.milliseconds
  *  - 所有 native 调用前先检查 isAvailable()，失败时立即返回而不是崩溃
  *  - 同步阻塞调用放在 Dispatchers.IO 上，不卡主线程
  *
- * 【优化 29】用 kotlinx.coroutines.sync.Semaphore.withPermit 挂起等待，不阻塞 IO 线程。
+ * 用 kotlinx.coroutines.sync.Semaphore.withPermit 挂起等待，不阻塞 IO 线程。
  *
- * 【P1 修复】原实现用同步 `FFmpegKit.executeWithArguments`，导致
+ * 原实现用同步 `FFmpegKit.executeWithArguments`，导致
  * `timeoutSeconds` 参数从头到尾没被用过——用户设 60s 也得等 FFmpeg 自己跑完。
  * 现在改成 `executeWithArgumentsAsync` + `CompletableDeferred` + `withTimeoutOrNull`，
  * 超时后 `FFmpegKit.cancel(sessionId)` 强制终止。
@@ -86,7 +86,7 @@ object FfmpegHelper {
     /**
      * 执行一次 FFmpeg。到 [timeoutSeconds] 还没完成则强制 cancel。
      *
-     * 【P1 修复】原实现是 `FFmpegKit.executeWithArguments(args)` 同步阻塞，
+     * 原实现是 `FFmpegKit.executeWithArguments(args)` 同步阻塞，
      * timeoutSeconds 完全没用。现在：
      *   1. `executeWithArgumentsAsync` 立即返回一个 session
      *   2. callback 里 complete 一个 CompletableDeferred

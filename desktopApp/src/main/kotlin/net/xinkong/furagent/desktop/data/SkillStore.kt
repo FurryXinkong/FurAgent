@@ -79,7 +79,7 @@ object DesktopSkillRuntime : SkillRuntime {
         val taskId = TaskRuntime.currentId()
         val start = System.currentTimeMillis()
 
-        // 【配置注入】把脚本配置塞进 stdin 的 _config 字段 + 环境变量
+        // 配置注入 把脚本配置塞进 stdin 的 _config 字段 + 环境变量
         val cfgJson = SharedSkillStore.configValuesJson(meta, cfg)
         val stdinArgs = JSONObject(args.toString())
         if (cfgJson.length() > 0) stdinArgs.put("_config", cfgJson)
@@ -236,7 +236,7 @@ main()
     /**
      * 把解析脚本写到临时文件（内容变化时重写），返回文件。
      *
-     * 【为什么写临时文件而不是 python -c】Windows 下 ProcessBuilder 传多行 -c 代码会被破坏，
+     * 为什么写临时文件而不是 python -c Windows 下 ProcessBuilder 传多行 -c 代码会被破坏，
      * 导致代码不执行、无输出。写成临时文件最稳。
      */
     private fun ensureParserScript(): File? {

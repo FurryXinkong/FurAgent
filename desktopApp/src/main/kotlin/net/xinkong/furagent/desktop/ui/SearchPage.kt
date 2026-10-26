@@ -378,9 +378,9 @@ private fun searchAll(query: String, maxResults: Int): List<SearchHit> {
     if (q.isBlank()) return emptyList()
     val out = mutableListOf<SearchHit>()
 
-    // 【A7 修复】不再用解构赋值（依赖字段顺序，脆弱）。改成显式字段访问。
+    // 不再用解构赋值（依赖字段顺序，脆弱）。改成显式字段访问。
 
-    // 【B11 新增】先匹配会话标题：命中即加一条 type=title 的结果，
+    // 先匹配会话标题：命中即加一条 type=title 的结果，
     // 让用户可以直接点击跳到该会话。messageId 为空，跳转时落到会话第一条。
     // 子代理会话不进搜索结果：它们是 AI 派生的内部会话，
     // 在「历史对话」里出现只会干扰用户找自己的对话。

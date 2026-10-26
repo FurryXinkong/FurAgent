@@ -221,7 +221,7 @@ private fun McpServerCard(
     val tools by (client?.tools
         ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyList()) }).collectAsState()
 
-    // 【F5 补充】算出禁用的工具数
+    // 算出禁用的工具数
     val disabledCount = remember(tools, disabledTools, config.id) {
         tools.count { McpManager.prefixedToolName(config.id, it.name) in disabledTools }
     }
@@ -290,7 +290,7 @@ private fun McpServerCard(
                     Spacer(Modifier.height(2.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(stateText, fontSize = 11.sp, color = stateColor, maxLines = 1)
-                        // 【F5 补充】禁用数红字
+                        // 禁用数红字
                         if (disabledCount > 0 && state is McpClient.State.Ready) {
                             Spacer(Modifier.width(6.dp))
                             Text(

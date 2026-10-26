@@ -41,17 +41,17 @@ object BackupHelper {
         /** 动作：write / append / code_edit */
         val action: String,
         val size: Long,
-        /** 【内置 git】本次改动的 unified patch（二进制/无变化为空串） */
+        /* 内置 git 本次改动的 unified patch（二进制/无变化为空串） */
         val patch: String = "",
-        /** 【内置 git】新增行数 */
+        /* 内置 git 新增行数 */
         val added: Int = 0,
-        /** 【内置 git】删除行数 */
+        /* 内置 git 删除行数 */
         val removed: Int = 0,
-        /** 【内置 git】触发工具名（write_file / code_edit / ...） */
+        /* 内置 git 触发工具名（write_file / code_edit / ...） */
         val tool: String = "",
-        /** 【性能】patch 独立文件名（空 = 无 patch 或旧记录内联在 patch 字段） */
+        /* 性能 patch 独立文件名（空 = 无 patch 或旧记录内联在 patch 字段） */
         val patchFile: String = "",
-        /** 【会话隔离】产生这条记录的会话 id（空 = 旧记录，归属未知） */
+        /* 会话隔离 产生这条记录的会话 id（空 = 旧记录，归属未知） */
         val sessionId: String = ""
     )
 
@@ -99,7 +99,7 @@ object BackupHelper {
         put("backup", e.backup)
         put("action", e.action)
         put("size", e.size)
-        // 【性能】patch 不再内联进 manifest（否则 manifest 会膨胀到几十 MB，
+        // 性能 patch 不再内联进 manifest（否则 manifest 会膨胀到几十 MB，
         // 每次列表都要全量解析）。改为单独文件，列表只读元数据，点开才读 patch。
         if (e.patchFile.isNotEmpty()) put("patchFile", e.patchFile)
         if (e.patch.isNotEmpty()) put("patch", e.patch)
@@ -110,7 +110,7 @@ object BackupHelper {
     }.toString()
 
     /**
-     * 【内置 git】记录一次编辑：备份旧内容 + 算行级 patch + 写 manifest。
+     * 内置 git 记录一次编辑：备份旧内容 + 算行级 patch + 写 manifest。
      *
      * 与 [backup] 的区别：这里同时拿到「改前」和「改后」内容，
      * 所以能给出 +N/-M 和 unified patch，供时间线 UI 与 AI 查看。
@@ -214,7 +214,7 @@ object BackupHelper {
      * 列出历史记录（新 → 旧）。
      * manifest 损坏/缺失时返回空列表，绝不抛异常。
      *
-     * 【性能】按 manifest 的 lastModified + size 做缓存：
+     * 性能 按 manifest 的 lastModified + size 做缓存：
      * UI 重组、滚动、切页都不会重复读盘；只有真的写入了新记录才重新解析。
      */
     fun listHistory(backupDir: File, limit: Int = 50): List<BackupEntry> {
@@ -288,7 +288,7 @@ object BackupHelper {
                     val o = JSONObject(line)
                     val name = o.optString("backup", "")
                     if (name.isNotEmpty()) File(backupDir, name).delete()
-                    // 【性能】patch 是独立文件，一并清理，否则会越积越多
+                    // 性能 patch 是独立文件，一并清理，否则会越积越多
                     val pf = o.optString("patchFile", "")
                     if (pf.isNotEmpty()) File(backupDir, pf).delete()
                 } catch (_: Exception) {

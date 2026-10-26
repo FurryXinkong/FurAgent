@@ -35,7 +35,7 @@ object SessionStore {
     /**
      * importAll 的返回结果。
      *
-     * 【修复】旧返回类型是 Triple<Int, Int, Boolean>，第三个布尔表示
+     * 旧返回类型是 Triple<Int, Int, Boolean>，第三个布尔表示
      * "settings 是否恢复"。调用方拿到 true 之后还得自己再
      * SettingsStore.load(prefs) 一次才能更新内存态。契约隐晦，换调用点容易漏。
      *
@@ -66,7 +66,7 @@ object SessionStore {
     private val indexWriteHandler = Handler(Looper.getMainLooper())
     private const val INDEX_WRITE_THROTTLE_MS = 500L
 
-    // 【新增】会话文件写盘节流（500ms）
+    // 会话文件写盘节流（500ms）
 
     // 每一轮 onHistoryChanged 都会调 SessionStore.save()，长会话每次写
     // 整个 session.json（几百条消息 = 上百 KB），浪费 IO 且可能卡顿。
@@ -77,7 +77,7 @@ object SessionStore {
     @Volatile private var lastSessionWriteAt: Long = 0L
     private val pendingSessionSaves = java.util.concurrent.ConcurrentHashMap<String, Session>()
     private val sessionWritePending = AtomicBoolean(false)
-    // 【P1-13 修复】写盘从主线程挪到独立 HandlerThread。
+    // 写盘从主线程挪到独立 HandlerThread。
     // 长会话（几百条消息）每次序列化 + 原子写几百 KB JSON，主线程会明显卡顿，
     // 尤其每一轮 onHistoryChanged 都调 save 时。
     // HandlerThread 保证串行执行（不并发写同一个文件），且天然支持 postDelayed 节流。
@@ -108,7 +108,6 @@ object SessionStore {
     }
 
     /**
-     * 【修复 P0】
      * 索引单条脏数据不再导致整个会话列表丢失：
      *   - 数组元素不是 object → 跳过
      *   - 单条缺 id → 跳过
@@ -245,7 +244,7 @@ object SessionStore {
     }
 
     /**
-     * 【修复 P0】单条消息脏数据不再让整个会话读不出来：
+     * 单条消息脏数据不再让整个会话读不出来：
      *   - 消息数组元素不是 object → 跳过
      *   - 单条 role/content 类型异常 → 单条 try-catch 跳过
      */
@@ -283,9 +282,9 @@ object SessionStore {
                 createdAt = o.optLong("createdAt", System.currentTimeMillis()),
                 updatedAt = o.optLong("updatedAt", System.currentTimeMillis()),
                 parentId = o.optString("parentId", "").takeIf { it.isNotBlank() },
-                // 【P1-1】会话专用提示词：此前从未被反序列化，导致用户设置后重启丢失
+                // 会话专用提示词：此前从未被反序列化，导致用户设置后重启丢失
                 systemPrompt = if (o.has("systemPrompt")) o.optString("systemPrompt", "") else null,
-                // 【P0-4】三态：null 表示磁盘上还没有此字段（旧数据）
+                // 三态：null 表示磁盘上还没有此字段（旧数据）
                 titleLocked = if (o.has("titleLocked")) o.optBoolean("titleLocked", false) else null,
                 messages = msgs
             )
@@ -302,7 +301,7 @@ object SessionStore {
     /**
      * 保存会话。
      *
-     * 【新增节流】500ms 内多次 save 只写一次。
+     * 新增节流 500ms 内多次 save 只写一次。
      * 上下文：每一轮 onHistoryChanged 都调这里，长会话（几百条消息）
      * 每次都要序列化 + 写整个 JSON，既慢又浪费。
      *
@@ -330,7 +329,7 @@ object SessionStore {
     /**
      * 立即把待写会话落盘。用于进程退出前 / 关键切换点。
      *
-     * 【P1-13】写盘已移到后台 HandlerThread，这里投递任务后用 CountDownLatch 同步等完成，
+     * 写盘已移到后台 HandlerThread，这里投递任务后用 CountDownLatch 同步等完成，
      * 最多等 3 秒（超时放弃，避免 ANR；onPause 场景下下次启动能读回旧数据，最多丢最后 500ms）。
      */
     fun flushPending(context: Context) {
@@ -392,14 +391,14 @@ object SessionStore {
         for ((_, session) in toWrite) {
             val parentId = session.parentId ?: indexParents[session.id]?.takeIf { it.isNotBlank() }
             try {
-                // 【P1-1】systemPrompt=null 表示未携带（persist 重造对象不带它）：
+                // systemPrompt=null 表示未携带（persist 重造对象不带它）：
                 // 保留磁盘原值，避免被抹掉。""= 用户显式清空，正常写入。
                 val systemPrompt = session.systemPrompt ?: runCatching {
                     val f = sessionFile(appContext, session.id)
                     if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optString("systemPrompt", "")
                     else ""
                 }.getOrDefault("")
-                // 【P0-4】titleLocked 三态兜底：null 保留磁盘原值
+                // titleLocked 三态兜底：null 保留磁盘原值
                 val titleLocked = session.titleLocked ?: runCatching {
                     val f = sessionFile(appContext, session.id)
                     if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optBoolean("titleLocked", false)
@@ -492,12 +491,12 @@ object SessionStore {
 
     fun rename(context: Context, id: String, newTitle: String) {
         val s = load(context, id) ?: return
-        // 【P0-4】手动重命名置 titleLocked = true，persist 不再用 generateTitle 覆盖
+        // 手动重命名置 titleLocked = true，persist 不再用 generateTitle 覆盖
         save(context, s.copy(title = newTitle, titleLocked = true, updatedAt = System.currentTimeMillis()))
     }
 
     /**
-     * 【冗余清理 Batch 11a】generateTitle 抽到 shared/data/SessionCodec。
+     * generateTitle 抽到 shared/data/SessionCodec。
      */
     fun generateTitle(messages: List<ChatMessage>): String =
         net.xinkong.furagent.shared.data.SessionCodec.generateTitle(messages)
@@ -512,7 +511,7 @@ object SessionStore {
      * @return 解析成功返回 ChatMessage；单条解析失败返回 null（调用方自行计 skipped）
      */
     /**
-     * 【冗余清理 Batch 11a】parseChatMessageFromJson 抽到 shared/data/SessionCodec。
+     * parseChatMessageFromJson 抽到 shared/data/SessionCodec。
      * Android 传 DEFAULT 宽松版 Base64 解码器。
      */
     private fun parseChatMessageFromJson(
@@ -525,7 +524,7 @@ object SessionStore {
     )
 
     /**
-     * 【冗余清理 Batch 11a】duplicate 的 Session 构造抽到 shared/data/SessionCodec。
+     * duplicate 的 Session 构造抽到 shared/data/SessionCodec。
      * 本端只负责 load + save。
      */
     fun duplicate(context: Context, id: String): Session? {
@@ -536,10 +535,10 @@ object SessionStore {
     }
 
     /**
-     * 【修复 P0】单条消息脏数据不再让整个单会话导入失败。
+     * 单条消息脏数据不再让整个单会话导入失败。
      */
     fun importSingleSession(context: Context, file: File): ImportSingleResult {
-        // 【P1-4】按扩展名分流：.md 走 Markdown 解析，其余走 JSON
+        // 按扩展名分流：.md 走 Markdown 解析，其余走 JSON
         if (file.extension.equals("md", ignoreCase = true)) {
             return importMarkdown(context, file)
         }
@@ -621,7 +620,7 @@ object SessionStore {
     }
 
     /**
-     * 【P1-4】导入 Markdown 会话（与 exportMarkdown 格式对齐）。
+     * 导入 Markdown 会话（与 exportMarkdown 格式对齐）。
      *
      * 格式：
      *   # 标题
@@ -869,9 +868,9 @@ object SessionStore {
     }
 
     /**
-     * 【修复 P0】单条会话/消息脏数据不再让整个导入失败。
+     * 单条会话/消息脏数据不再让整个导入失败。
      *
-     * 【修复】返回值从 Triple<Int, Int, Boolean> 改成 ImportAllResult，
+     * 返回值从 Triple<Int, Int, Boolean> 改成 ImportAllResult，
      * 直接带上恢复后的 AppSettings，避免调用方漏刷内存。
      */
     fun importAll(

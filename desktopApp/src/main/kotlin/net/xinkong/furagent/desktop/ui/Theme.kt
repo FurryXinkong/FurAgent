@@ -76,14 +76,14 @@ val FurLightColors = FurColors(
     textSecondary = Color(0xFF6B7280),
     textMuted = Color(0xFF9CA3AF),
 
-    // 【改】主题色从纯蓝换成蓝紫，与流体渐变（#4A9EFF -> #A78BFA）同一色系
+    // 改 主题色从纯蓝换成蓝紫，与流体渐变（#4A9EFF -> #A78BFA）同一色系
     accent = Color(0xFF6E7CFA),
     accentHover = Color(0xFF5866E8),
     accentSoft = Color(0x146E7CFA),
     onAccent = Color.White,
 
     tool = Color(0xFFF59E0B),
-    // 【改】和 Android 端对齐
+    // 改 和 Android 端对齐
     result = Color(0xFF34C759),
     error = Color(0xFFEF4444),
     warning = Color(0xFFF59E0B),
@@ -108,25 +108,25 @@ val FurDarkColors = FurColors(
     cardStrong = Color(0xFF33363B),
 
     border = Color(0xFF383B40),
-    // 【改】原来 #2C2F33 和 CardHover 一样，看不出分隔
+    // 改 原来 #2C2F33 和 CardHover 一样，看不出分隔
     borderSubtle = Color(0xFF33363B),
 
     textPrimary = Color(0xFFE6E7E9),
     textSecondary = Color(0xFF9BA1A8),
     textMuted = Color(0xFF6B7076),
 
-    // 【改】主题色从纯蓝换成蓝紫（提亮版），与流体渐变深色版同色系
+    // 改 主题色从纯蓝换成蓝紫（提亮版），与流体渐变深色版同色系
     accent = Color(0xFF8B93FF),
     accentHover = Color(0xFFA2A9FF),
     accentSoft = Color(0x288B93FF),
     onAccent = Color(0xFF0F1216),
 
-    // 【改】原来 #F5A524 偏橙，改成和 Android 端一致的琥珀色
+    // 改 原来 #F5A524 偏橙，改成和 Android 端一致的琥珀色
     tool = Color(0xFFF59E0B),
-    // 【改】原来 #4ADE80 太亮，改成 iOS 系统绿，和 Android 端对齐
+    // 改 原来 #4ADE80 太亮，改成 iOS 系统绿，和 Android 端对齐
     result = Color(0xFF34C759),
     error = Color(0xFFEF4444),
-    // 【改】和 tool 保持一致
+    // 改 和 tool 保持一致
     warning = Color(0xFFF59E0B),
 
     shadow = Color(0x99000000),
@@ -155,7 +155,7 @@ private fun materialLight(c: FurColors) = lightColorScheme(
     onError = Color.White,
     errorContainer = c.error.copy(alpha = 0.12f),
     onErrorContainer = Color(0xFF7F1D1D),
-    // 【C3 修复】显式覆盖 surfaceContainer*，避免深色模式下弹窗用浅色底
+    // C3 修复 显式覆盖 surfaceContainer*，避免深色模式下弹窗用浅色底
     surfaceContainerLowest = Color(0xFFFFFFFF),
     surfaceContainerLow = Color(0xFFFAFAFC),
     surfaceContainer = Color(0xFFF3F3F5),
@@ -183,7 +183,7 @@ private fun materialDark(c: FurColors) = darkColorScheme(
     onError = Color.White,
     errorContainer = c.error.copy(alpha = 0.28f),
     onErrorContainer = Color(0xFFFFB4AB),
-    // 【C3 修复】显式覆盖 surfaceContainer*，避免深色模式下弹窗用浅色底
+    // C3 修复 显式覆盖 surfaceContainer*，避免深色模式下弹窗用浅色底
     surfaceContainerLowest = Color(0xFF0A0A0C),
     surfaceContainerLow = Color(0xFF151517),
     surfaceContainer = Color(0xFF1C1C1E),

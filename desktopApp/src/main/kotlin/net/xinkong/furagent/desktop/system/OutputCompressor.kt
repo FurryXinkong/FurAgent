@@ -3,20 +3,20 @@ package net.xinkong.furagent.desktop.system
 /**
  * 命令输出压缩。
  *
- * 【为什么需要】
+ * 为什么需要
  *   gradle / npm / maven 失败时会吐几百行日志：
  *     - "> Task :shared:compileKotlin UP-TO-DATE" 这类噪音占 80%
  *     - 真正的错误只有几行
  *   如果不裁，这 500 行会进入历史，之后每轮对话都要重发一遍。
  *
- * 【策略】
+ * 策略
  *   - 少于阈值（80 行）不裁，避免小输出反被破坏
  *   - 命中"关键模式"的行 + 前后 2 行上下文保留
  *   - 尾部永远保留最后 15 行（退出码、BUILD FAILED、总结通常在末尾）
  *   - 保留量 >= 总行数 - 10 时放弃裁剪（本来就不冗余）
  *   - 输出末尾加一行说明，让模型知道可以 read_file 拿完整日志
  *
- * 【不裁的】
+ * 不裁的
  *   - read_file / code_edit 的返回值（已经是精简的）
  *   - ffmpeg / python 的输出（用户需要看完整过程）
  */

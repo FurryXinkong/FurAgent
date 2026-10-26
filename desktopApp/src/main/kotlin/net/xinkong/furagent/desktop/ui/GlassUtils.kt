@@ -5,7 +5,7 @@ import net.xinkong.furagent.desktop.system.DesktopLogger
 /**
  * Glass 相关的非 Composable 工具。
  *
- * 【拆分】从 Glass.kt 抽出（原文件 1480 行，职责过杂）。
+ * 拆分 从 Glass.kt 抽出（原文件 1480 行，职责过杂）。
  * 这里只放纯 JVM 工具 / 格式化函数，不依赖任何 Composable。
  */
 

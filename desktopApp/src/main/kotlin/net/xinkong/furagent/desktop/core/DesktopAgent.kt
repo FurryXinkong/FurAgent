@@ -75,10 +75,10 @@ object DesktopAgent {
 
     private const val MIN_KEEP_MESSAGES = 40
 
-    /** 【用量监控】单轮 prompt token 超过该值就打 warn 日志（不改变行为）。 */
+    /* 用量监控 单轮 prompt token 超过该值就打 warn 日志（不改变行为）。 */
     private const val PROMPT_TOKEN_WARN_THRESHOLD = 60_000
 
-    /** 【失败计数】同一工具同一参数连续失败达到此值则中断循环。 */
+    /* 失败计数 同一工具同一参数连续失败达到此值则中断循环。 */
     private const val TOOL_FAILURE_STREAK_LIMIT = 3
 
     /**
@@ -93,7 +93,7 @@ object DesktopAgent {
         onUpdate: (List<DesktopMessage>) -> Unit,
         onThinking: (String) -> Unit,
         /**
-         * 【错误回调】API 错误（HTTP 错误码 / 网络异常）。
+         * 错误回调 API 错误（HTTP 错误码 / 网络异常）。
          *
          * 与 onThinking 分开：错误要渲染成状态小气泡并保留到下次发消息，
          * 而 thinking 在任务结束时会被清空。也不走 onUpdate（不进 AI 聊天气泡）。
@@ -105,14 +105,14 @@ object DesktopAgent {
         /** 会话专用提示词：非空时追加到系统提示词末尾（每轮实时读取） */
         sessionPrompt: String = "",
         /**
-         * 【子会话限轮】传非空时覆盖 settings.maxToolCallLoops。
+         * 子会话限轮 传非空时覆盖 settings.maxToolCallLoops。
          *
          * 为什么需要：子代理是被派出去干活的，它跑 100 轮也不会自己停下来，
          * 主会话设多少轮它就跑多少轮，然后全部烧掉。子会话必须有独立的硬上限。
          */
         maxLoopsOverride: Int? = null,
         /**
-         * 【P0-2】会话 id：通过协程上下文（SessionIdElement）传给内部所有工具调用。
+         * 会话 id：通过协程上下文（SessionIdElement）传给内部所有工具调用。
          * 多会话并发时，不同 runTurn 各自的 sessionId 互不干扰，工具归属正确，
          * 停止时按会话精确取消。
          * 空串表示「不归属任何会话」（如子会话收尾总结）。
@@ -145,7 +145,7 @@ object DesktopAgent {
         DesktopLogger.info("Agent", "开始对话 model=${profile.name} / ${profile.model} (key来源：${apiKeyResult.source})")
 
         PendingImages.clear()
-        // 【会话开始】清空 code_edit 计数器
+        // 会话开始 清空 code_edit 计数器
         EditSessionTracker.reset()
 
         val supportsVision = profile.supportsVision
@@ -175,14 +175,14 @@ object DesktopAgent {
         // 跨轮次累积"已加载工具"
         val loadedToolNames = mutableSetOf<String>()
 
-        // 【失败计数】同一工具同一参数连续失败 3 次则中断（与手机端 Agent.kt 一致）。
+        // 失败计数 同一工具同一参数连续失败 3 次则中断（与手机端 Agent.kt 一致）。
         // 签名忽略翻页/数量类参数，避免模型只改 limit/offset 就绕过计数。
         val toolFailureStreak = mutableMapOf<String, Int>()
 
         val maxLoops = (maxLoopsOverride ?: settings.maxToolCallLoops).coerceAtLeast(1)
 
         repeat(maxLoops) { loopIndex ->
-            // 【中断修复】每轮开头检查取消。用户点“停止”后 currentAgentJob.cancel()
+            // 中断修复 每轮开头检查取消。用户点“停止”后 currentAgentJob.cancel()
             // 会在这里抛出 CancellationException，立即终止循环，不再继续请求/调工具。
             currentCoroutineContext().ensureActive()
 
@@ -191,7 +191,7 @@ object DesktopAgent {
             // 每轮重建 tools（loadedToolNames 会变化）
             val tools = buildToolsArray(settings, supportsVision, loadedToolNames)
 
-            // 【用量监控】每轮请求前估算 prompt token，超阈值告警，便于定位烧钱点。
+            // 用量监控 每轮请求前估算 prompt token，超阈值告警，便于定位烧钱点。
             val promptTokens = estimateMessagesTokens(messages)
             if (promptTokens > PROMPT_TOKEN_WARN_THRESHOLD) {
                 DesktopLogger.warn(
@@ -218,7 +218,7 @@ object DesktopAgent {
                 if (profile.frequencyPenalty != 0.0) put("frequency_penalty", profile.frequencyPenalty)
                 put("stream", true)
             }
-            // 【P1-2】按模型能力强制关闭/开启思考（与手机端 Agent.kt 一致）
+            // 按模型能力强制关闭/开启思考（与手机端 Agent.kt 一致）
             if (settings.thinkingLevel != ThinkingLevel.OFF) {
                 applyEnableThinking(body, profile, settings.thinkingLevel)
             } else {
@@ -233,7 +233,7 @@ object DesktopAgent {
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
 
-            // 【P1-5】带指数退避的重试：只重试可恢复错误（429/5xx/网络异常）
+            // 带指数退避的重试：只重试可恢复错误（429/5xx/网络异常）
             val response = try {
                 executeWithRetry(request, onThinking)
             } catch (e: Exception) {
@@ -267,7 +267,7 @@ object DesktopAgent {
             var toolCalls: MutableMap<Int, ToolCallAccumulator> = mutableMapOf()
 
             try {
-                // 【中断修复】流式读取放到可取消包装里：
+                // 中断修复 流式读取放到可取消包装里：
                 // readUtf8Line() 是阻塞读，协程取消不会中断它。
                 // 取消时主动 response.close()，让阻塞读抛异常退出。
                 withContext(Dispatchers.IO) {
@@ -340,7 +340,7 @@ object DesktopAgent {
                     role = "assistant", content = reasoningBuilder.toString(), type = "reasoning"
                 )
                 onUpdate(current)
-                // 【清空实时缓冲】本轮思考已落库成独立 reasoning 消息，
+                // 清空实时缓冲 本轮思考已落库成独立 reasoning 消息，
                 // 必须把运行时缓冲一并清掉。之前只有“无工具调用 + 有正文”才走
                 // onStreamCommit，所以“只有思考 + 工具调用”的轮次缓冲从不清：
                 // 最后一条工作过程会把旧思考一直悬着，越积越长，
@@ -370,7 +370,7 @@ object DesktopAgent {
                 put("tool_calls", toolCallsForApi)
             })
 
-            // 【P1-3】工具并行执行：
+            // 工具并行执行：
             //   - 元工具（tool_search / tool_load）会改 loadedToolNames，必须串行；
             //   - 只要本轮含元工具，就整体串行（保守，避免竞态）；
             //   - 否则并行执行，UI 更新仍按原顺序串行，保证展示顺序稳定。
@@ -378,7 +378,7 @@ object DesktopAgent {
             val hasMetaTool = sortedCalls.any { it.second.name == "tool_search" || it.second.name == "tool_load" }
 
             // 先按顺序把 tool_call 占位消息推给 UI（保持展示顺序）
-            // 【并行可见性】并行批次给同批调用写同一个 parallelGroup，
+            // 并行可见性 并行批次给同批调用写同一个 parallelGroup，
             // UI 据此把同批条目収进「并行 N」分组，用户能看出这几个是一起跑的。
             val parallelTag = if (!hasMetaTool && sortedCalls.size > 1) {
                 "pg_${System.currentTimeMillis()}_$loopIndex"
@@ -394,7 +394,7 @@ object DesktopAgent {
 
             // 执行（并行或串行），结果按 idx 收集
             val results = LinkedHashMap<Int, Pair<ToolResult, Long>>()
-            // 【工作过程实时化】
+            // 工作过程实时化
             // 原来所有工具跑完才把结果一次性追加进历史、一次性 onUpdate，
             // 所以磨刀那一段时间 UI 完全不动；等它跑完又“刷”地一下全出来。
             // 现在每个工具一结束就立即往历史里追一条并刷 UI。
@@ -416,7 +416,7 @@ object DesktopAgent {
 
             if (hasMetaTool || sortedCalls.size <= 1) {
                 sortedCalls.forEach { (idx, acc) ->
-                    // 【中断修复】每个工具执行前检查取消
+                    // 中断修复 每个工具执行前检查取消
                     currentCoroutineContext().ensureActive()
                     val argsJson = acc.arguments.toString()
                     onThinking("正在执行工具：${friendlyName(acc.name)}")
@@ -428,7 +428,7 @@ object DesktopAgent {
             } else {
                 onThinking("正在并行执行 ${sortedCalls.size} 个工具…")
                 DesktopLogger.info("Agent", "并行执行 ${sortedCalls.size} 个工具：${sortedCalls.map { it.second.name }}")
-                // 【并行卡死修复】
+                // 并行卡死修复
                 //   1) 用 supervisorScope 替代 coroutineScope：单个子协程失败不再取消整批；
                 //   2) 每个 async 内部 try/catch 兜底，把异常（含 CancellationException 之外的
                 //      一切 Throwable）转成 ToolResult.fail，保证子协程永不向外抛异常，
@@ -437,11 +437,11 @@ object DesktopAgent {
                 val executed = supervisorScope {
                     sortedCalls.map { (idx, acc) ->
                         async {
-                            // 【中断修复】并行分支也要检查取消。
+                            // 中断修复 并行分支也要检查取消。
                             // 之前只在串行路径和收尾阶段检查，并行时用户点停止后
                             // 所有分支仍会全部跑完（工具副作用已发生）。
                             currentCoroutineContext().ensureActive()
-                            // 【实时阶段】并行时也告诉 UI 现在跑哪个工具，
+                            // 实时阶段 并行时也告诉 UI 现在跑哪个工具，
                             // 否则并行跑一大堆工具时界面一直停在“并行执行 N 个工具”。
                             onThinking("正在执行工具：${friendlyName(acc.name)}")
                             val startMs = System.currentTimeMillis()
@@ -456,7 +456,7 @@ object DesktopAgent {
                                 )
                                 ToolResult.fail("执行异常：${t.javaClass.simpleName}: ${t.message}")
                             }
-                            // 【实时】这个工具一结束就刷 UI，不等其他并行工具
+                            // 实时 这个工具一结束就刷 UI，不等其他并行工具
                             reportToolResult(idx, r, System.currentTimeMillis() - startMs)
                             Triple(idx, r, System.currentTimeMillis() - startMs)
                         }
@@ -467,7 +467,7 @@ object DesktopAgent {
 
             // 串行收尾：UI 更新 + messages.put + 图片附加（保持顺序，drain 只做一次）
             sortedCalls.forEach { (idx, acc) ->
-                // 【中断修复】工具跑完后、发结果前再检查一次取消。
+                // 中断修复 工具跑完后、发结果前再检查一次取消。
                 // 否则用户已点停止，工具结果仍会被推给 UI（“中断像安慰人”的元凶之一）。
                 currentCoroutineContext().ensureActive()
                 val callId = callIds[idx] ?: "call_${loopIndex}_$idx"
@@ -482,7 +482,7 @@ object DesktopAgent {
                     put("content", result.output)
                 })
 
-                // 【失败计数】元工具跳过；同一签名连续失败 3 次则中断循环。
+                // 失败计数 元工具跳过；同一签名连续失败 3 次则中断循环。
                 if (acc.name != "tool_search" && acc.name != "tool_load") {
                     val argsObj = try { JSONObject(acc.arguments.toString()) } catch (_: Exception) { JSONObject() }
                     val sig = toolSignature(acc.name, argsObj)
@@ -643,7 +643,7 @@ object DesktopAgent {
             roleOf = { it.role },
             typeOf = { it.type }
         )
-        // 【token 预算二次裁剪】见 trimByTokenBudget
+        // token 预算二次裁剪 见 trimByTokenBudget
         val byTurns = if (startIdx <= 0) history else history.subList(startIdx, history.size)
         return trimByTokenBudget(byTurns, budgetKTokens)
     }
@@ -655,7 +655,7 @@ object DesktopAgent {
             msg.imagePaths.size * TokenEstimator.PER_IMAGE_TOKENS
 
     /**
-     * 【token 预算二次裁剪】按轮次截断之后可能仍然巨大：
+     * token 预算二次裁剪 按轮次截断之后可能仍然巨大：
      * 一轮里读十个大文件，光工具输出就能吃掉几万 token，maxTurns 完全拦不住。
      * 这里再按 token 预算从最旧的「工具过程」开始丢，人类消息与助手文字回复一律保留。
      */
@@ -718,7 +718,7 @@ object DesktopAgent {
                         })
                     })
 
-                    // 【关键修复】按 toolCallId 配对，不能只看位置相邻。
+                    // 关键修复 按 toolCallId 配对，不能只看位置相邻。
                     // 并行跑一批工具时，历史里是「A的call, B的call, C的call,
                     // B的result, A的result, C的result」这种错开的顺序。
                     // 旧逻辑只看下一条是不是 tool_result，于是 A 被判成
@@ -799,7 +799,7 @@ object DesktopAgent {
         return obj
     }
 
-    // 【批次 14 性能】图片 Base64 缓存。
+    // 图片 Base64 缓存。
     // 原实现每次 buildMessageObject 都会重新读文件、压缩、转 Base64。
     // 当历史里有图片时，每一轮对话（多次请求）都会重复这套极其耗 CPU 和 IO 的操作。
     private val dataUrlCache = java.util.concurrent.ConcurrentHashMap<String, String>()
@@ -914,7 +914,7 @@ object DesktopAgent {
     }
 
     /**
-     * 【P1-5】带指数退避的 HTTP 请求。
+     * 带指数退避的 HTTP 请求。
      *
      * 只重试“可恢复”错误：
      *   - 网络异常（IOException / 超时）
@@ -951,7 +951,7 @@ object DesktopAgent {
                 val jitter = (baseMs * 0.3 * (Math.random() * 2 - 1)).toLong()
                 val waitMs = (baseMs + jitter).coerceAtLeast(200L)
                 DesktopLogger.warn("Agent", "API $code，第 ${attempt + 1} 次重试，等待 ${waitMs}ms")
-                // 【友好提示】用共享错误解释器，与安卓端文案一致
+                // 友好提示 用共享错误解释器，与安卓端文案一致
                 onThinking(
                     net.xinkong.furagent.shared.util.ApiErrorInfo
                         .retryHint(code, attempt + 1, maxRetries + 1, waitMs)
@@ -995,7 +995,7 @@ object DesktopAgent {
         }
 
     /**
-     * 【P1-3】执行单个工具（含元工具拦截）。
+     * 执行单个工具（含元工具拦截）。
      * 抽出来供串行 / 并行两条路径复用。
      */
     private suspend fun runOneTool(
@@ -1048,7 +1048,7 @@ object DesktopAgent {
     private suspend fun executeTool(
         name: String, argsJson: String, settings: DesktopSettings
     ): ToolResult {
-        // 【中断修复】工具执行前再确认一次未取消。
+        // 中断修复 工具执行前再确认一次未取消。
         // 调用方（runOneTool）已经检查过，但元工具分支可能耗时（tool_search 扫目录），
         // 这里再兵一道，避免“用户已点停止但工具仍被执行”。
         currentCoroutineContext().ensureActive()
@@ -1128,7 +1128,7 @@ object DesktopAgent {
             ?: toolName
 
     /**
-     * 【P1-2】按模型能力强制关闭思考。
+     * 按模型能力强制关闭思考。
      * 仅当 profile.supportsDisableThinking 为 true 时才加参数。
      * 具体字段分派逻辑在 shared 的 applyDisableThinking（与手机端共用）。
      * internal：供 SessionSummarizer 复用。
@@ -1142,7 +1142,7 @@ object DesktopAgent {
     }
 
     /**
-     * 【与 applyDisableThinking 对称】按模型能力主动开启思考。
+     * 与 applyDisableThinking 对称 按模型能力主动开启思考。
      * supportsThinking=false 的模型（如 DeepSeek-V3 非思考版）不发参数，避免 API 400。
      */
     internal fun applyEnableThinking(

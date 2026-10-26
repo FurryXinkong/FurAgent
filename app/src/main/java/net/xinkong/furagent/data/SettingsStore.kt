@@ -72,7 +72,7 @@ object SettingsStore {
                 ThinkingLevel.fromId(prefs.getString("thinking_level", null))
             else ThinkingLevel.fromLegacyBoolean(prefs.getBoolean("enable_thinking", false)),
             autoSpeakReplies = prefs.getBoolean("auto_speak_replies", false),
-            // 【去掉硬编码上限】用户设多少就多少，只保证 >= 1
+            // 去掉硬编码上限 用户设多少就多少，只保证 >= 1
             maxToolCallLoops = prefs.getInt("max_tool_call_loops", 20).coerceAtLeast(1),
         contextTokenBudgetK = prefs.getInt("context_token_budget_k", 100).coerceIn(0, 2000),
             notificationMode = prefs.getString("notification_mode", "off") ?: "off",
@@ -86,7 +86,7 @@ object SettingsStore {
             pcReceiveDir = run {
                 val raw = prefs.getString("pc_receive_dir", "/sdcard/FurAgent/downloads")
                     ?.takeIf { it.isNotBlank() } ?: "/sdcard/FurAgent/downloads"
-                // 【一次性迁移 2026-10-19】历史默认值 /sdcard/FurAgent/received 是写错的，
+                // 一次性迁移 2026-10-19 历史默认值 /sdcard/FurAgent/received 是写错的，
                 // 读到旧值时自动改成 downloads/ 并写回 prefs，避免每次启动重复判断。
                 // 不迁移目录内容：旧 received/ 里已有的文件由用户自行处理。
                 if (raw == "/sdcard/FurAgent/received") {
@@ -103,7 +103,7 @@ object SettingsStore {
             showModifiedFiles = prefs.getBoolean("show_modified_files", false),
             enableNewSessionSuggest = prefs.getBoolean("enable_new_session_suggest", false),
             fileBackupEnabled = prefs.getBoolean("file_backup_enabled", true),
-            // 【P1-15】隐藏的设置分组：用 | 分隔（与 disabledTools 一致）
+            // 隐藏的设置分组：用 | 分隔（与 disabledTools 一致）
             hiddenSettings = prefs.getString("hidden_settings", "")
                 ?.split("|")?.filter { it.isNotBlank() }?.toSet() ?: emptySet()
         )

@@ -122,7 +122,7 @@ object ScheduleTools {
             prompt = args.optString("prompt", ""),
             // run_agent 未显式指定会话时，自动绑定当前正在执行的会话
             //（否则回复只能走系统通知，不会出现在聊天里）
-            // 【P0-2 收尾】从参数 currentSessionId 读（由 DesktopTools.execute 传入协程上下文里的值），
+            // 从参数 currentSessionId 读（由 DesktopTools.execute 传入协程上下文里的值），
             // 不再读已删除的全局 CurrentTaskSession。
             sessionId = args.optString("session_id", "").ifBlank {
                 if (action == "run_agent") currentSessionId else ""

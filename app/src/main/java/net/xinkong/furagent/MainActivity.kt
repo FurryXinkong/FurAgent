@@ -157,7 +157,7 @@ class MainActivity : ComponentActivity() {
             AgentLogger.log(tag, msg)
         }
 
-        // 【自定义脚本】安装安卓端脚本运行时（Chaquopy 内嵌 CPython）
+        // 自定义脚本 安装安卓端脚本运行时（Chaquopy 内嵌 CPython）
         try {
             net.xinkong.furagent.shared.skill.SkillStore.install(
                 net.xinkong.furagent.tools.AndroidSkillRuntime(applicationContext)
@@ -191,7 +191,7 @@ class MainActivity : ComponentActivity() {
             AndroidHttpFileServer.setFileReceivedCallback { path ->
                 try {
                     val file = File(path)
-                    // 【B15 改动】带 PendingIntent 打开文件，点击通知直接打开
+                    // 带 PendingIntent 打开文件，点击通知直接打开
                     net.xinkong.furagent.system.NotificationHelper.showFileReceivedNotification(
                         applicationContext, file
                     )
@@ -313,7 +313,7 @@ class MainActivity : ComponentActivity() {
             )
         }
         try {
-            // 【P1-13】关闭后台写盘线程（quitSafely 会先处理完队列里 pending 的写盘）
+            // 关闭后台写盘线程（quitSafely 会先处理完队列里 pending 的写盘）
             SessionStore.shutdownWriter()
         } catch (e: Exception) {
             AgentLogger.log(
@@ -340,7 +340,7 @@ class MainActivity : ComponentActivity() {
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
-        // 【修复 F2】POST_NOTIFICATIONS 的请求码是 2001（见 onCreate），
+        // POST_NOTIFICATIONS 的请求码是 2001（见 onCreate），
         // 旧实现只处理了本地网络（2002），漏掉通知权限的授权结果。
         if (requestCode == 2001) {
             val granted = grantResults.isNotEmpty() &&
@@ -411,7 +411,7 @@ private object ImageCompressor {
                 val bmp = BitmapFactory.decodeFile(src.absolutePath, decodeOpts)
                     ?: return@withContext null
 
-                // 【临时文件落点】统一落 /sdcard/FurAgent/temp/，与 TOAI §2.2 一致。
+                // 临时文件落点 统一落 /sdcard/FurAgent/temp/，与 TOAI §2.2 一致。
                 // 旧实现落 src.parentFile（用户图片目录），会污染用户可见目录。
                 val tmpDir = File(SDCARD_PATH, "FurAgent/temp")
                 if (!tmpDir.exists()) tmpDir.mkdirs()
@@ -456,7 +456,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     var chatHistory by remember { mutableStateOf<List<ChatMessage>>(emptyList()) }
     var sessionList by remember { mutableStateOf<List<SessionMeta>>(emptyList()) }
     var userInput by rememberSaveable { mutableStateOf("") }
-    // 【会话隔离】输入框草稿按会话保存：切走存盘、切回恢复
+    // 会话隔离 输入框草稿按会话保存：切走存盘、切回恢复
     val draftPrefs = remember {
         context.getSharedPreferences("session_drafts", Context.MODE_PRIVATE)
     }
@@ -492,7 +492,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     val streamingText = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.streaming else ""
     val currentReasoning = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.reasoning else ""
     val currentThinking = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.thinking else ""
-    // 【错误状态】API 错误（如「HTTP 429 · 用量配额已用尽」），渲染成状态小气泡
+    // 错误状态 API 错误（如「HTTP 429 · 用量配额已用尽」），渲染成状态小气泡
     val currentError = if (agentSnapshot.sessionId == currentSessionId) agentSnapshot.error else ""
 
     // 整屏 Page 导航
@@ -500,7 +500,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     var currentPage by rememberSaveable { mutableStateOf<AppPage?>(null) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
     var showMorePanel by rememberSaveable { mutableStateOf(false) }
-    // 【P1-1】会话专用提示词弹窗
+    // 会话专用提示词弹窗
     var showSessionPrompt by remember { mutableStateOf(false) }
 
 
@@ -520,7 +520,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     var pendingPickedImages by remember { mutableStateOf<List<String>>(emptyList()) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
 
-    // 【子会话出口】系统返回键：有 Page 就关 Page，在子会话里优先回母会话。
+    // 子会话出口 系统返回键：有 Page 就关 Page，在子会话里优先回母会话。
     // 以前只在有 Page 时接管返回键，子会话里按返回会直接退出应用。
     // 放在 currentSessionCreatedAt / sessionList / currentPage 声明之后，避免前向引用。
     val inSubSessionForBack = currentSessionId?.startsWith("sub_") == true
@@ -577,7 +577,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             else -> openLocalFileOnAndroid(context, path)
         }
     }
-    // 【定时任务 AI 结果回流】
+    // 定时任务 AI 结果回流
     // TaskExecutionService 执行完 run_agent 后发广播，这里收到就把消息注入当前会话。
     // 旧代码只 sendBroadcast 没人接，导致「AI 在后台回了话，但打开 App 看不到」。
     DisposableEffect(Unit) {
@@ -610,7 +610,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     // 子会话完成 → 主对话注入「子代理完成」通知（结果摘要回流）
     LaunchedEffect(Unit) {
         SubSessionProgress.events.collect { e ->
-            // 【对齐桌面端】originId 为空（桥接/悬浮窗发起、母会话已关）时
+            // 对齐桌面端 originId 为空（桥接/悬浮窗发起、母会话已关）时
             // 以前直接丢弃，子代理结果彻底蒸发，主会话什么也收不到。
             // 现在回落到最近一个主会话，至少能看到结果。
             val target = e.originId.ifBlank {
@@ -625,7 +625,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 timestamp = System.currentTimeMillis()
             )
             if (currentSessionId == target) {
-                // 【批次 19】子会话完成通知合并。
+                // 子会话完成通知合并。
                 // 如果主任务此刻正在跑（流式输出），不要直接改 chatHistory，
                 // 避免和 AgentRunner 的 onHistoryChanged 发生覆盖冲突。
                 if (isLoading) {
@@ -688,7 +688,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         isSwitchingSession = false
     }
 
-    // 【新增】首次运行引导
+    // 首次运行引导
     // 两个独立标记，可分别跳过：权限引导 / 功能导览。
     var onboardingStage by remember {
         val permDone = prefs.getBoolean("onboarding_permissions_done", false)
@@ -705,7 +705,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     LaunchedEffect(currentSessionId) {
         if (currentSessionId != null) {
             prefs.edit { putString("current_session_id", currentSessionId) }
-            // 【批次 19】同步给 UI 层，供 History 页面过滤
+            // 同步给 UI 层，供 History 页面过滤
             net.xinkong.furagent.tools.ToolRegistry.CurrentTaskSession.id = currentSessionId!!
         }
     }
@@ -721,11 +721,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     fun persist() {
         val id = currentSessionId ?: return
-        // 【子会话标题保护】子会话标题带「↳ 」前缀，是子代理列表的识别依据。
+        // 子会话标题保护 子会话标题带「↳ 」前缀，是子代理列表的识别依据。
         // 以前这里无条件 generateTitle，一 persist 就把前缀抹掉，
         // 子会话于是混进主会话列表、又不在子代理列表里
         //（看起来就像“子代理把原会话覆盖了”，而且找不到回去的入口）。
-        // 【P0-4 修复】load 不限于子会话：主会话也可能被用户手动重命名过
+        // load 不限于子会话：主会话也可能被用户手动重命名过
         val existing = SessionStore.load(context, id)
         val title = when {
             existing?.titleLocked == true -> existing.title       // 用户手动重命名，保留
@@ -753,7 +753,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             }
         } else {
             // 新会话首次保存，fallback 到完整读取
-            // 【P0-5 修复】过滤子会话，避免子代理混入主列表
+            // 过滤子会话，避免子代理混入主列表
             SessionStore.list(context).filter { it.parentId == null }
         }
     }
@@ -827,7 +827,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     notifyToast(context, "读取文件失败")
                     return@launch
                 }
-                // 【P1-4】保留原文件后缀，供 importSingleSession 分流（.md / .json）
+                // 保留原文件后缀，供 importSingleSession 分流（.md / .json）
                 val ext = context.contentResolver.getType(uri)
                     ?.let { if (it.contains("markdown")) "md" else null }
                     ?: uri.lastPathSegment?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }
@@ -854,7 +854,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     fun importSingleSessionFromFile() {
         try {
-            // 【P1-4】放开 MIME，允许选 .md / .json
+            // 放开 MIME，允许选 .md / .json
             sessionImportLauncher.launch("*/*")
         } catch (e: Exception) {
             notifyToast(context, "打开文件选择器失败：${e.message}")
@@ -921,7 +921,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     }
 
     fun autoSpeakForce(text: String) {
-        // 【P1-抽 shared】统一走 shared/util/SpeechCleaner，与桌面端完全同源
+        // 统一走 shared/util/SpeechCleaner，与桌面端完全同源
         val clean = net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
         if (clean.isBlank()) {
             scope.launch {
@@ -943,7 +943,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     fun startAgent(initialHistory: List<ChatMessage>) {
         val profile = currentProfileValue ?: return
         val sid = currentSessionId ?: return
-        // 【P0-3】会话专用提示词：每轮发送前实时读盘，编辑后下一轮即生效
+        // 会话专用提示词：每轮发送前实时读盘，编辑后下一轮即生效
         val sessionPrompt = SessionStore.load(context, sid)?.systemPrompt ?: ""
         val started = AgentRunner.start(
             context = context,
@@ -1009,7 +1009,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 val userMsg = ChatMessage(role = "user", content = text, imagePaths = finalImages)
                 val withUser = chatHistory + userMsg
                 chatHistory = withUser
-                // 【滚动修复】用户主动发消息时无需在此重置上滑锁定：
+                // 滚动修复 用户主动发消息时无需在此重置上滑锁定：
                 // userScrolledUp 是聊天页 Composable 内的局部 remember 状态，本函数作用域访问不到；
                 // 且自动滚动逻辑里 shouldFollow = !userScrolledUp || last?.role == "user"，
                 // 最后一条是 user 消息时本就会强制跟随滚动，功能上无需额外重置。
@@ -1207,7 +1207,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         } else null
 
         val list = SessionStore.list(context)
-        // 【子会话识别】改按 parentId 判定，不再靠标题前缀：
+        // 子会话识别 改按 parentId 判定，不再靠标题前缀：
         // 以前标题被 persist 重算后子会话就混进主列表。
         val mainList = list.filter { it.parentId == null }
         sessionList = mainList
@@ -1216,7 +1216,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             // 运行中的会话/用户上次停留的会话若还在（含子会话），保持原状
             runningSessionId != null && list.any { it.id == runningSessionId } -> runningSessionId
             currentSessionId != null && list.any { it.id == currentSessionId } -> currentSessionId!!
-            // 【P0-6 修复】兜底只从主会话列表选，避免启动时直接进子会话
+            // 兜底只从主会话列表选，避免启动时直接进子会话
             mainList.isNotEmpty() -> mainList.first().id
             else -> null
         }
@@ -1283,18 +1283,18 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
     }
 
-    // 【修复：用户上滑后不再被强制拉到底】
+    // 用户上滑后不再被强制拉到底
     // 背景：原来只要 chatItems.size 变化（每次工具调用都会变）就无条件
     // scrollToItem 到底部，用户上滑看历史时会被反复拽回底部，体验极差。
 
-    // 【方案 v2】不再用 isScrollInProgress 猜“用户是否在拖”，因为程序滚动
+    // 不再用 isScrollInProgress 猜“用户是否在拖”，因为程序滚动
     // （scrollToItem）也会把它置 true，容易误判。改用两个更可靠的信号：
     //   - listState.canScrollForward == false  → 真的到底了
     //   - listState.isScrollInProgress         → 有滚动在进行
     // 只要“正在滚动”且“没到底”，就认定用户主动上滑，锁定不自动滚。
     // 程序滚动到底后 canScrollForward 变 false，会自动解锁。
 
-    // 【注意】isAtBottom / userScrolledUp 必须声明在下面的自动滚动 LaunchedEffect 之前，
+    // 注意 isAtBottom / userScrolledUp 必须声明在下面的自动滚动 LaunchedEffect 之前，
     // 否则 Compose 里会报 “Unresolved reference”。
     val isAtBottom by remember {
         derivedStateOf {
@@ -1305,7 +1305,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
     }
     var userScrolledUp by remember { mutableStateOf(false) }
-    // 【P1-12 修复】删掉无效的 programmaticScroll：scrollToItem 是 suspend 且同步完成，
+    // 删掉无效的 programmaticScroll：scrollToItem 是 suspend 且同步完成，
     // 而 snapshotFlow 的 collect 是异步的，等到 collect 执行时标志早已复位，拦不住任何东西。
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
@@ -1320,7 +1320,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             }
     }
 
-    // 【性能】用 snapshotFlow 替代 LaunchedEffect 频繁变化的 key
+    // 性能 用 snapshotFlow 替代 LaunchedEffect 频繁变化的 key
     // 原来 streamingText.length 每 32ms 变一次 → LaunchedEffect 重启 → 取消+重建协程
     // 改为 snapshotFlow：协程常驻，只在值变化时执行 collect 块
     LaunchedEffect(Unit) {
@@ -1335,7 +1335,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             val shouldFollow = !userScrolledUp || last?.role == "user"
             if (shouldFollow) {
                 try {
-                    // 【P1-11 修复】LazyColumn 里除 chatItems 还有 status bar / modified files 等
+                    // LazyColumn 里除 chatItems 还有 status bar / modified files 等
                     // 额外 item，用 totalItems-1 滚不到真正的底部，差 1~3 个 item。
                     // scrollToItem(Int.MAX_VALUE) 由 LazyList 自己 clamp 到最后一个 item。
                     listState.scrollToItem(Int.MAX_VALUE)
@@ -1711,7 +1711,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 selectedMessage = null
             },
             onEdit = {
-                // 【体验优化 B7/B20】任意 text 类型都可编辑
+                // 体验优化 任意 text 类型都可编辑
                 if (msg.type == "text") editingMessage = msg
                 selectedMessage = null
             },
@@ -1768,7 +1768,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     val currentProfileName = currentProfileValue?.name ?: "未配置"
 
-    // 【手机端优化】子代理 / 修改历史弹窗开关（入口在顶栏图标）
+    // 手机端优化 子代理 / 修改历史弹窗开关（入口在顶栏图标）
     var subListOpen by remember { mutableStateOf(false) }
     var historyOpen by remember { mutableStateOf(false) }
 
@@ -1776,11 +1776,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         ImageViewerDialog(path = path, onDismiss = { viewingImage = null })
     }
 
-    // 【手机端优化】子代理 / 修改历史弹窗（入口在顶栏图标）
+    // 手机端优化 子代理 / 修改历史弹窗（入口在顶栏图标）
     if (historyOpen) AndroidBackupHistoryDialog(onDismiss = { historyOpen = false })
     if (subListOpen) AndroidSubSessionListDialog(onDismiss = { subListOpen = false })
 
-    // 【P1-1】会话专用提示词编辑弹窗
+    // 会话专用提示词编辑弹窗
     val sessionPromptTarget = currentSessionId
     if (showSessionPrompt && sessionPromptTarget != null) {
         AndroidSessionPromptDialog(
@@ -1850,7 +1850,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 showAbout = true
                             }
                         },
-                        // 【手机端排版】从顶栏挪进来的入口
+                        // 手机端排版 从顶栏挪进来的入口
                         onOpenSubList = {
                             scope.launch { drawerState.close() }
                             subListOpen = true
@@ -1861,7 +1861,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         },
                         onOpenSessions = { openPageFromDrawer(AppPage.SESSIONS) },
                         onOpenLog = { openPageFromDrawer(AppPage.LOG) },
-                        // 【P1-1】会话专用提示词入口
+                        // 会话专用提示词入口
                         onOpenSessionPrompt = {
                             scope.launch {
                                 drawerState.close()
@@ -1912,7 +1912,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 }
                             },
                             actions = {
-                                // 【子会话出口】在子会话里直接给一个返回按钮，
+                                // 子会话出口 在子会话里直接给一个返回按钮，
                                 // 不用再拉开抽屉找「子代理」列表，也不用按返回键退应用。
                                 if (inSubSessionForBack) {
                                     IconButton(onClick = {
@@ -1936,7 +1936,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         )
                                     }
                                 }
-                                // 【手机端排版】顶栏只留搜索 / 会话列表 / 设置，避免窄屏把标题挤成竖排。
+                                // 手机端排版 顶栏只留搜索 / 会话列表 / 设置，避免窄屏把标题挤成竖排。
                                 // 子代理 / 修改历史 / 日志 收进侧边抽屉。
                                 IconButton(onClick = { showSearch = !showSearch; if (!showSearch) searchQuery = "" }) {
                                     Icon(
@@ -1967,7 +1967,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         )
                         if (showSearch) {
                             // 复用项目表单标准组件 OutlinedTextField（Dialogs / 编辑对话框同款），
-                            // 【P2-17 修复】加 remember，避免每次重组都全量遍历长会话
+                            // 加 remember，避免每次重组都全量遍历长会话
                             val matchCount = remember(searchQuery, chatItems) {
                                 if (searchQuery.isNotBlank()) chatItems.count { item ->
                                     when (item) {
@@ -2019,7 +2019,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(top = padding.calculateTopPadding())
-                        // 【修复：输入框被键盘盖住】
+                        // 输入框被键盘盖住
                         // imePadding 必须加在外层 Box 上：Column（列表）和输入框 Box
                         // 都是它的子元素，这样两者一起随键盘上移。
                         // 之前加在 Column 上，输入框不在 Column 内，所以没被顶上去。
@@ -2108,7 +2108,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                             if (msg.type != "system_note") selectedMessage = msg
                                         },
                                         onImageClick = { path -> viewingImage = path },
-                                        // 【实时思考归位】运行中把流式思考挂到最后一条工作过程里（
+                                        // 实时思考归位 运行中把流式思考挂到最后一条工作过程里（
                                         // 即最后一个工具调用之后），在它内部展开显示。
                                         // 之前是丢在气泡外面单独一行、只显示最后一行，
                                         // 既看不出上下文也看不到完整思考。
@@ -2139,7 +2139,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 AndroidTokenStatusBar(chatHistory)
                             }
                         }
-                        // 【深度思考直显】还没出现工作过程气泡时（第一次工具调用之前），
+                        // 深度思考直显 还没出现工作过程气泡时（第一次工具调用之前），
                         // 流式思考没有宿主可挂；而下面的 thinking 气泡又只在 reasoning 为空时显示，
                         // 结果开了深度思考后，从发消息到第一次工具调用之间思考过程完全看不到。
                         val liveReasoningHost = chatItems.lastOrNull() is ChatListItem.WorkProcess
@@ -2148,7 +2148,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 LiveReasoningStep(currentReasoning)
                             }
                         }
-                        // 【实时思考】已归位到工作过程末尾（见 WorkProcessBubble 的 liveReasoning），
+                        // 实时思考 已归位到工作过程末尾（见 WorkProcessBubble 的 liveReasoning），
                         // 不再在气泡外面单独画一行「深度思考」。
                         if (currentThinking.isNotEmpty() && streamingText.isEmpty() &&
                             currentReasoning.isBlank()
@@ -2157,7 +2157,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 ThinkingBubble(text = currentThinking)
                             }
                         }
-                        // 【错误状态气泡】与「重试中」同款样式，不是 AI 聊天气泡。
+                        // 错误状态气泡 与「重试中」同款样式，不是 AI 聊天气泡。
                         // 任务结束后仍保留（onFinish 只清 thinking，不清 error），
                         // 直到用户下次发消息、点重试、手动关闭或切换模型才清。
                         if (currentError.isNotEmpty() && streamingText.isEmpty()) {
@@ -2188,7 +2188,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     }
                     }
 
-                    // 【批次 13】删除手机端 MiniMap：手机上空间宝贵，不需要这种全局导航条
+                    // 删除手机端 MiniMap：手机上空间宝贵，不需要这种全局导航条
 
                     if (!isAtBottom && chatItems.isNotEmpty()) {
                         ExtendedFloatingActionButton(
@@ -2206,7 +2206,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
-                                // 【固定位置修正】之前写死 132dp，但输入卡片高度是变的
+                                // 固定位置修正 之前写死 132dp，但输入卡片高度是变的
                                 // （多行输入 / 图片预览 / 彩盘切换），卡片一高 FAB 就被压上去。
                                 // 直接用实测的 inputBar 高度 + 余量。
                                 .padding(end = 24.dp, bottom = dynamicBottomPadding + 12.dp)
@@ -2216,13 +2216,13 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     // 底部输入卡片（28dp 圆角 + 半透明 + 阴影）
                     // 这是输入框专用形状，不属于"卡片"，不套 PocoCard。
                     val shadowColor = glassShadowColor()
-                    // 【子代理页面不渲染输入框】不是禁用，是整块不画。
+                    // 子代理页面不渲染输入框 不是禁用，是整块不画。
                     // 子会话是 AI 派发的任务上下文，用户没有发消息的场景。
                     if (currentSessionId?.startsWith("sub_") != true) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            // 【关键修正：尺寸量在 padding 外层】
+                            // 关键修正：尺寸量在 padding 外层
                             // modifier 链从左到右「由外到内」，
                             // onSizeChanged 之前挂在 .padding(vertical = 12.dp) 后面，
                             // 量到的是扣掉上下 padding 和导航栏后的内层高度，
@@ -2391,13 +2391,13 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                     }
                                 }
 
-                                    // 【DeepSeek 式布局】一个圆角容器：
+                                    // DeepSeek 式布局 一个圆角容器：
                                     //   上：输入区（占满宽度，多行）
                                     //   下：左 = 深度思考 / 模型选择 chip，右 = 语音/附件/发送
                                     // chip 在容器内部，不再飘在外面占额外一行。
-                                    // 【融合式】输入区不自带底色/边框，直接坐在外层玻璃容器上；
+                                    // 融合式 输入区不自带底色/边框，直接坐在外层玻璃容器上；
                                     // 聚焦时仅轻微提亮底色，避免"卡中卡"的割裂感。
-                                    // 【子代理只读】子会话是 AI 派发的任务上下文，用户不能直接发消息，
+                                    // 子代理只读 子会话是 AI 派发的任务上下文，用户不能直接发消息，
                                     // 否则会污染子代理的上下文（AI 追问走 run_sub_session 的 session_id）。
                                     // 输入框直接禁用，而不是等你敲完一大段再告诉你“只读”。
                                     val inSubSession = currentSessionId?.startsWith("sub_") == true
@@ -2558,7 +2558,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 }
             }
 
-        // 【P1-13】全局轻提示浮层（右上角），在 Page 浮层之下、Onboarding 之上
+        // 全局轻提示浮层（右上角），在 Page 浮层之下、Onboarding 之上
         ToastHost(
             alignment = Alignment.TopEnd,
             modifier = Modifier
@@ -2784,7 +2784,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             }
         }
 
-        // 【新增】Onboarding overlay（最外层，盖住抽屉 + Page + 输入框）
+        // Onboarding overlay（最外层，盖住抽屉 + Page + 输入框）
         when (onboardingStage) {
             "permissions" -> OnboardingPermissionsFlow(
                 onFinished = {

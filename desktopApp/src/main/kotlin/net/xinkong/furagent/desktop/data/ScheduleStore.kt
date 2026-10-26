@@ -37,7 +37,7 @@ data class ScheduledTask(
     val skipIfNotMet: Boolean = true,
 
     /**
-     * 【F4 新增】是否启用。
+     * 是否启用。
      * true（默认）：TaskScheduler 正常调度。
      * false：TaskScheduler.tick() 跳过，UI 显示为禁用态。
      * 反序列化缺省 true，兼容旧数据。
@@ -47,12 +47,12 @@ data class ScheduledTask(
     val description: String = "",
 
     /**
-     * 【能力对齐 Android】run_agent 动作专用：要发给 AI 的 prompt。
+     * 能力对齐 Android run_agent 动作专用：要发给 AI 的 prompt。
      * action == "run_agent" 时必填。
      */
     val prompt: String = "",
     /**
-     * 【能力对齐 Android】绑定到特定会话 ID。
+     * 能力对齐 Android 绑定到特定会话 ID。
      * 非空时 run_agent 结果作为 assistant 消息写回该会话；空时走系统通知。
      */
     val sessionId: String = ""
@@ -65,7 +65,7 @@ object ScheduleStore {
     // （尤其 PowerShell，冷启动 1-2 秒）会拖垮整个 tick 循环
     private const val COND_CACHE_TTL_MS = 10_000L
 
-    // 【P1-10】从 shared 统一常量，双端一致
+    // 从 shared 统一常量，双端一致
     const val MIN_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MIN_INTERVAL_SECONDS
     const val MAX_INTERVAL_SECONDS = net.xinkong.furagent.shared.data.ScheduleLimits.MAX_INTERVAL_SECONDS
 
@@ -169,7 +169,7 @@ object ScheduleStore {
     }
 
     /**
-     * 【F4 新增】切换任务的启用状态。
+     * 切换任务的启用状态。
      * 桌面端 TaskScheduler 是纯轮询，不需要注册/取消；只需写盘即可。
      */
     fun setEnabled(id: String, enabled: Boolean): String? {
@@ -306,7 +306,7 @@ object ScheduleStore {
     }
 
     /**
-     * 【冗余清理】cron 解析抽到 shared/util/CronParser。
+     * cron 解析抽到 shared/util/CronParser。
      * 调用点保持不变（calculateNextTrigger 里依然调 nextCronTime）。
      */
     private fun nextCronTime(expr: String, fromMs: Long): Long? =

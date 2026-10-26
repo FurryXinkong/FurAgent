@@ -34,7 +34,7 @@ import net.xinkong.furagent.ui.theme.LightSuccess
 
 // 玻璃色
 
-// 【统一代码】语义状态色收口：页面不再硬编码 0x34C759/0xF59E0B/0xEF4444，
+// 统一代码 语义状态色收口：页面不再硬编码 0x34C759/0xF59E0B/0xEF4444，
 // 与桌面端 ErrorColor/WarningColor/ResultColor 命名对称。
 
 /** 成功/在线绿：随明暗取主题 Success 值。 */
@@ -224,7 +224,7 @@ fun GlassDragHandle() {
     )
 }
 
-// 【页面模板】PocoPageTopBar
+// 页面模板 PocoPageTopBar
 
 // 所有整屏 Page 的顶部标题栏统一走这一个实现：
 //   - 标题：20sp Black + onBackground
@@ -233,7 +233,7 @@ fun GlassDragHandle() {
 //   - actions：可选（RowScope）
 //   - 背景透明（透出 glassPageBg）
 
-// 【为什么收口】10+ 个 Page 各写一份几乎一样的 TopAppBar，改一处要动 10+ 个文件。
+// 为什么收口 10+ 个 Page 各写一份几乎一样的 TopAppBar，改一处要动 10+ 个文件。
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PocoPageTopBar(
@@ -289,7 +289,7 @@ fun PocoPageTopBar(
     )
 }
 
-// 【标准卡片】PocoCard
+// 标准卡片 PocoCard
 
 // Android 端所有页面级卡片统一走这一个实现：
 //   - 底色  glassCardBg()       (surfaceVariant 60% 半透明)
@@ -336,7 +336,7 @@ fun PocoCard(
     }
 }
 
-// 【标准弹窗】PocoAlertDialog
+// 标准弹窗 PocoAlertDialog
 
 // 全项目 41 处 AlertDialog 都手写
 //   shape = RoundedCornerShape(AppRadius.DIALOG),
@@ -409,7 +409,7 @@ fun PocoAlertDialog(
  *   - 副标题 bodySmall + onSurfaceVariant，居中
  *   - 可选 action（主按钮）
  *
- * 【为什么收口】之前 5 个页面各写一份几乎一样的空状态，改一处要动 5 个文件。
+ * 为什么收口 之前 5 个页面各写一份几乎一样的空状态，改一处要动 5 个文件。
  */
 @Composable
 fun PocoEmptyState(
@@ -464,7 +464,7 @@ fun PocoEmptyState(
  *   - 底色 surfaceVariant 50%
  *   - 主色描边走 primary，非主色描边 outlineVariant
  *
- * 【为什么收口】30+ 处重复的 OutlinedTextFieldDefaults.colors(...) 分散在 5 个文件里，
+ * 为什么收口 30+ 处重复的 OutlinedTextFieldDefaults.colors(...) 分散在 5 个文件里，
  * 改一处配色要动 30 处。现在只有这一个来源。
  */
 @Composable

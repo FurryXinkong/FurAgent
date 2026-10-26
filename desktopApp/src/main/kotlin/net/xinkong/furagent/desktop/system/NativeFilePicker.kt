@@ -6,7 +6,7 @@ import java.util.concurrent.TimeUnit
 /**
  * 原生文件选择器（Windows 资源管理器风格）。
  *
- * 【演进历史】
+ * 演进历史
  *   1. 最初用 Swing 的 JFileChooser —— 1995 年老式对话框（"查找范围(I)" 那种），
  *      用户明确表示"丑不拉几"。
  *   2. 改用 java.awt.FileDialog —— 理论上 Windows 上走原生 IFileOpenDialog，
@@ -16,12 +16,12 @@ import java.util.concurrent.TimeUnit
  *      这是 .NET 对 Windows IFileOpenDialog 的封装，100% 原生外观，
  *      与资源管理器完全一致（带地址栏、快速访问、详细信息列）。
  *
- * 【为什么用 PowerShell 而不是 JNA】
+ * 为什么用 PowerShell 而不是 JNA
  *   - 零依赖：Windows 自带 PowerShell 5.1，不需要额外 jar
  *   - 稳定：WinForms 的 OpenFileDialog 是微软官方封装，不会随 JDK 版本变化
  *   - 简单：一个脚本搞定，不用写 COM 接口定义
  *
- * 【代价】
+ * 代价
  *   每次弹框要启动一个 PowerShell 进程（约 300~600ms）。
  *   文件选择是低频操作，这个延迟可以接受。
  */

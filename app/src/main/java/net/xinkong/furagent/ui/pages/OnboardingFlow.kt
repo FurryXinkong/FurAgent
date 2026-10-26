@@ -86,7 +86,7 @@ private fun buildSteps(context: Context): List<OnboardingStep> {
         )
     }
 
-    // 【F1+F8 新增】Android 17（API 37）本地网络保护：
+    // F1+F8 新增 Android 17（API 37）本地网络保护：
     // 访问局域网（连接电脑、WOL 唤醒、本地 HTTP 文件服务）都需要该权限。
     if (net.xinkong.furagent.system.LocalNetworkPermission.isRequired()) {
         steps.add(
@@ -404,7 +404,7 @@ fun OnboardingPermissionsFlow(onFinished: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(8.dp))
-                    // 【体验优化 B16】进度条
+                    // 体验优化 进度条
                     LinearProgressIndicator(
                         progress = { (currentIndex + 1).toFloat() / steps.size.toFloat() },
                         modifier = Modifier

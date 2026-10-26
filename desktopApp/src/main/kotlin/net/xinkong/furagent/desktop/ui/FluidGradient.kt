@@ -25,7 +25,7 @@ import androidx.compose.ui.unit.dp
 /**
  * 流体渐变（Fluid Gradient）。
  *
- * 【设计来源】
+ * 设计来源
  * 参考 Gemini / Cursor 等主流 AI 客户端的做法：只在少数关键位置用渐变，
  * 其余保持中性色。用渐变的地方：
  *  - 全部滑块轨道（推理强度、采样温度、惩罚系数、图片压缩…）
@@ -38,12 +38,12 @@ import androidx.compose.ui.unit.dp
  *  - 输入框
  *  - 设置页背景
  *
- * 【配色】
+ * 配色
  * 固定蓝 -> 紫，与主题色（accent）同一色系。深色主题下提亮。
  *  - 浅色：#4A9EFF -> #A78BFA
  *  - 深色：#5AAEFF -> #B79CFF
  *
- * 【为什么不做流动动画】
+ * 为什么不做流动动画
  * 持续动画在低配机器上掉帧、耗电。这里只做静态渐变 + 状态切换时的
  * animateFloatAsState 过渡，视觉上已经足够。
  */
@@ -118,12 +118,12 @@ object FluidGradient {
 /**
  * 带流体渐变轨道的滑块。
  *
- * 【为什么不用 Material3 默认轨道】
+ * 为什么不用 Material3 默认轨道
  * Slider 的 activeTrackColor 只接受纯色，无法直接给 Brush。
  * 这里通过 track / thumb 两个 lambda 自定义视觉，交互（拖拽、点击跳转、
  * 键盘方向键、无障碍）全部保留 Material3 原生实现。
  *
- * 【参数】
+ * 参数
  * @param value      当前值
  * @param onValueChange 值变化回调
  * @param enabled    是否可用（禁用时轨道变灰、滑块变暗）

@@ -42,7 +42,7 @@ import net.xinkong.furagent.system.notifyToast
 
 // 更多功能面板项
 
-// 【UI 统一】图标容器圆角保留 18dp（面板内专用尺寸）。
+// UI 统一 图标容器圆角保留 18dp（面板内专用尺寸）。
 // 高亮态走 primary，常态走 surfaceVariant。
 
 @Composable
@@ -107,7 +107,7 @@ fun MoreActionItem(
 
 // 侧边抽屉内容
 
-// 【UI 统一】抽屉背景走 glassSheetBg（ModalDrawerSheet 传入）。
+// UI 统一 抽屉背景走 glassSheetBg（ModalDrawerSheet 传入）。
 // 项颜色走 colorScheme。
 
 @Composable
@@ -126,12 +126,12 @@ fun SideDrawerContent(
     onOpenAdvancedSettings: () -> Unit,
     onToggleFloating: () -> Unit,
     onOpenAbout: () -> Unit,
-    // 【手机端排版】从顶栏挪进来的入口
+    // 手机端排版 从顶栏挪进来的入口
     onOpenSubList: () -> Unit = {},
     onOpenHistory: () -> Unit = {},
     onOpenLog: () -> Unit = {},
     onOpenSessions: () -> Unit = {},
-    // 【P1-1】会话专用提示词入口
+    // 会话专用提示词入口
     onOpenSessionPrompt: () -> Unit = {}
 ) {
     val density = LocalDensity.current
@@ -179,7 +179,7 @@ fun SideDrawerContent(
         }
         Spacer(Modifier.height(20.dp))
 
-        // 【滚动区】导航项可滚动：矮屏上也不会把底部版本信息挤掉
+        // 滚动区 导航项可滚动：矮屏上也不会把底部版本信息挤掉
         Column(
             modifier = Modifier
                 .weight(1f)
@@ -195,7 +195,7 @@ fun SideDrawerContent(
                 Icons.AutoMirrored.Filled.List, "会话列表", onOpenSessions,
                 selected = currentPage == AppPage.SESSIONS
             )
-            // 【P1-1】会话专用提示词：只作用于当前会话的额外指令
+            // 会话专用提示词：只作用于当前会话的额外指令
             DrawerItem(
                 Icons.Default.Edit, "会话提示词", onOpenSessionPrompt
             )
@@ -245,7 +245,7 @@ fun SideDrawerContent(
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)
         ) {
-            // 【精简】原来堆了 6 行（当前模型 / Token / 版本），收成 2 行
+            // 精简 原来堆了 6 行（当前模型 / Token / 版本），收成 2 行
             Text(
                 currentProfileName,
                 fontSize = 12.sp,
@@ -349,7 +349,7 @@ fun deleteMessagePair(history: List<ChatMessage>, index: Int): List<ChatMessage>
             for (i in (end - 1) downTo index) newList.removeAt(i)
         }
         msg.role == "assistant" && msg.type == "text" -> {
-            // 【P1-14 修复】删 assistant 时连带其后的 tool_call / tool_result / reasoning，
+            // 删 assistant 时连带其后的 tool_call / tool_result / reasoning，
             // 直到下一条 user 或 assistant text，避免留下孤儿结果（看起来像“返回没有调用”）
             newList.removeAt(index)
             while (index < newList.size) {

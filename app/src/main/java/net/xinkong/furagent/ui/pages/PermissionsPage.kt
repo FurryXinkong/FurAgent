@@ -34,7 +34,7 @@ import net.xinkong.furagent.ui.theme.AppRadius
 /**
  * 权限管理 —— 整屏页面。
  *
- * 【UI 统一约定】
+ * UI 统一约定
  *   - 卡片统一 PocoCard
  *   - 页背景 glassPageBg() + 顶部 GlassSheen
  *   - 已授权绿 / 待授权走 colorScheme.error

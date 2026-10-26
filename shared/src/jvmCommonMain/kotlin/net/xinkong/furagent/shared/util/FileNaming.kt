@@ -23,7 +23,7 @@ object FileNaming {
             .replace(RE_CONTROL, "_")
             .replace(RE_ILLEGAL_FN, "_")
             .trim()
-        // 【N10/N11 修复】`.` 不是非法字符，`extractFileName("..")` 会原样返回 `..`。
+        // N10/N11 修复 `.` 不是非法字符，`extractFileName("..")` 会原样返回 `..`。
         // 传给 resolveReceiveFile(dir, "..") 后 File(dir, "..") 指向父目录，
         // 走 conflict 分支生成 `dir/._ts.` 这种乱名，文件能落盘但用户找不到了。
         // HTTP 上传（两端 handleUpload）、relay 中转、write_file 路径改写都调这里，

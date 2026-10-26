@@ -37,7 +37,7 @@ import kotlin.time.Duration.Companion.milliseconds
  *  - 执行超时保护：每个任务最多 10 分钟
  *  - ScheduleStore 读写全部走 Dispatchers.IO，不阻塞 tick
  *
- * 【性能修复】原实现里每个到期任务都单独调 ScheduleStore.add / delete，
+ * 性能修复 原实现里每个到期任务都单独调 ScheduleStore.add / delete，
  * 每次都要读写整个 schedules.json。改为 tick 末尾批量写一次。
  */
 object TaskScheduler {
@@ -109,7 +109,7 @@ object TaskScheduler {
         val tasks = withContext(Dispatchers.IO) { ScheduleStore.list() }
         if (tasks.isEmpty()) return
 
-        // 【性能修复】本次 tick 内所有 reschedule 操作先收集到内存，
+        // 性能修复 本次 tick 内所有 reschedule 操作先收集到内存，
         // 末尾一次性 batchUpdate 写盘，避免每个到期任务都读写整个 JSON。
         val pendingUpdates = mutableListOf<ScheduledTask>()
         val pendingDeletes = mutableListOf<String>()
@@ -132,7 +132,7 @@ object TaskScheduler {
                 if (next != null) {
                     pendingUpdates.add(task.copy(triggerTime = next))
                 } else if (task.repeatMode == "cron") {
-                    // 【体验优化 B8】cron 非法：不再静默删任务，改成日志 + 通知，让用户自己改
+                    // 体验优化 cron 非法：不再静默删任务，改成日志 + 通知，让用户自己改
                     DesktopLogger.warn(
                         "Schedule",
                         "任务「$label」cron 表达式可能非法（${task.cronExpression}），已保留但暂停调度"
@@ -177,7 +177,7 @@ object TaskScheduler {
             withContext(Dispatchers.IO) {
                 ScheduleStore.batchUpdate(pendingUpdates, pendingDeletes)
             }
-            // 【修复 B1】不用解构赋值（字段顺序一变就静默错位），改用属性访问。
+            // 不用解构赋值（字段顺序一变就静默错位），改用属性访问。
             for (t in pendingUpdates) {
                 val label = t.description.ifBlank { t.id.take(8) }
                 log("「$label」下次：${ScheduleStore.formatTime(t.triggerTime)}")
@@ -213,7 +213,7 @@ object TaskScheduler {
                     log("toolArgs 解析失败：${e.message}")
                     return
                 }
-                // 【P0-2】定时任务不属于任何会话，显式传空，防止用户点"停止"时误杀
+                // 定时任务不属于任何会话，显式传空，防止用户点"停止"时误杀
                 val result = DesktopTools.execute(task.toolName, args.toString(), sessionId = "")
                 log("工具 ${task.toolName} 结果：${result.output.take(200)}")
                 if (!result.success) {
@@ -229,13 +229,13 @@ object TaskScheduler {
                     log("run_workflow 缺少 workflowName")
                     return
                 }
-                // 【修复 B2】工具名是 "workflow"（WorkflowTools 注册名），
+                // 工具名是 "workflow"（WorkflowTools 注册名），
                 // 旧代码写 "run_workflow" 会返回「未知工具」，功能完全不可用。
                 val args = JSONObject().apply {
                     put("op", "run")
                     put("name", task.workflowName)
                 }
-                // 【P0-2】定时任务不属于任何会话，显式传空
+                // 定时任务不属于任何会话，显式传空
                 val result = DesktopTools.execute("workflow", args.toString(), sessionId = "")
                 log("工作流 ${task.workflowName} 结果：${result.output.take(200)}")
                 if (!result.success) {
@@ -251,13 +251,13 @@ object TaskScheduler {
                     log("open_app 缺少 appPath")
                     return
                 }
-                // 【修复 B3】工具名是 "apps"（AppTools 注册名），
+                // 工具名是 "apps"（AppTools 注册名），
                 // 旧代码写 "open_app" 会返回「未知工具」，功能完全不可用。
                 val args = JSONObject().apply {
                     put("op", "open")
                     put("path", task.appPath)
                 }
-                // 【P0-2】定时任务不属于任何会话，显式传空
+                // 定时任务不属于任何会话，显式传空
                 val result = DesktopTools.execute("apps", args.toString(), sessionId = "")
                 log("打开应用结果：${result.output.take(200)}")
                 if (!result.success) {
@@ -277,7 +277,7 @@ object TaskScheduler {
                     put("command", task.command)
                     put("timeout", 60)
                 }
-                // 【P0-2】定时任务不属于任何会话，显式传空
+                // 定时任务不属于任何会话，显式传空
                 val result = DesktopTools.execute("execute_command", args.toString(), sessionId = "")
                 log("命令结果：${result.output.take(200)}")
             }
@@ -289,7 +289,7 @@ object TaskScheduler {
     }
 
     /**
-     * 【能力对齐 Android】run_agent 动作执行。
+     * 能力对齐 Android run_agent 动作执行。
      *
      * 调用当前模型配置的 LLM API（非流式），
      * 任务绑定了 sessionId 时把回复作为 assistant 消息写回该会话，

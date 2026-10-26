@@ -50,7 +50,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * 下载浮层（右下角 Toast）。
  *
- * 【拆分】从 Glass.kt 抽出（原文件 1400+ 行，职责过杂）。同包，引用零改动。
+ * 拆分 从 Glass.kt 抽出（原文件 1400+ 行，职责过杂）。同包，引用零改动。
  */
 
 @Composable
@@ -77,7 +77,7 @@ fun DownloadToastBar(modifier: Modifier = Modifier) {
                 it.status == DownloadManager.Status.DOWNLOADING
     }
     val recentlyFinished = tasks.filter { isRecent(it) }
-    // 【体验优化 B25】优先保留所有活跃任务。
+    // 体验优化 优先保留所有活跃任务。
     // 活跃任务 >= 3 个时全部显示（用户的下载不该被顶掉）；
     // 否则按顺序用最近完成的任务补齐到 3 个。
     val shown = if (active.size >= 3) {

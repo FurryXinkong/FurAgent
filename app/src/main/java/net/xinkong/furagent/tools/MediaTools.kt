@@ -112,7 +112,7 @@ object MediaTools {
     /**
      * preset 处理。
      *
-     * 【P1/P2 修复】
+     * P1/P2 修复
      *   - concat / grid / slideshow 的多文件列表：split 后**逐个** normalizeAlias，
      *     否则中文别名 / 相对路径会走到 PathGuard.check 时按 cwd 解析被误杀。
      *   - watermark_path / subtitle_path / overlay / audio 也是用户提供的文件路径，
@@ -185,7 +185,7 @@ object MediaTools {
     /**
      * 把 preset 参数翻译成 FFmpeg 命令。
      *
-     * 【P1 修复】watermark overlay 坐标语法修正。
+     * watermark overlay 坐标语法修正。
      *
      *   drawtext filter 里的变量：
      *     w / h   画面宽/高
@@ -341,7 +341,7 @@ object MediaTools {
                         "$encVideo $encAudioCopy \"$output\""
             }
 
-            // 【P1 修复】改用 overlayPos（原先是 wmPos().replace 得到错误坐标）
+            // 改用 overlayPos（原先是 wmPos().replace 得到错误坐标）
             "video_watermark_image" -> {
                 if (watermarkPath.isBlank()) return null
                 val pos = overlayPos(watermarkPos)
@@ -551,7 +551,7 @@ object MediaTools {
                 "-i \"$input\" -q:v $qv \"$output\""
             }
 
-            // 【P1 修复】同 overlay 坐标修正
+            // 同 overlay 坐标修正
             "image_watermark" -> {
                 if (watermarkPath.isBlank()) return null
                 val pos = overlayPos(watermarkPos)

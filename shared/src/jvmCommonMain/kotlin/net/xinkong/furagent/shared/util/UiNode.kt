@@ -46,7 +46,7 @@ data class UiNode(
     val focused: Boolean = false,
     val visible: Boolean = true,
     /**
-     * 【新增】来源容器组。
+     * 来源容器组。
      *
      * 当一个"无 text、无交互、但有子孙"的容器被穿透过滤时，它的子孙会被上提。
      * 这些上提的子孙带同一个 groupId，表示它们来自同一个被压平的容器。

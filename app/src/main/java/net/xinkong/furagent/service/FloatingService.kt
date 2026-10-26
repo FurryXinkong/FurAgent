@@ -290,7 +290,7 @@ class FloatingService : Service() {
     private fun showBubble() {
         if (bubbleView != null) return
         try {
-            // 【改造】从单行改成两行：
+            // 改造 从单行改成两行：
             //   第一行：状态标题（思考中 / 调用工具 / 生成中）
             //   第二行：AI 输出预览（能看到 AI 说了什么）
             // 之前只有一行且优先级是“工具名 > 流式 > 思考”，
@@ -403,7 +403,7 @@ class FloatingService : Service() {
         }
         val newY = ballP.y.coerceIn(0, (screenH - dp(60)).coerceAtLeast(0))
 
-        // 【优化】位置没变就不调 updateViewLayout（binder 调用），
+        // 位置没变就不调 updateViewLayout（binder 调用），
         // AI 流式输出时 snapshot 高频 emit，原先每次都跨进程刷布局纯浪费
         if (bParams.x == newX && bParams.y == newY) return
 
@@ -442,10 +442,10 @@ class FloatingService : Service() {
             updateBubblePosition()
         }
 
-        // 【改造】标题与预览分开：
+        // 改造 标题与预览分开：
         //   标题：当前在干什么（思考中 / 调用工具 / 生成中）
         //   预览：AI 实际输出的文字（优先展示，让用户能看到 AI 说了什么）
-        // 【信息增强】工具名 + 已跑多久，让用户知道"卡住了"还是"在跑"
+        // 信息增强 工具名 + 已跑多久，让用户知道"卡住了"还是"在跑"
         val elapsedSec = if (snap.startedAt > 0)
             (System.currentTimeMillis() - snap.startedAt) / 1000 else 0L
         val elapsedText = if (elapsedSec > 0) " · ${elapsedSec}s" else ""

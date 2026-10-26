@@ -44,7 +44,7 @@ data class Workflow(
 /**
  * Workflow JSON 编解码 + 变量替换（双端共用）。
  *
- * 【冗余清理 Batch 7】原来 Android 和桌面的 WorkflowStore 各有一份
+ * 原来 Android 和桌面的 WorkflowStore 各有一份
  * 逐字相同的 parseSteps / stepsToJson / substitute（共约 190 行）。
  * 现统一到这里。
  */

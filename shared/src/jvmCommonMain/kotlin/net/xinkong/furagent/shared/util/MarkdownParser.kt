@@ -25,7 +25,7 @@ sealed class MdSpan {
     data class Text(val text: String) : MdSpan()
     data class Bold(val text: String) : MdSpan()
     data class Italic(val text: String) : MdSpan()
-    // 【B3 修复】***粗斜体*** 需要独立的 span 类型，
+    // 粗斜体*** 需要独立的 span 类型，
     // 否则 `***text***` 会被当成 bold(`*text`) + 单独的 `*`。
     data class BoldItalic(val text: String) : MdSpan()
     data class InlineCode(val text: String) : MdSpan()
@@ -46,7 +46,7 @@ object MarkdownParser {
     private val RE_BLOCK_BULLET = Regex("""^[-*+]\s+.*""")
     private val RE_BLOCK_ORDERED = Regex("""^\d+\.\s+.*""")
     private val RE_BLOCK_DIVIDER = Regex("""^([-*_])\1{2,}\s*$""")
-    // 【S3 修复】GFM 规范只要 1 个 '-' 就能当表格分隔符（如 |-|-|）；
+    // S3 修复 GFM 规范只要 1 个 '-' 就能当表格分隔符（如 |-|-|）；
     // 原来要求 2 个，导致 AI 输出的紧凑表格识别失败。
     private val RE_TABLE_SEP = Regex("""^:?-+:?$""")
 
@@ -180,7 +180,7 @@ object MarkdownParser {
 
     private fun isTableHeader(line: String): Boolean {
         val t = line.trim()
-        // 【A3 修复】GFM 规范允许首尾不带 '|'，例如 "a | b"。
+        // GFM 规范允许首尾不带 '|'，例如 "a | b"。
         // 只要含至少 1 个 '|' 且不是分隔符本身，就当表格头。
         val pipeCount = t.count { it == '|' }
         if (pipeCount < 1) return false
@@ -191,7 +191,7 @@ object MarkdownParser {
 
     private fun isTableSeparator(line: String): Boolean {
         val t = line.trim()
-        // 【A3 修复】首尾不必带 '|'（GFM 规范允许 "a | b"）
+        // 首尾不必带 '|'（GFM 规范允许 "a | b"）
         if (t.count { it == '|' } < 1) return false
         val segs = t.split("|")
         var nonEmpty = 0
@@ -205,7 +205,7 @@ object MarkdownParser {
     }
 
     private fun splitTableRow(line: String): List<String> {
-        // 【A3 修复】首尾 '|' 可有可无，不强制 strip
+        // 首尾 '|' 可有可无，不强制 strip
         var t = line.trim()
         if (t.startsWith("|")) t = t.substring(1)
         if (t.endsWith("|")) t = t.substring(0, t.length - 1)
@@ -236,7 +236,7 @@ object MarkdownParser {
             val c = text[i]
 
             // 行内代码 `...`，支持双反引号 ``...``（GFM 规范）
-            // 【B2 修复】原实现遇到 `` 就截断错了，因为第一个 backtick 会匹配到
+            // 原实现遇到 `` 就截断错了，因为第一个 backtick 会匹配到
             // 内容里的第二个 backtick。GFM 用「长度相同的反引号」作为定界符。
             if (c == '`') {
                 // 计算起始反引号的数量
@@ -263,7 +263,7 @@ object MarkdownParser {
             }
 
             // 粗斜体 ***...***（必须在 ** 之前检查，否则会被拆成 bold + italic）
-            // 【B3 修复】`***text***` 当前会先匹配 `**` 成 bold，剩下 `*text*` 变
+            // `***text***` 当前会先匹配 `**` 成 bold，剩下 `*text*` 变
             // 额外 italic —— 顺序反了。必须先消费 `***`。
             if (c == '*' && i + 2 < n && text[i + 1] == '*' && text[i + 2] == '*' &&
                 !text[i + 3.coerceAtMost(n - 1)].isWhitespace()
@@ -289,7 +289,7 @@ object MarkdownParser {
             }
 
             // 斜体 *...*（不跨 **）
-            // 【S2 修复】GFM 规范：
+            // S2 修复 GFM 规范：
             //   - 起始 '*' 后面不能是空白
             //   - 结尾 '*' 前面不能是空白
             // 否则 `*a * b*` 里的 `a ` 会被误判成斜体。
@@ -318,7 +318,7 @@ object MarkdownParser {
             }
 
             // 链接 [text](url)
-            // 【S1 修复】URL 里可能有 '(' / ')'（如维基百科条目），
+            // S1 修复 URL 里可能有 '(' / ')'（如维基百科条目），
             // 直接 indexOf(')') 会在第一个 ')' 处截断。
             // 改成括号深度匹配。
             if (c == '[') {

@@ -449,7 +449,7 @@ object SystemTools {
             }
             if (count == 0) "该时间段内没有日程。" else "共 $count 条日程：\n\n$sb"
         } catch (e: SecurityException) {
-            // 【修复 F5】不再只报错，弹一个引导框让用户去应用详情页开权限。
+            // 不再只报错，弹一个引导框让用户去应用详情页开权限。
             AgentLogger.log("ERR", "读取日历权限被拒：${e.message}")
             val approved = PermissionRequestBroker.request(
                 title = "需要日历读取权限",
@@ -790,7 +790,7 @@ object SystemTools {
             log.append("[警告] 工作流递归过深（$depth），已终止\n")
             return
         }
-        // 【脆弱解构清理】显式字段访问，不依赖 WorkflowStep 字段位置顺序。
+        // 脆弱解构清理 显式字段访问，不依赖 WorkflowStep 字段位置顺序。
         for (step in steps) {
             val stepType = step.stepType
             val toolName = step.toolName
@@ -998,7 +998,7 @@ object SystemTools {
             }
             "fetch" -> {
                 val url = args.optString("url", "").trim()
-                // 【修复 B6】与桌面端 WebTools 对齐，默认 8000
+                // 与桌面端 WebTools 对齐，默认 8000
                 val maxLength = args.optInt("max_length", 8000).coerceIn(500, 2_000_000)
                 val selector = args.optString("selector", "").trim()
                 WebSearchEngine.fetchContent(url, maxLength, selector)
@@ -1102,7 +1102,7 @@ object SystemTools {
     /**
      * 检测 shell 命令里是否包含删除/破坏性操作。
      *
-     * 【为什么】AI 可以通过 execute_shell 跑 rm / rmdir 绕过 file_op 的回收站机制。
+     * 为什么 AI 可以通过 execute_shell 跑 rm / rmdir 绕过 file_op 的回收站机制。
      *
      * 返回 null 表示安全；非 null 是拒绝文案。
      */

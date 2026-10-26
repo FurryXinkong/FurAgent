@@ -62,7 +62,7 @@ interface ToolHost {
     suspend fun deleteFile(path: String): Boolean
 
     /**
-     * 【安全删除】把文件/目录移入回收站，而不是真正删除。
+     * 安全删除 把文件/目录移入回收站，而不是真正删除。
      *
      * 回收站位置：~/.furagent/temp/trash/（Android 为 app 私有目录下的 temp/trash）。
      * 每次移入会加时间戳前缀防重名，并写一条 manifest 记录原始路径，

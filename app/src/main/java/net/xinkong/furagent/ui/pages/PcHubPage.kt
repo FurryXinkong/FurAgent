@@ -64,7 +64,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * 电脑互联 —— 整屏页面。
  *
- * 【UI 统一约定】
+ * UI 统一约定
  *   - 卡片统一 PocoCard
  *   - 页背景 glassPageBg() + 顶部 GlassSheen
  *   - 空状态图标 56dp
@@ -89,7 +89,7 @@ fun PcHubPage(
 
     Scaffold(
         topBar = {
-            // 【复用收口】标题骨架/返回键/actions 走公共 PocoPageTopBar，
+            // 复用收口 标题骨架/返回键/actions 走公共 PocoPageTopBar，
             // 状态圆点副标题走 subtitleContent 插槽
             PocoPageTopBar(
                 title = "电脑互联",
@@ -436,7 +436,7 @@ private fun PcBrowserTab(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var downloadingPath by remember { mutableStateOf<String?>(null) }
-    // 【批次 8】HTTP 流式下载的进度状态（0~1），total 未知时为 0（不确定进度）
+    // HTTP 流式下载的进度状态（0~1），total 未知时为 0（不确定进度）
     var downloadProgress by remember { mutableFloatStateOf(0f) }
     var downloadSizeText by remember { mutableStateOf("") }
 
@@ -467,7 +467,7 @@ private fun PcBrowserTab(
         downloadingPath = remotePath
         downloadProgress = 0f
         downloadSizeText = ""
-        // 【批次 8 修复】改走 HTTP 流式下载（PcBridgeClient.downloadFileToLocal）。
+        // 改走 HTTP 流式下载（PcBridgeClient.downloadFileToLocal）。
         // 原实现 read_file(mode="base64") 会经过电脑端 CommonTools.maybeSpill 的 16KB 阈值，
         // MB 级文件返回的只是摘要文本（前 30 行 base64 + 中文头），
         // 手机端 Base64.decode 后只解出几 KB 碎片 → 写入失败或损坏。
@@ -533,7 +533,7 @@ private fun PcBrowserTab(
 
         Spacer(Modifier.height(8.dp))
 
-        // 【批次 8】下载进度条（下载进行中时显示在文件列表上方）
+        // 下载进度条（下载进行中时显示在文件列表上方）
         if (downloadingPath != null) {
             Surface(
                 color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),

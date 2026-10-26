@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
  *  - 悬浮窗是独立 Window，无法访问 App() 的局部状态
  *  - 用一个全局 StateFlow 让 App() 单向上报、悬浮窗单向读取
  *
- * 【多会话并发】支持同时运行多个会话：sessions 是「运行中的会话」集合，
+ * 多会话并发 支持同时运行多个会话：sessions 是「运行中的会话」集合，
  * 每个会话一份进度快照。currentSessionId 标记当前选中的会话，
  * 兼容属性（isRunning / thinking / ...）取当前会话的值，供旧调用点无痛使用。
  */

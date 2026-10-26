@@ -107,7 +107,7 @@ object WorkflowStore {
         net.xinkong.furagent.shared.data.WorkflowCodec.stepsToJson(steps)
 
     /**
-     * 【冗余清理 Batch 7】substitute 抽到 shared/data/WorkflowCodec。
+     * substitute 抽到 shared/data/WorkflowCodec。
      * 保留函数名，让既有调用点（WorkflowTools / SettingsPage）不改。
      */
     fun substitute(template: String, vars: Map<String, String>): String =

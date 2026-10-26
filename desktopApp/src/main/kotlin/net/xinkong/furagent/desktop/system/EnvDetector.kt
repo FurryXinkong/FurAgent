@@ -14,7 +14,6 @@ import java.util.concurrent.TimeUnit
  *  - 未安装时给出一键安装命令（winget / brew / apt）
  *  - Agent 系统提示词注入"已安装工具"清单，让 AI 知道能用什么
  *
- * 【本轮改动】
  * 只保留与 FurAgent 日常使用相关、且 AI 真的会用的工具：
  *   java / node / git / python / uv / ffmpeg
  * 删掉工程化的 C/CPP/Rust/Go/Docker/CMake（用户反馈用不到，且占版面）。

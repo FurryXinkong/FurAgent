@@ -97,7 +97,7 @@ object CodeEditTools {
     /**
      * 按行号替换。
      *
-     * 【为什么需要】已知行号时还要逐字拄 old 锚点是最大的浪费源：
+     * 为什么需要 已知行号时还要逐字拄 old 锚点是最大的浪费源：
      * 错一个字符、少一层缩进就整批回滚，而且每次重试都要重发全文。
      * read_file / list_files 本来就给行号，直接拿来替换即可。
      *
@@ -148,7 +148,7 @@ object CodeEditTools {
     /**
      * 行尾风格。
      *
-     * 【为什么需要】Windows 上的源码文件通常是 CRLF，而 AI 写锚点时用的是 LF。
+     * 为什么需要 Windows 上的源码文件通常是 CRLF，而 AI 写锚点时用的是 LF。
      * 若不做归一化，多行锚点会因 \r\n vs \n 差异而匹配失败，
      * 表现为「明明文件里有这段，却报找不到」。
      *
@@ -428,7 +428,7 @@ object CodeEditTools {
         //   1) 顶层传了 path（单文件习惯），忘了包成 files 数组
         //   2) files 传成了字符串（JSON 序列化错误）
         //   3) 参数名拼错（file / edits）
-        // 【自动纠正单文件写法】
+        // 自动纠正单文件写法
         // 常见错：把 path / edits 直接放在顶层（write_file 的习惯）。
         // 以前这种情况一律报「未提供 files」，模型只能盲猜重试，白白浪费一轮。
         // 但顶层 path 的含义是完全确定的，没必要报错，直接包成 files 即可。
@@ -520,7 +520,7 @@ object CodeEditTools {
                     opError = true
                     break
                 }
-                // 【插入】在某行前/后插入新代码，原行不动。
+                // 插入 在某行前/后插入新代码，原行不动。
                 // 之前只能替换，想插一行得把目标行也写一遍，很容易误删原行。
                 if (e.has("insert_before_line") || e.has("insert_after_line")) {
                     val before = e.has("insert_before_line")
@@ -598,7 +598,7 @@ object CodeEditTools {
                 continue
             }
 
-            // 【行尾归一化】文件与锚点都转成 LF 再匹配，避免 CRLF/LF 差异导致误报「找不到」。
+            // 行尾归一化 文件与锚点都转成 LF 再匹配，避免 CRLF/LF 差异导致误报「找不到」。
             val ending = detectLineEnding(original)
             val originalLf = toLf(original)
 
@@ -607,7 +607,7 @@ object CodeEditTools {
             var anchorError = false
             val appliedEdits = mutableListOf<AppliedEdit>()
 
-            // 【行号类操作先做】line_start/line_end 与 delete_start/delete_end 都以
+            // 行号类操作先做 line_start/line_end 与 delete_start/delete_end 都以
             // 「原文件行号」为准，所以必须在锚点替换之前、按行号从后往前应用。
             // 否则锚点替换改变行数后行号就错位了（旧代码的 delete 就有这个隐患）。
             var working = originalLf
@@ -827,7 +827,7 @@ object CodeEditTools {
                 plan.edits.forEach { e -> sb.append(renderUnifiedDiff(e)) }
             }
         }
-        // 【会话反馈】先记录调用（备份目录打印需要 callCount）
+        // 会话反馈 先记录调用（备份目录打印需要 callCount）
         val snapshot = EditSessionTracker.record(
             files = written.size,
             edits = written.sumOf { it.appliedCount },
@@ -850,10 +850,10 @@ object CodeEditTools {
     /**
      * 根据会话累计调用次数生成成本提示。
      *
-     * 【为什么这么做】光在 system prompt 里写"必须合并"模型不理会，
+     * 为什么这么做 光在 system prompt 里写"必须合并"模型不理会，
      * 但在工具返回值里写"你已经浪费了 57K token"模型会立刻调整行为。
      *
-     * 【什么时候不提】避免刷屏：
+     * 什么时候不提 避免刷屏：
      *   - 第 1 次调用：不提（还没有浪费）
      *   - 本次一次性改了很多文件（>= 3）：不提（说明这次就是批量改的）
      */

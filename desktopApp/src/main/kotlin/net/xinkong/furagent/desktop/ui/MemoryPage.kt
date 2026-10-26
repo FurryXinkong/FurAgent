@@ -43,9 +43,9 @@ fun MemoryPage(onOpenSession: (String) -> Unit = {}) {
     var pendingDelete by remember { mutableStateOf<Memory?>(null) }
     var showAdd by remember { mutableStateOf(false) }
     var showClearConfirm by remember { mutableStateOf(false) }
-    // 【P1-3】查看摘要详情
+    // 查看摘要详情
     var detailMemory by remember { mutableStateOf<Memory?>(null) }
-    // 【P1-2】页签：all / summary / normal
+    // 页签：all / summary / normal
     var tab by remember { mutableStateOf("all") }
 
     val allMemories = remember(refreshKey) { MemoryStore.list() }
@@ -86,7 +86,7 @@ fun MemoryPage(onOpenSession: (String) -> Unit = {}) {
                 ),
             verticalArrangement = Arrangement.spacedBy(Spacing.ROW_GAP)
         ) {
-            // 【P1-2】页签：全部 / 会话摘要 / 普通记忆
+            // 页签：全部 / 会话摘要 / 普通记忆
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 MemoryTab("全部", allMemories.size, tab == "all") { tab = "all" }
                 MemoryTab("会话摘要", summaryCount, tab == "summary") { tab = "summary" }
@@ -260,7 +260,7 @@ fun MemoryPage(onOpenSession: (String) -> Unit = {}) {
     }
 }
 
-// 页签（【P1-2】全部 / 会话摘要 / 普通记忆）
+// 页签（全部 / 会话摘要 / 普通记忆）
 
 @Composable
 private fun MemoryTab(label: String, count: Int, selected: Boolean, onClick: () -> Unit) {
@@ -337,7 +337,7 @@ private fun MemoryRow(
     val time = DateFormats.formatDateTimeNoSec(memory.createdAt)
     val isSummary = memory.sessionId.isNotBlank()
 
-    // 【批次 16 UI 统一】卡片渲染收口到 GlassCard，不再手写 Surface + border + shadow。
+    // 批次 16 UI 统一 卡片渲染收口到 GlassCard，不再手写 Surface + border + shadow。
     // hover 效果通过 GlassCard 的 hoverable 参数保留（原来无条件 hover）。
     // isSummary 时可点击（跳转会话），其他情况传 null。
     GlassCard(
@@ -354,7 +354,7 @@ private fun MemoryRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                // 【P1-2】会话摘要徽章
+                // 会话摘要徽章
                 if (isSummary) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(

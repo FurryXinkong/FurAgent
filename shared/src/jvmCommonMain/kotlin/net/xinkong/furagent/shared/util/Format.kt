@@ -6,7 +6,7 @@ import java.util.Locale
  * 统一的格式化工具。
  *
  * 全项目通用，桌面端 / Android 端都从这里 import。
- * 【冗余统一 #1 / #2】
+ * 冗余统一 #1 / #2
  */
 
 /**

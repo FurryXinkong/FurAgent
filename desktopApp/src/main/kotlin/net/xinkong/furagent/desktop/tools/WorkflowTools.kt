@@ -146,7 +146,7 @@ object WorkflowTools {
         val nameOrId = args.optString("name", "").trim()
         if (nameOrId.isBlank()) return ToolResult.fail("未提供工作流名称")
 
-        // 【修复 B6】递归深度用参数传递，不再用全局 AtomicInteger。
+        // 递归深度用参数传递，不再用全局 AtomicInteger。
         // 旧实现是全局计数，两个工作流并发执行时会互相干扰（各嵌套 5 层就误判超限）。
         if (depth > MAX_RECURSION_DEPTH) {
             return ToolResult.fail("工作流递归深度超过 $MAX_RECURSION_DEPTH 层，已中止")
@@ -180,14 +180,14 @@ object WorkflowTools {
         depth: Int,
         workflowDepth: Int = 0
     ) {
-        // 【修复 B7】步骤嵌套上限从 10 提到 30。
+        // 步骤嵌套上限从 10 提到 30。
         // 10 层对正常用户太浅（循环套条件套循环就 3 层了）。
         if (depth > 30) {
             log.append("[警告] 工作流步骤嵌套过深（$depth），已终止\n")
             return
         }
 
-        // 【脆弱解构清理】显式字段访问，不依赖 WorkflowStep 字段位置顺序。
+        // 脆弱解构清理 显式字段访问，不依赖 WorkflowStep 字段位置顺序。
         for (step in steps) {
             val stepType = step.stepType
             val toolName = step.toolName

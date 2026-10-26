@@ -58,7 +58,6 @@ object KnownPcStore {
     // 读写
 
     /**
-     * 【修复 P0】
      *   - 数组元素不是 object → 跳过
      *   - 单条字段缺失/类型异常 → 单条 try-catch 跳过
      *   - 顶层反序列化失败 → FileRecovery 备份损坏文件

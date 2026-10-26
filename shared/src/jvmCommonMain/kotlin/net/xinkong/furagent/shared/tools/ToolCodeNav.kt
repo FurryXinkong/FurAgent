@@ -54,7 +54,7 @@ object ToolCodeNav {
     /**
      * 行数。空文件算 0 行；结尾无换行时补上最后一行。失败返回 -1。
      *
-     * 【P1 修复】原实现逐行 readLine() 走 UTF-8 解码，100MB 文件要几秒。
+     * 原实现逐行 readLine() 走 UTF-8 解码，100MB 文件要几秒。
      * 改成字节级 count(0x0A)，快 10 倍以上。
      */
     suspend fun textLineCount(path: String): Int = withContext(Dispatchers.IO) {
@@ -145,7 +145,7 @@ object ToolCodeNav {
                 }
                 .filter { it.isFile && it.canRead() }
                 .filter { matchFileName(it.name) }
-                // 【P0 修复】takeWhile 让"命中够了"真正终止上游遍历。
+                // takeWhile 让"命中够了"真正终止上游遍历。
                 // 原实现 `return@forEach` 只跳过当前文件，walkTopDown 照样递归完剩下的 4 万多个目录。
                 // 这是"搜正文慢"的主因：命中够了还在白遍历。
                 .takeWhile { out.size < maxResults }
@@ -153,7 +153,7 @@ object ToolCodeNav {
                     if (out.size >= maxResults) return@forEach
                     try {
                         // 小文件直接读；大文件才先嗅头部判断是不是文本。
-                        // 【优化】之前无论大小都开流嗅一次，几千个小文件时是无谓开销。
+                        // 之前无论大小都开流嗅一次，几千个小文件时是无谓开销。
                         val isLarge = f.length() > maxFileSize
                         if (isLarge && looksBinary(f)) {
                             skippedBinary++
@@ -167,7 +167,7 @@ object ToolCodeNav {
                             var pending = 0                    // 命中行后面还要收集几行
                             while (line != null) {
                                 lineNo++
-                                // 【批次 12】原 `line.lowercase().contains(needle)` 每行分配新字符串。
+                                // 原 `line.lowercase().contains(needle)` 每行分配新字符串。
                             // 50000 行 = 50000 次分配。改成 contains(ignoreCase=true)：
                             // 底层走 regionMatches，零分配。语义等价。
                             val hit = if (pattern != null) pattern.containsMatchIn(line)
@@ -216,7 +216,7 @@ object ToolCodeNav {
     /**
      * 这些目录名不进去。命中率高、进去没价值。
      *
-     * 【P2 扩充】原实现只覆盖 11 个，实际开发机上还有大量编译产物 / 缓存目录：
+     * P2 扩充 原实现只覆盖 11 个，实际开发机上还有大量编译产物 / 缓存目录：
      *   IDE：.vs / .vscode
      *   Rust/Java：target
      *   JS 框架：.next / .nuxt / .turbo / .parcel-cache

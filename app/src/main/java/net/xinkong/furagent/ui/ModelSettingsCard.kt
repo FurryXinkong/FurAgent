@@ -36,7 +36,7 @@ import kotlin.math.roundToInt
  *  - 常驻状态下只是输入框底部左侧一个胶囊：`模型名 档位 ▾`
  *  - 点开后才弹面板，面板里是「模型选择」+「推理强度滑块」
  *
- * 【为什么不用手写滑块】
+ * 为什么不用手写滑块
  * 之前用 pointerInput 同时挂 tap 和 drag 两套手势，事件互相抢占导致拖不动。
  * Material3 Slider 自带拖拽 / 点击跳转 / 无障碍，配合 steps 直接吸附档位。
  */
@@ -220,7 +220,7 @@ private fun ModelPickerRow(
  *
  * 轨道用流体渐变（蓝 -> 紫），填充宽度随档位平滑动画过渡。
  *
- * 【实现说明】
+ * 实现说明
  * Material3 Slider 的 activeTrackColor 只接受纯色，无法直接给渐变。
  * 这里用 track lambda 自定义轨道：底层画灰色轨道，上层画渐变填充。
  * 滑块本身仍由 Slider 管理（拖拽、点击、键盘、无障碍全部保留）。

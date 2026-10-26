@@ -6,7 +6,7 @@ import net.xinkong.furagent.shared.data.ChatMessage
 /**
  * 聊天列表项（双端共用）。
  *
- * 【冗余清理 Batch 10】Android 的 ChatUI.kt 和桌面的 ChatPage.kt 各有一份
+ * Android 的 ChatUI.kt 和桌面的 ChatPage.kt 各有一份
  * 逐字相同的 ChatListItem 定义和 buildChatItems 函数。现统一到这里。
  *
  * 两端的差异只有一处：桌面的 ToolsGroup 有 durationMs 字段（工具耗时总和），
@@ -116,10 +116,10 @@ fun buildChatItems(messages: List<ChatMessage>): List<ChatListItem> {
         }
         if (turn.isEmpty()) continue
 
-        // 【体验修复】子会话返回（SUB_SESSION:）原先被单独提出来成卡，泡在聊天流里，
+        // 体验修复 子会话返回（SUB_SESSION:）原先被单独提出来成卡，泡在聊天流里，
         // 现在留在折叠组内，由 UI 渲染成一行可点击入口（ChatPage WorkProcessItemList）。
 
-        // 【工作过程】本轮除「最后一条文字」外的全部内容（思考 + 工具调用）
+        // 工作过程 本轮除「最后一条文字」外的全部内容（思考 + 工具调用）
         // 都归入同一个工作过程面板，思考在组内折叠。
         // 这样一轮任务 = 一个面板，不会出现「思考」和「工作过程」交替平铺的割裂感。
         val lastTextIdx = turn.indexOfLast { it.type == "text" }
@@ -128,7 +128,7 @@ fun buildChatItems(messages: List<ChatMessage>): List<ChatListItem> {
             turn.filterIndexed { i, _ -> i != lastTextIdx }
         } else turn
 
-        // 【思考归位】最后一条文字身上也可能挂着 reasoning（没工具调用、
+        // 思考归位 最后一条文字身上也可能挂着 reasoning（没工具调用、
         // 只有一脸盲干的回复就是这种）。以前它被流派平铺在聊天流里，
         // 与工作过程里的思考长两个样。现在一律收进工作过程面板。
         if (lastText != null && lastText.reasoning.isNotBlank() &&

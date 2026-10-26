@@ -16,21 +16,21 @@ import java.util.concurrent.TimeUnit
 /**
  * Windows UI Automation 屏幕控制器（常驻模式 v2）。
  *
- * 【本次改动：常驻 PowerShell】
+ * 常驻 PowerShell
  *   从「每次调用 spawn 一个 powershell.exe，处理一条指令后退出」
  *   改成「init() 时 spawn 一次，之后所有调用通过 stdin/stdout 复用」。
  *
  *   冷启动代价（PowerShell 启动 + UIA assembly 加载）只付一次，
  *   后续每条指令 50~200ms。
  *
- * 【历史关键修复】（保留）
+ * 历史关键修复 （保留）
  *  1. PowerShell 启动加 `-STA`：UIA 的 AutomationElement.RootElement 必须在 STA 线程访问。
  *  2. dump/find 只从前台窗口起：从 RootElement 起会遍历整个桌面。
  *  3. find 在 PowerShell 侧过滤。
  *  4. performAction 传给 PS 侧 resourceId/text/bounds，RuntimeId 找不到时 fallback。
  *  5. 首次探活失败时把 PS 的 error 暴露出来。
  *
- * 【常驻模式的关键点】
+ * 常驻模式的关键点
  *  - 脚本每轮读 stdin 一行 JSON，写 stdout 一行 JSON
  *  - Kotlin 侧维护一个 responseQueue，reader 线程把每行塞进去
  *  - 每条命令串行（callMutex）；发命令 → 等响应（超时 30s）
@@ -80,7 +80,7 @@ object UiaScreenController : ScreenController {
             if (initialized) return scriptFile
             initialized = true
             try {
-                // 【P2-2】临时脚本落 ~/.furagent/temp/furagent_uia.ps1。
+                // 临时脚本落 ~/.furagent/temp/furagent_uia.ps1。
                 val target = File(DesktopPaths.tempDir(), SCRIPT_NAME)
                 // 每次都覆盖，保证版本一致
                 val stream = javaClass.getResourceAsStream("/$SCRIPT_NAME")
@@ -130,7 +130,7 @@ object UiaScreenController : ScreenController {
             return try {
                 val p = ProcessBuilder(
                     "powershell.exe",
-                    "-STA",                      // 【关键】UIA 需要 STA
+                    "-STA",                      // 关键 UIA 需要 STA
                     "-NoProfile",
                     "-NonInteractive",
                     "-ExecutionPolicy", "Bypass",

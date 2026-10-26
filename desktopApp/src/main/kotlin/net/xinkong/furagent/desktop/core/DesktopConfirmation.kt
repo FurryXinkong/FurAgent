@@ -14,7 +14,7 @@ import kotlin.time.Duration.Companion.milliseconds
  * UI 端订阅 pending 状态弹 AlertDialog。
  * 300 秒无响应视为拒绝（避免永远卡住）。
  *
- * 【并行修复】原实现是单槽位（一个 deferred + 一个 pending），
+ * 并行修复 原实现是单槽位（一个 deferred + 一个 pending），
  * 并行执行多个需要确认的工具时，后一个会覆盖前一个：
  *   - UI 只弹一次窗（pending 被覆盖）；
  *   - 先到的请求永远等不到 resolve，卡到 300s 超时。

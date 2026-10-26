@@ -9,7 +9,7 @@ import net.xinkong.furagent.service.TaskExecutionService
 /**
  * 定时任务广播接收器。
  *
- * 【职责简化】
+ * 职责简化
  *  只做"转发"：把 BroadcastReceiver 收到的 Intent 交给 TaskExecutionService。
  *  为什么：
  *    - BroadcastReceiver 的 goAsync() 只有 10 秒（前台）/ 30 秒（后台）窗口

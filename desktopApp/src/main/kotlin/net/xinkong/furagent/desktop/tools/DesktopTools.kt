@@ -90,7 +90,7 @@ object DesktopTools {
         val skill = SkillTools.TOOLS.map {
             DesktopTool(it.name, it.displayName, it.description, it.paramsSchema)
         }
-        // 【动态脚本工具】每个自定义脚本注册成一个独立工具 pytool_<name>。
+        // 动态脚本工具 每个自定义脚本注册成一个独立工具 pytool_<name>。
         // 脚本增删后需刷新缓存（见 invalidateCache）。
         val dynamicSkills = SkillTools.dynamicTools().map {
             DesktopTool(it.name, it.displayName, it.description, it.paramsSchema)
@@ -118,7 +118,7 @@ object DesktopTools {
     /**
      * 全量工具列表（含 MCP）。1 秒缓存，避免频繁读 McpManager。
      *
-     * 【P0 改造】Agent 循环已不再直接调用此方法构建 tools 数组，
+     * P0 改造 Agent 循环已不再直接调用此方法构建 tools 数组，
      * 改用 getToolListWithLoaded。但本方法仍被 UI / 桥接 / allToolNames 使用。
      */
     fun getToolList(): List<DesktopTool> {
@@ -146,12 +146,12 @@ object DesktopTools {
      */
     fun getToolListWithLoaded(loadedNames: Set<String>): List<DesktopTool> {
         val result = mutableListOf<DesktopTool>()
-        // 【脚本配置 2026-10-18】脚本开关已从 disabledTools 迁到各自的 config.json，
+        // 脚本配置 2026-10-18 脚本开关已从 disabledTools 迁到各自的 config.json，
         // dynamicTools() 已按配置过滤，这里不再重复判断。
         getToolList().forEach { t ->
             val isCore = t.name in ToolCategory.CORE_TOOL_NAMES
             val isLoaded = t.name in loadedNames
-            // 【动态脚本工具】pytool_<name> 始终加入，让 AI 一眼看到有哪些脚本可用。
+            // 动态脚本工具 pytool_<name> 始终加入，让 AI 一眼看到有哪些脚本可用。
             val isDynamicSkill = SkillTools.isDynamicTool(t.name)
             if (isCore || isLoaded || isDynamicSkill) result.add(t)
         }
@@ -199,7 +199,7 @@ object DesktopTools {
     /**
      * 构建 tool_search 的 spec（description 内嵌目录）。
      */
-    // 【批次 11 性能】buildToolSearchSpec 缓存。
+    // buildToolSearchSpec 缓存。
     // getToolListWithLoaded 每轮 Agent 循环都调，每次都走 getCatalogTools + 拼字符串。
     // 一轮用 5 次工具 = 重建 5 次。缓存后 5 秒内只重建 1 次。
     @Volatile private var cachedSearchSpec: DesktopTool? = null
@@ -233,7 +233,7 @@ object DesktopTools {
         )
 
         val desc = buildString {
-            // 【token 优化】精简说明：与系统提示词重复的部分不再赘述，
+            // token 优化 精简说明：与系统提示词重复的部分不再赘述，
             // 只保留“怎么用”和目录本身。
             append("搜索非核心工具的完整定义。找到后下一轮可直接调用。\n")
             append("category 可选：file/system/media/network/screen/remote/mcp/skill/other\n")
@@ -257,7 +257,7 @@ object DesktopTools {
         }.toString()
 
         val spec = DesktopTool("tool_search", "工具搜索", desc, schema)
-        // 【批次 11】写入缓存
+        // 写入缓存
         cachedSearchSpec = spec
         cachedSearchSpecKey = cacheKey
         cachedSearchSpecAt = now
@@ -359,12 +359,12 @@ object DesktopTools {
     /**
      * 执行工具。
      *
-     * 【P0-2 收尾】sessionId 走 nullable 参数（默认 null）：
+     * sessionId 走 nullable 参数（默认 null）：
      *   - null = 读当前协程上下文里的会话 id（SessionIdElement），主对话默认行为
      *   - "" = 明确不归属任何会话（定时任务、系统级后台执行）
      *   - 非空 = 显式指定
      *
-     * 【为什么不是 String = currentSessionId()】Kotlin 不允许在默认参数值里
+     * 为什么不是 String = currentSessionId() Kotlin 不允许在默认参数值里
      * 调 suspend 函数（编译报 "Suspend function call in default parameter value is unsupported"）。
      */
     suspend fun execute(
@@ -449,7 +449,7 @@ object DesktopTools {
             refresh()
         }
 
-        /** 【可见性】子代理正在干什么 —— 阶段 + 最新一行内容 */
+        /* 可见性 子代理正在干什么 —— 阶段 + 最新一行内容 */
         @Synchronized fun updatePhase(id: String, phase: String, snippet: String) {
             val e = entries[id] ?: return
             if (e.phase == phase && e.snippet == snippet) return
@@ -471,11 +471,11 @@ object DesktopTools {
         }
     }
 
-    // 【P0-2】原 object CurrentTaskSession 的语义已拆成两部分：
+    // 原 object CurrentTaskSession 的语义已拆成两部分：
     //   - 工具归属 → 协程级 SessionIdElement（见 SessionContext.kt），随协程结束自动清空
     //   - UI 显示 → 下面的过渡 shim（Main.kt 的 UI 层单向写入，Agent 主逻辑不再读写）
     /**
-     * 【P0-2 过渡 shim】UI 层「当前显示中的会话 id」。
+     * 2 过渡 shim UI 层「当前显示中的会话 id」。
      *
      * 只代表"用户此刻在看哪个会话"，由 Main.kt 的 UI 层在 currentSessionId 变化时写入。
      * Agent 主逻辑已改用协程上下文（SessionIdElement），不再读写此字段。
@@ -488,20 +488,20 @@ object DesktopTools {
 
     // 并行子会话计数（原子操作，杜绝同毫秒并发绕过检查）
     private val subSessionActive = java.util.concurrent.atomic.AtomicInteger(0)
-    // 【P1-10】从 shared 统一常量，双端一致
+    // 从 shared 统一常量，双端一致
     private const val MAX_PARALLEL_SUB = net.xinkong.furagent.shared.data.SubSessionLimits.MAX_PARALLEL_SUB
     /**
-     * 【子会话硬上限】子代理最多跑多少轮。
+     * 子会话硬上限 子代理最多跑多少轮。
      *
      * 为什么不能直接继承 settings.maxToolCallLoops：
      * 用户把主会话调到 100 轮是为了自己长任务，但主代理可能一口气
      * 派出好几个子代理，每个都跑 100 轮 → 一次就烧掉整个月的额度。
-     * 【P1-10】从 shared 统一常量，双端一致。
+     * 从 shared 统一常量，双端一致。
      */
     private const val SUB_MAX_LOOPS = net.xinkong.furagent.shared.data.SubSessionLimits.SUB_MAX_LOOPS
 
     /**
-     * 【截断补总结】子会话被强制截断后，让它自己回头总结一次。
+     * 截断补总结 子会话被强制截断后，让它自己回头总结一次。
      *
      * 为什么只跑 1 轮：再多就是又一次全量上下文请求，
      * 子代理这时候还在回忆上一轮的工具输出，烧钱而不产出。
@@ -573,7 +573,7 @@ object DesktopTools {
 
 
     /**
-     * 【AI 主动终止】正在执行的子会话 Job 表（subId → Job）。
+     * AI 主动终止 正在执行的子会话 Job 表（subId → Job）。
      * sub_session(op=stop) 据此 cancel 对应协程。
      */
     private val subSessionJobs =
@@ -592,7 +592,7 @@ object DesktopTools {
      * 子代理：派生一个不携带历史的独立子会话执行 task，后台并行跑完存盘。
      * tool_result 首行约定 "SUB_SESSION:{subId}"，聊天页据此渲染子会话卡片。
      *
-     * 【可复用】传 session_id 时复用已有子会话（带上它的历史继续跑），
+     * 可复用 传 session_id 时复用已有子会话（带上它的历史继续跑），
      * 不传则新建。这样主代理可以追问同一个子代理，而不是每次都开新的。
      */
     private suspend fun runSubSession(args: JSONObject): ToolResult {
@@ -624,7 +624,7 @@ object DesktopTools {
 
             SubSessionProgress.start(reuseId, title)
             subSessionScope.launch {
-                // 【P0-2 收尾】sessionId 通过协程上下文传递（见 SessionContext.kt），
+                // sessionId 通过协程上下文传递（见 SessionContext.kt），
                 // 已删除全局 CurrentTaskSession 变量。runTurn 内部
                 // withContext(SessionIdElement(reuseId))，所有工具执行、
                 // 历史归属都归属到 reuseId，不再与并行子会话/主会话互相覆盖。
@@ -703,7 +703,7 @@ object DesktopTools {
         )
         val subId = "sub_${System.currentTimeMillis()}_$rndHex"
         val now = System.currentTimeMillis()
-        // 【P0-2 收尾】母会话快照：从协程上下文读，不再读全局 var
+        // 母会话快照：从协程上下文读，不再读全局 var
         // （runSubSession 是被主 Agent 调用的，主协程上下文里 SessionIdElement 就是母会话 id）
         val parentSessionId = currentSessionId().ifBlank { null }
         // 全新上下文：只有这条 task，不带父会话历史
@@ -731,14 +731,14 @@ object DesktopTools {
         // 后台异步执行：主对话立即返回、互不阻塞；完成后覆盖保存全量过程
         SubSessionProgress.start(subId, title)
         val job = subSessionScope.launch {
-            // 【P0-2 收尾】sessionId 通过协程上下文传递：
+            // sessionId 通过协程上下文传递：
             // runTurn 内部 withContext(SessionIdElement(subId))，
             // 子会话的每个工具、每次历史写入都归属 subId，
             // 不再需要临时改写全局，也不会与并行子会话/主会话互相覆盖。
             var subHistory: List<DesktopMessage> = initial
-            // 【可见性】持续累积流式内容，让用户能看到它在写什么
+            // 可见性 持续累积流式内容，让用户能看到它在写什么
             val streamBuf = StringBuilder()
-            // 【硬上限】子会话不继承用户的高轮数设置
+            // 硬上限 子会话不继承用户的高轮数设置
             val subLoops = minOf(DesktopSettingsHolder.current.maxToolCallLoops, SUB_MAX_LOOPS)
             try {
                 val finalHistory = DesktopAgent.runTurn(
@@ -774,7 +774,7 @@ object DesktopTools {
                     onStreamCommit = { streamBuf.setLength(0) }
                 )
                 subHistory = finalHistory
-                // 【截断补总结】跑到轮数上限也得给个交代，不能只剩一句
+                // 截断补总结 跑到轮数上限也得给个交代，不能只剩一句
                 // 「已达到最大工具调用轮数」就完事
                 subHistory = summarizeIfTruncated(subHistory, DesktopSettingsHolder.current)
             } catch (e: Exception) {
@@ -799,7 +799,7 @@ object DesktopTools {
                         )
                     )
                 } catch (_: Exception) { }
-                // 【P0-2 收尾】不再恢复全局：协程上下文自动随协程结束
+                // 不再恢复全局：协程上下文自动随协程结束
                 SubSessionProgress.finish(subId)
                 subSessionActive.decrementAndGet()
                 subSessionJobs.remove(subId)
@@ -944,7 +944,7 @@ object DesktopTools {
             }
 
             if (name == "schedule") {
-                // 【P0-2 收尾】传当前协程上下文的会话 id（schedule 创建 run_agent 时会绑定它）
+                // 传当前协程上下文的会话 id（schedule 创建 run_agent 时会绑定它）
                 ScheduleTools.execute(name, args, currentSessionId())?.let { return it }
             }
             if (name == "system") {
@@ -1030,7 +1030,7 @@ object DesktopTools {
             if (!approved) return ToolResult.fail("用户已拒绝写入操作，文件未改动")
         }
 
-        // 【内置 git】改前内容先读进内存，写入后与改后内容做行级 diff 存进历史。
+        // 内置 git 改前内容先读进内存，写入后与改后内容做行级 diff 存进历史。
         // 备份失败不阻断写入。
         val target = File(resolved)
         val oldBytes = try {
@@ -1083,7 +1083,7 @@ object DesktopTools {
             if (!approved) return ToolResult.fail("用户已拒绝编辑操作，文件未改动")
         }
 
-        // 【内置 git】执行前把旧内容读进内存（执行后原内容就没了），
+        // 内置 git 执行前把旧内容读进内存（执行后原内容就没了），
         // 执行成功后与改后内容做行级 diff，写入修改历史。
         val oldMap = LinkedHashMap<String, ByteArray?>()
         if (settings.fileBackupEnabled) {
@@ -1147,7 +1147,7 @@ object DesktopTools {
     /**
      * 检测命令里是否包含删除/破坏性操作。
      *
-     * 【为什么】AI 可以通过 execute_command 跑 `del` / `rm` / `Remove-Item`
+     * 为什么 AI 可以通过 execute_command 跑 `del` / `rm` / `Remove-Item`
      * 绕过 delete_file 的回收站机制，直接真删。这里做一道拦截。
      *
      * 返回 null 表示安全；非 null 是拒绝文案。

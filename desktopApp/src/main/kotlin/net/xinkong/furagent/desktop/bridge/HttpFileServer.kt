@@ -82,13 +82,13 @@ object HttpFileServer {
     fun isRunning(): Boolean = server != null
 
     /**
-     * 【B4 新增】从 token 派生的短码（6 位大写 HEX）。
+     * 从 token 派生的短码（6 位大写 HEX）。
      * SHA-256(token) 前 3 字节转 16 进制。单向，泄露也无法反推 token。
      */
     fun getShortCode(): String = deriveShortCode(token)
 
     /**
-     * 【B4 新增】主动刷新 token。
+     * 主动刷新 token。
      */
     fun refreshToken(): String {
         val newToken = UUID.randomUUID().toString().replace("-", "")
@@ -136,7 +136,7 @@ object HttpFileServer {
 
     private fun handlePing(ex: HttpExchange) {
         try {
-            // 【诊断增强】返回端口、短码、receiveDir，方便用户用浏览器直接测：
+            // 诊断增强 返回端口、短码、receiveDir，方便用户用浏览器直接测：
             //   http://127.0.0.1:<port>/ping?token=<token>
             // 能看到这段文本就说明 HTTP 服务本身没问题，问题在网络/端口/防火墙。
             val receiveDir = try { DesktopSettingsHolder.current.receiveDir } catch (_: Throwable) { "?" }
@@ -158,7 +158,7 @@ object HttpFileServer {
     }
 
     /**
-     * 【B4 新增】/pair 端点。
+     * pair 端点。
      * 用短码作为凭证换真 token，不需要 token 前置校验。
      */
     private fun handlePair(ex: HttpExchange) {
@@ -194,7 +194,7 @@ object HttpFileServer {
     /**
      * 解析 HTTP 请求里的 path 参数。
      *
-     * 【N5 修复】原实现只做 File(receiveDir, rawPath).absolutePath，不做规范化，
+     * 原实现只做 File(receiveDir, rawPath).absolutePath，不做规范化，
      * 也不校验系统目录，导致 `?path=../../etc/passwd` 能读到 receiveDir 之外的文件。
      * token 泄露 = 任意文件读，必须修。
      *
@@ -248,7 +248,7 @@ object HttpFileServer {
                 respond(ex, 400, "missing path", "text/plain")
                 return
             }
-            // 【N5】resolveRemotePath 返回 null 表示拒绝访问（系统敏感目录或规范化失败）
+            // resolveRemotePath 返回 null 表示拒绝访问（系统敏感目录或规范化失败）
             val actualPath = resolveRemotePath(rawPath) ?: run {
                 respond(ex, 403, "path not allowed", "text/plain")
                 return
@@ -264,7 +264,7 @@ object HttpFileServer {
                 "Content-Disposition",
                 "attachment; filename=\"${file.name.replace("\"", "_")}\""
             )
-            // 【批次 9 修复】大文件下载 unexpected end of stream。
+            // 大文件下载 unexpected end of stream。
             //
             // 根因：com.sun.net.httpserver 在 sendResponseHeaders(200, contentLength) 声明了
             // Content-Length 的模式下，JDK 内部在 close() 时检查实际写入是否等于声明长度。
@@ -300,7 +300,7 @@ object HttpFileServer {
                     "download 字节数不符：声明 $actualLen 实际 $written（chunked 模式，客户端仍能正确接收）"
                 )
             }
-            // 【诊断加强】下载完成打完整日志：路径 + 字节数 + 远端地址。
+            // 诊断加强 下载完成打完整日志：路径 + 字节数 + 远端地址。
             // 手机端"下载不了"时对照本端日志，能一眼判断请求到底有没有到达。
             DesktopLogger.info(
                 "HttpServer",
@@ -341,7 +341,7 @@ object HttpFileServer {
                 File(receiveDir)
             }
             if (!targetDir.exists()) targetDir.mkdirs()
-            // 【诊断增强】记录本次上传的落点，失败时能一眼看出是目录不可写还是别的
+            // 诊断增强 记录本次上传的落点，失败时能一眼看出是目录不可写还是别的
             DesktopLogger.info(
                 "HttpServer",
                 "upload 请求：rawPath=$rawPath dir=$dirParam → targetDir=${targetDir.absolutePath}（存在=${targetDir.exists()} 可写=${targetDir.canWrite()}）"
@@ -350,7 +350,7 @@ object HttpFileServer {
             val target = FileNaming.resolveReceiveFile(targetDir.absolutePath, fileName)
             target.parentFile?.mkdirs()
 
-            // 【B1/B3】.part 临时文件落点：
+            // B1/B3 .part 临时文件落点：
             //   - 与 target 同盘时落 ~/.furagent/temp/（不污染用户接收目录），完成后 rename（快）
             //   - 不同盘时直接在 target 目录写 .part（同目录 rename 必成功，避免跨盘全量拷贝）
             // 用唯一名避免并发上传同名文件互相覆盖。
@@ -360,7 +360,7 @@ object HttpFileServer {
             } else {
                 File(target.parentFile, ".${target.name}.${UUID.randomUUID()}.part")
             }
-            // 【F6/诊断加强】原实现 input.copyTo 读到 EOF 就 rename，
+            // F6/诊断加强 原实现 input.copyTo 读到 EOF 就 rename，
             // 客户端提前断流（断网/代理超时/手机切后台）时只会写入一部分，
             // 但仍然 respond 200 ok，用户看到"上传成功"实际文件已损坏。
             // 现在校验 Content-Length 与实写字节数，不一致直接 500，不再假装成功。
@@ -442,7 +442,7 @@ object HttpFileServer {
                 respond(ex, 400, "missing path", "text/plain")
                 return
             }
-            // 【N5】resolveRemotePath 返回 null 表示拒绝访问
+            // resolveRemotePath 返回 null 表示拒绝访问
             val actualPath = resolveRemotePath(rawPath) ?: run {
                 respond(ex, 403, "path not allowed", "text/plain")
                 return
@@ -469,7 +469,7 @@ object HttpFileServer {
     }
 
     private fun checkToken(ex: HttpExchange): Boolean {
-        // 【N1 修复】token 未初始化时拒绝所有请求，
+        // token 未初始化时拒绝所有请求，
         // 避免 ?token= 空串绕过（与 AndroidHttpFileServer 对齐）。
         if (token.isBlank()) return false
         val params = parseQuery(ex.requestURI.query ?: "")
@@ -493,7 +493,7 @@ object HttpFileServer {
         ex.responseBody.use { it.write(bytes) }
     }
 
-    // 【P1-11】统一到 shared/util/Format.formatFileSize
+    // 统一到 shared/util/Format.formatFileSize
     private fun formatSize(bytes: Long): String =
         net.xinkong.furagent.shared.util.formatFileSize(bytes)
 }

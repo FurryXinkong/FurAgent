@@ -33,7 +33,7 @@ object TaskRuntime {
         val timedOut: Boolean = false,
         val cancelled: Boolean = false,
         /**
-         * 【P0-2】归属会话 id。用于 stopSession 精确取消，不再误杀其他并发会话。
+         * 归属会话 id。用于 stopSession 精确取消，不再误杀其他并发会话。
          * 空串 = 不属于任何会话（如定时任务），不会被任何 cancelBySession 命中。
          */
         val sessionId: String = ""
@@ -131,7 +131,7 @@ object TaskRuntime {
     }
 
     /**
-     * 【P0-2】按会话精确取消：只杀属于该会话的正在运行工具，不影响其他并发会话。
+     * 按会话精确取消：只杀属于该会话的正在运行工具，不影响其他并发会话。
      *
      * sessionId 为空的降级：
      *   - 桌面端 stopSession 传具体 sessionId

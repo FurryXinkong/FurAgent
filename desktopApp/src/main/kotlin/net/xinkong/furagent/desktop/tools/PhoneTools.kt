@@ -33,7 +33,7 @@ object PhoneTools {
     private val clientHttpMap = ConcurrentHashMap<String, ClientHttpInfo>()
 
     /**
-     * 【修复 7】共享 OkHttpClient，避免每次传文件都新建连接池和线程池。
+     * 共享 OkHttpClient，避免每次传文件都新建连接池和线程池。
      *
      * - upload：读写都无超时，大文件传输不打断
      * - short：读 60 秒，用于 delete 等短请求
@@ -386,7 +386,7 @@ object PhoneTools {
                 } else ToolResult.fail("HTTP ${resp.code}：$text")
             }
         } catch (e: Exception) {
-            // 【修复 C5】println → DesktopLogger
+            // println → DesktopLogger
             net.xinkong.furagent.desktop.system.DesktopLogger.warn(
                 "PhoneTools",
                 "HTTP 上传失败：${e.javaClass.simpleName}: ${e.message}"

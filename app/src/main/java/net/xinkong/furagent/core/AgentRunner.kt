@@ -24,15 +24,15 @@ import kotlin.time.Duration.Companion.milliseconds
  *  - taskToken 机制：cancel 后旧任务的所有回调自动失效，
  *    避免"取消后立刻发新消息 → 旧任务 finally 覆盖新任务状态"
  *
- * 【修复 18】cancel() 里三个清理调用（SpeechHelper.stop / clearLiveActivity /
+ * cancel() 里三个清理调用（SpeechHelper.stop / clearLiveActivity /
  * AgentService.stop）原来合并在一个 try 里。如果第一个抛异常，后两个不会执行，
  * AgentService 会永远活着占用前台通知。拆成三段独立 try。
  *
- * 【修复 A8】onFinish 回调里会改 MainActivity 的 Compose State（chatHistory、
+ * onFinish 回调里会改 MainActivity 的 Compose State（chatHistory、
  * sessionList 等），必须在主线程执行。AgentRunner 的 scope 是 Default
  * Dispatcher，所以所有 Compose 相关回调统一用 mainHandler.post 包住。
  *
- * 【修复 C7】删掉传给 runAgentTurn 的 prefs 参数（历史上从未被使用）。
+ * 删掉传给 runAgentTurn 的 prefs 参数（历史上从未被使用）。
  */
 object AgentRunner {
 
@@ -50,7 +50,7 @@ object AgentRunner {
         val currentToolName: String = "",
         val startedAt: Long = 0L,
         /**
-         * 【错误状态】API 错误信息（如「HTTP 429 · 用量配额已用尽」）。
+         * 错误状态 API 错误信息（如「HTTP 429 · 用量配额已用尽」）。
          *
          * 与 thinking 分开存的原因：
          *   - thinking 在 onFinish 时会被清空（任务结束就不该再转圈）
@@ -72,7 +72,7 @@ object AgentRunner {
     /**
      * 任务代际（给协程回调用）。
      *
-     * 【P2-19 复核结论：不是冗余，不需要合并】
+     * 19 复核结论：不是冗余，不需要合并
      * 与 AgentSession.generation 是两套独立机制：
      *  - 本字段：cancel() 时 +1，isCurrent() 判断旧任务回调是否该丢弃
      *  - AgentSession.generation：cancel() 时同步 +1，阻塞 IO 引擎用 isCancelled(gen) 感知取消
@@ -133,7 +133,7 @@ object AgentRunner {
         prefs: SharedPreferences,
         settings: AppSettings,
         onFinish: (finalHistory: List<ChatMessage>) -> Unit = {},
-        /** 【P0-3】会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
+        /* 会话专用提示词：注入系统提示词末尾，只作用于当前会话。 */
         sessionPrompt: String = ""
     ): Boolean {
         if (currentJob?.isActive == true) {
@@ -147,9 +147,9 @@ object AgentRunner {
         val myToken = ++taskToken
         // 同步 AgentSession 代际：让阻塞式 IO（下载等）能感知本次任务
         AgentSession.beginTask()
-        // 【批次 19】这里不再写全局变量，runAgentTurn 会开启协程上下文
+        // 这里不再写全局变量，runAgentTurn 会开启协程上下文
 
-        // 【错误消失】新一轮任务开始，把上一次的 API 错误（如 HTTP 429）清掉。
+        // 错误消失 新一轮任务开始，把上一次的 API 错误（如 HTTP 429）清掉。
         // Snapshot(...) 重建时 error 默认就是空，但旧代码在运行中会 copy() 保留旧值，
         // 这里显式保证一下。
         _snapshot.value = Snapshot(
@@ -165,13 +165,13 @@ object AgentRunner {
         currentJob = scope.launch {
             fun isCurrent(): Boolean = myToken == taskToken
 
-            // 【取消代际】与 taskToken 同步：cancel() 里 taskToken++ 的同时
+            // 取消代际 与 taskToken 同步：cancel() 里 taskToken++ 的同时
             // AgentSession.cancelAll() 也会 generation++，两者一致。
             // 传给 runAgentTurn 后，工具执行前会比对代际，
             // 避免“UI 已停止但工具还在跑”。
             val cancelGen = AgentSession.currentGeneration()
 
-            // 【批次 12 性能】流式 chunk 节流。
+            // 流式 chunk 节流。
             // 原实现每 chunk 都 _snapshot.value.copy() + streaming + chunk，
             // 1MB 输出 / 20 字符每 chunk = 50000 次 copy + O(n²) 字符串拼接（25GB 分配）。
             // 改成 32ms 节流：每 32ms 才 push 一次，收益约 32 倍。
@@ -240,12 +240,12 @@ object AgentRunner {
                     },
                     onReasoning = { r ->
                         if (!isCurrent()) return@runAgentTurn
-                        // 【批次 12】入缓冲，由 flushJob 每 32ms 统一推
+                        // 入缓冲，由 flushJob 每 32ms 统一推
                         synchronized(bufLock) { reasoningBuf.append(r) }
                     },
                     onStreamChunk = { chunk ->
                         if (!isCurrent()) return@runAgentTurn
-                        // 【批次 12】入缓冲，由 flushJob 每 32ms 统一推
+                        // 入缓冲，由 flushJob 每 32ms 统一推
                         synchronized(bufLock) { streamBuf.append(chunk) }
                     },
                     onStreamCommit = {
@@ -271,7 +271,7 @@ object AgentRunner {
                         )
                         currentJob = null
 
-                        // 【修复 A8】onFinish 会改 MainActivity 的 Compose State，
+                        // onFinish 会改 MainActivity 的 Compose State，
                         // 必须回主线程执行。
                         mainHandler.post {
                             try {
@@ -330,7 +330,7 @@ object AgentRunner {
                     }
                 }
             } finally {
-                // 【批次 12】停掉 flush 协程，最后做一次 flush 保底
+                // 停掉 flush 协程，最后做一次 flush 保底
                 // （正常路径下 onStreamCommit 已清空 buf，无事发生；
                 //   取消/异常路径下 buf 可能有内容，flush 出来让 UI 看到最后状态）
                 flushJob.cancel()
@@ -400,7 +400,7 @@ object AgentRunner {
         if (text.startsWith("流式解析失败")) return
         if (text.startsWith("发生异常")) return
 
-        // 【P1-抽 shared】统一走 shared/util/SpeechCleaner，与桌面端完全同源
+        // 统一走 shared/util/SpeechCleaner，与桌面端完全同源
         val clean = net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
         if (clean.isBlank()) return
 
@@ -412,7 +412,7 @@ object AgentRunner {
     }
 
     private fun extractToolName(history: List<ChatMessage>): String {
-        // 【批次 12】原 `history.indices.reversed()` 会创建 IntRange + 反转 List（
+        // 原 `history.indices.reversed()` 会创建 IntRange + 反转 List（
         // 100 条消息 = 100 个 Integer 装箱 + 1 个 List 分配）。改成倒序 while 零分配。
         var i = history.size - 1
         while (i >= 0) {
@@ -437,7 +437,7 @@ object AgentRunner {
         if (safeStart >= newHistory.size) return
 
         val newMsgs = newHistory.subList(safeStart, newHistory.size)
-        // 【脆弱解构清理】显式字段访问，不依赖 ChatMessage 字段位置顺序。
+        // 脆弱解构清理 显式字段访问，不依赖 ChatMessage 字段位置顺序。
         for (msg in newMsgs) {
             val content = msg.content
             val type = msg.type

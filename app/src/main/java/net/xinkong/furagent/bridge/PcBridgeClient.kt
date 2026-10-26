@@ -205,7 +205,7 @@ object PcBridgeClient {
     /**
      * 重连主循环。
      *
-     * 【F9 修复】稳定阈值重置：连接建立后，只有存活 ≥ STABLE_CONNECTION_THRESHOLD_MS
+     * 稳定阈值重置：连接建立后，只有存活 ≥ STABLE_CONNECTION_THRESHOLD_MS
      * 才把 delayMs 拉回基线。短命连接保持翻倍退避，避免重连风暴。
      */
     private suspend fun connectLoop() {
@@ -355,7 +355,7 @@ object PcBridgeClient {
             httpClient.newWebSocket(request, listener)
             val result = withTimeoutOrNull(BridgeConfig.HANDSHAKE_TIMEOUT_MS.milliseconds) { openedSignal.await() }
             if (result == null) {
-                // 【N2 修复】握手超时：可能 socket 已建立但 openedSignal 未在 8s 内完成。
+                // 握手超时：可能 socket 已建立但 openedSignal 未在 8s 内完成。
                 // 主动关闭当前 webSocket，避免 connectLoop 重连时两个 socket 并存。
                 AgentLogger.log("BRIDGE", "握手超时（$url），主动关闭可能已建立的 socket")
                 try { webSocket?.close(1000, "handshake timeout") } catch (_: Exception) { }
@@ -406,7 +406,7 @@ object PcBridgeClient {
                         pendingPings.incrementAndGet()
                     } else {
                         AgentLogger.log("BRIDGE", "发送心跳失败：socket 未就绪")
-                        // 【N3 修复】发送失败要通知连接丢失。
+                        // 发送失败要通知连接丢失。
                         // 之前只 break，heartbeatJob 结束但 _status 还是 CONNECTED，
                         // 后续工具调用会失败但状态显示在线，要等 TCP FIN 才刷新。
                         onConnectionLost()
@@ -656,7 +656,7 @@ object PcBridgeClient {
         val hp = _httpPort.value
         val ht = _httpToken.value
         if (hp <= 0 || ht.isBlank()) {
-            // 【诊断增强】把端口和 token 长度打出来：
+            // 诊断增强 把端口和 token 长度打出来：
             // hp=0 表示电脑端没在 welcome/device_info 里给出 HTTP 端口，
             // 通常是电脑 HttpFileServer 启动失败（端口被占用 fallback 到随机端口，
             // 或防火墙/初始化顺序问题）。ht 为空表示握手没带 httpToken。
@@ -685,7 +685,7 @@ object PcBridgeClient {
             val body = localFile.asRequestBody("application/octet-stream".toMediaType())
             val req = Request.Builder().url(url).post(body).build()
             httpClient.newCall(req).execute().use { resp ->
-                // 【诊断增强】读取响应体可能失败，包一层，失败时至少能打出 HTTP 状态码
+                // 诊断增强 读取响应体可能失败，包一层，失败时至少能打出 HTTP 状态码
                 val text = try { resp.body.string() } catch (_: Exception) { "" }
                 if (resp.isSuccessful) {
                     AgentLogger.log(
@@ -716,9 +716,9 @@ object PcBridgeClient {
     }
 
     /**
-     * 【批次 8】手机端从电脑下载文件 —— HTTP 流式下载。
+     * 手机端从电脑下载文件 —— HTTP 流式下载。
      *
-     * 【为什么新加这个方法】
+     * 为什么新加这个方法
      * 原 PcBrowserTab.downloadFile 走的是 `read_file(mode="base64")` 通过 WebSocket 传文件，
      * 结果被电脑端 CommonTools.maybeSpill 的 16KB 阈值截断（返回摘要而不是完整 base64），
      * MB 级文件在手机端只能解出前 30 行的碎片，写入失败或得到损坏文件。
@@ -1002,9 +1002,9 @@ object PcBridgeClient {
             val rawPath = args.optString("path", "").trim()
             if (rawPath.isBlank()) return argsJson
 
-            // 【与桌面端 BridgeServer.rewriteIfWrite 对齐】纯文件名才改写到 receiveDir，
+            // 与桌面端 BridgeServer.rewriteIfWrite 对齐 纯文件名才改写到 receiveDir，
             // 带路径（含 / \ 或盘符）的尊重原路径，避免 AI 指定绝对路径被静默改写。
-            // 【N8 修复】之前只查 '/' 不查 '\\'，Windows 路径 foo\\bar.txt 会被误判为
+            // 之前只查 '/' 不查 '\\'，Windows 路径 foo\\bar.txt 会被误判为
             // "无路径"而改写，与电脑端行为不一致。现在两端判断条件完全一致。
             val hasSeparator = rawPath.contains('/') ||
                     rawPath.contains('\\') ||

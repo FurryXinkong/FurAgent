@@ -218,7 +218,7 @@ class DesktopToolHost : ToolHost {
         }
     }
 
-    // 【P1-11】统一到 shared/util/Format.formatFileSize
+    // 统一到 shared/util/Format.formatFileSize
     // 原来 host 版是 %.1fGB，shared 版是 %.2fGB，同一个文件在两个位置显示不同精度。
     override fun formatSize(bytes: Long): String =
         net.xinkong.furagent.shared.util.formatFileSize(bytes)

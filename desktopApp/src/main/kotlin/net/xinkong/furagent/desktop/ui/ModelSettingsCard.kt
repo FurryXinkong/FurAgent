@@ -32,7 +32,7 @@ import kotlin.math.roundToInt
 /**
  * 模型设置按钮 + 弹出面板。
  *
- * 【设计参考】常见 AI 客户端的做法：
+ * 设计参考 常见 AI 客户端的做法：
  *  - 常驻状态下，输入框底部左侧只有一个胶囊按钮：`模型名 档位 ▾`
  *  - 点开后才弹出面板，面板里是「模型选择」+「推理强度滑块」
  *  - 不占用常驻空间，输入框保持干净
@@ -48,7 +48,7 @@ import kotlin.math.roundToInt
  *       └────────────────────────────┘
  * ```
  *
- * 【为什么用 Material3 Slider】
+ * 为什么用 Material3 Slider
  * 之前用手写 pointerInput（tap + drag 两套手势）会互相抢事件，导致拖不动。
  * Slider 自带拖拽、点击跳转、键盘控制、无障碍支持，配合 steps 直接吸附档位。
  */
@@ -227,12 +227,12 @@ private fun ModelPickerRow(
  *
  * 轨道用流体渐变（蓝 -> 紫），填充宽度随档位平滑动画过渡。
  *
- * 【实现说明】
+ * 实现说明
  * Material3 Slider 的 activeTrackColor 只接受纯色，无法直接给渐变。
  * 这里用 track lambda 自定义轨道：底层画灰色轨道，上层画渐变填充。
  * 滑块本身仍由 Slider 管理（拖拽、点击、键盘、无障碍全部保留）。
  *
- * 【动画】
+ * 动画
  * 填充宽度用 animateFloatAsState 平滑过渡（180ms），
  * 档位切换时不会突兀跳变。
  */

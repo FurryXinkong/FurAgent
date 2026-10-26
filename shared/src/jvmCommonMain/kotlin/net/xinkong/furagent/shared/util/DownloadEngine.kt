@@ -103,7 +103,7 @@ object DownloadEngine {
             }
 
             // 2. 决定实际线程数
-            // 【批次 21 修复】如果服务器不支持 Range，或者拿不到总大小（如 chunked 传输），
+            // 如果服务器不支持 Range，或者拿不到总大小（如 chunked 传输），
             // 只能降级为单线程，且进度回调的总大小传 -1。
             val effectiveThreads = when {
                 threads <= 1 -> 1
@@ -237,7 +237,7 @@ object DownloadEngine {
         resp.use {
             if (!it.isSuccessful) return "HTTP ${it.code}"
 
-            // 【批次 21 修复】如果请求了续传但服务器返回 200，说明服务器忽略了 Range。
+            // 如果请求了续传但服务器返回 200，说明服务器忽略了 Range。
             // 此时必须覆盖写入，不能 append，否则文件会损坏。
             var append = existing > 0 && it.code == 206
             if (existing > 0 && it.code == 200) {
@@ -324,7 +324,7 @@ object DownloadEngine {
                     val call = client.newCall(req)
                     onCallCreated?.invoke(call)
                     call.execute().use { resp ->
-                        // 【批次 21 修复】分片请求必须要求 206。
+                        // 分片请求必须要求 206。
                         // 如果返回 200，说明服务器不支持 Range，多线程合并会直接损坏文件。
                         if (resp.code == 200) {
                             return@async "服务器不支持分片下载（返回 200）"

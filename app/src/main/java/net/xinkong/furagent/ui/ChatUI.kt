@@ -64,7 +64,7 @@ import net.xinkong.furagent.ui.theme.AppRadius
 
 // 空状态
 
-// 【统一标准】图标 56dp、onSurfaceVariant 标题。
+// 统一标准 图标 56dp、onSurfaceVariant 标题。
 
 @Composable
 fun EmptyStatePlaceholder(
@@ -73,7 +73,7 @@ fun EmptyStatePlaceholder(
     onPromptClick: ((String) -> Unit)? = null,
     messages: List<ChatMessage> = emptyList()
 ) {
-    // 【动画清理】标题不再做呼吸缩放，静态展示
+    // 动画清理 标题不再做呼吸缩放，静态展示
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -404,7 +404,7 @@ fun WorkProcessItemList(
             if (!run.isParallel) {
                 run.entries.forEach { e ->
                     key(e.main.id) {
-                        // 【P2-21 修复】原 AnimatedVisibility(visible = true) 永不触发动画，
+                        // 原 AnimatedVisibility(visible = true) 永不触发动画，
                         // 只是多了一层 composition/state。直接去掉。
                         TreeBranch(isLast = runIndex == runs.lastIndex) {
                             WorkProcessEntryRow(
@@ -436,7 +436,7 @@ fun WorkProcessItemList(
             }
         }
     }
-    // 【实时思考】正在流式生成中的思考挂在工具列表末尾，
+    // 实时思考 正在流式生成中的思考挂在工具列表末尾，
     // 也就是「最后一个工具调用」的下一行，而不是丢在气泡外面单独占一行。
     // 点开就是完整流式内容，边想边滚。
     if (liveReasoning.isNotBlank()) {
@@ -1196,7 +1196,7 @@ fun TextBubble(
     val allImages = (message.imagePaths + contentImages).distinct()
 
     Column(Modifier.fillMaxWidth()) {
-        // 【思考归位】reasoning 已作为 type="reasoning" 消息收进「工作过程」，
+        // 思考归位 reasoning 已作为 type="reasoning" 消息收进「工作过程」，
         // 不再在普通气泡上方重复流派一份。
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -1500,7 +1500,7 @@ fun ThinkingBubble(text: String) {
 /**
  * API 错误状态气泡。
  *
- * 【为什么不用 AI 聊天气泡】
+ * 为什么不用 AI 聊天气泡
  * 「HTTP 429 · 用量配额已用尽」不是 AI 说的话，是系统状态。
  * 用聊天气泡会让用户以为 AI 在回答，而且会污染对话历史。
  *
@@ -1579,7 +1579,7 @@ fun ErrorBubble(
  *
  * 默认折叠，点标题行展开。
  *
- * 【与桌面端一致】原先用带背景的 CollapsiblePanel，
+ * 与桌面端一致 原先用带背景的 CollapsiblePanel，
  * 内容少时一块空荡荡的卡片；现在改成和工作过程里「思考 N 行」
  * 一样的无背景紧凑行。它只作为落库前的兜底，正常路径是
  * 思考作为 type="reasoning" 消息进「工作过程」面板。
@@ -1892,7 +1892,7 @@ fun RichMessageText(
 
     if (plainText) {
         // 流式输出：原有的 Text 渲染逻辑
-        // 【批次 20 优化】applyStreamingGradient 可能会对大文本做复杂的 AnnotatedString 构造，
+        // applyStreamingGradient 可能会对大文本做复杂的 AnnotatedString 构造，
         // 这里用 remember 缓存，且依赖项更严谨。
         val annotatedString = remember(content, textColor) { applyStreamingGradient(content, textColor) }
         var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
@@ -1932,7 +1932,7 @@ fun RichMessageText(
         )
     } else {
         // Markdown 渲染
-        // 【批次 20 优化】ComposeMarkdownRenderer 内部做了大量的正则解析和树构建。
+        // ComposeMarkdownRenderer 内部做了大量的正则解析和树构建。
         // 如果 content 没有变化（例如只是父组件重组），不应重复解析。
         // 这里利用 key 强制：如果 content 没变，ComposeMarkdownRenderer 内部缓存命中。
         key(content) {
@@ -2020,7 +2020,7 @@ fun MessageOptionsSheet(
                 icon = Icons.Default.Share,
                 onClick = onShare
             )
-            // 【体验优化 B7/B20】允许编辑任意 text 类型的消息：
+            // 体验优化 允许编辑任意 text 类型的消息：
             //   - user 消息：编辑后重新生成
             //   - assistant 消息：编辑内容后作为新的 user 消息重新生成
             //     （对话模型里 AI 不能直接发下一条，只能以用户身份追问）

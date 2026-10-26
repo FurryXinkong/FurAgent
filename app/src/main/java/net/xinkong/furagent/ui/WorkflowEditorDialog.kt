@@ -34,7 +34,7 @@ import java.util.*
  *  - delay      延时
  *  - set_var    设置变量
  *
- * 【UI 统一约定】
+ * UI 统一约定
  *   - StepTypeChip 10dp 圆角，主色走 colorScheme
  *   - StepCard 用 surfaceVariant 0.4f 底 + 12dp 圆角
  *   - 输入框统一 surfaceVariant 0.4~0.5f 底 + outlineVariant 边

@@ -105,7 +105,7 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
     var viewingImage by remember { mutableStateOf<String?>(null) }
     var inputFocused by remember { mutableStateOf(false) }
 
-    // 【优化 14】MainActivity 修改设置（切模型、填 API Key 等）后，
+    // MainActivity 修改设置（切模型、填 API Key 等）后，
     // 悬浮窗每次回到前台都要读到最新值。
     // 原来只在 remember 首次执行时读一次，一直是旧 settings。
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -123,7 +123,7 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
     val listState = rememberLazyListState()
 
     // 读取 MainActivity 当前会话 ID（SharedPreferences 桥接）
-    // 【健壮性】读到的 ID 必须先验证还在 SessionStore 里。
+    // 健壮性 读到的 ID 必须先验证还在 SessionStore 里。
     // 用户可能在主界面删除了会话，或者 MainActivity 崩溃后残留旧值。
     // 不验证的话，发消息会写入一个已删除的会话，SessionStore.save 会创建一个
     // 孤立会话（sessionList 里看不到），用户完全不知道消息去哪了。
@@ -342,7 +342,7 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
                             .padding(8.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        // 【体验优化 B3】从 50 增加到 200，与主界面更接近。
+                        // 体验优化 从 50 增加到 200，与主界面更接近。
                         // 改用 WorkProcessItemList，与主界面一致：
                         // 工具调用渲染为树形紧凑行，不再是大卡片。
                         val shown = history.takeLast(200)

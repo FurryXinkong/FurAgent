@@ -5,7 +5,7 @@ import java.util.Calendar
 /**
  * 标准 5 段 cron 解析（分 时 日 月 周）。
  *
- * 【冗余清理】Android ScheduleStore 和桌面 ScheduleStore 各有一份逐字相同的
+ * Android ScheduleStore 和桌面 ScheduleStore 各有一份逐字相同的
  * nextCronTime / matchSpec / matchDow 实现（共约 180 行）。现统一到这里。
  *
  * 语法支持：

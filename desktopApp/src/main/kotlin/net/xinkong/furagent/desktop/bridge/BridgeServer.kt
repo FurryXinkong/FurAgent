@@ -560,7 +560,7 @@ object BridgeServer {
     /**
      * 桥接调用 write_file 时的路径处理。
      *
-     * 【修复 A4】旧实现无条件把 path 改写到 receiveDir，导致手机端 AI
+     * 旧实现无条件把 path 改写到 receiveDir，导致手机端 AI
      * 通过 phone_call 指定绝对路径（如 D:\project\config.json）时被静默改写，
      * AI 以为写到了指定位置，实际落在 receiveDir。
      *
@@ -649,7 +649,7 @@ object BridgeServer {
                     connTimeMap.remove(oldId)
                     connDeviceNameMap.remove(oldId)
                     connMacMap.remove(oldId)
-                    // 【F9 修复】原来 onOpen 踢旧连接时漏了这步，
+                    // 原来 onOpen 踢旧连接时漏了这步，
                     // 导致旧 client_id 对应的 HTTP 通道信息残留。
                     PhoneTools.removeClientHttp(oldId)
                     DesktopLogger.info(

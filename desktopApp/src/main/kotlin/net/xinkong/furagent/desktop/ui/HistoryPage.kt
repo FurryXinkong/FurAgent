@@ -587,7 +587,7 @@ private fun ToolAction(icon: androidx.compose.ui.graphics.vector.ImageVector, la
 // ============ 双栏 diff ============
 
 /** 对齐后的双栏行：old/new 各自独立行号，kind 决定着色。 */
-// 【P1-抽 shared】对齐行定义移入 shared/util/LcsDiff.Row
+// 对齐行定义移入 shared/util/LcsDiff.Row
 private typealias SbsRow = net.xinkong.furagent.shared.util.LcsDiff.Row
 
 /**
@@ -730,7 +730,7 @@ private fun SideBySideDiff(entry: BackupHelper.BackupEntry, modifier: Modifier =
 
     Column(modifier.fillMaxSize()) {
         // 变更导航栏
-        // 【P1-抽 shared】调用点统一走 LcsDiff.alignRows
+        // 调用点统一走 LcsDiff.alignRows
         val rows = remember(o, c) { net.xinkong.furagent.shared.util.LcsDiff.alignRows(o, c) }
         // 变更按「块」导航：连续变更行归为一块（大文件 1936 个变更行可能只有十几块，按行跳没有意义）
         val rowBlock = remember(rows) {

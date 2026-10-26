@@ -177,7 +177,7 @@ object WebSearchEngine {
                 return null
             }
 
-            // 【批次 21 性能优化】限制最大解析长度
+            // 限制最大解析长度
             val safeHtml = if (html.length > 500_000) html.take(500_000) else html
             val doc = Jsoup.parse(safeHtml)
 
@@ -288,7 +288,7 @@ object WebSearchEngine {
                 return null
             }
 
-            // 【批次 21 性能优化】限制最大解析长度
+            // 限制最大解析长度
             val safeHtml = if (html.length > 500_000) html.take(500_000) else html
             val doc = Jsoup.parse(safeHtml)
 
@@ -382,7 +382,7 @@ object WebSearchEngine {
                 return null
             }
 
-            // 【批次 21 性能优化】限制最大解析长度
+            // 限制最大解析长度
             val safeHtml = if (html.length > 500_000) html.take(500_000) else html
             val doc = Jsoup.parse(safeHtml)
 
@@ -453,7 +453,7 @@ object WebSearchEngine {
 
     /**
      * 抓取网页正文并转成 Markdown。
-     * 【批次 23 增强】支持 CSS Selector 精准提取。
+     * 支持 CSS Selector 精准提取。
      */
     suspend fun fetchContent(url: String, maxLength: Int, selector: String = ""): String = withContext(Dispatchers.IO) {
         if (url.isBlank()) return@withContext "失败：未提供 URL"
@@ -493,7 +493,7 @@ object WebSearchEngine {
             val doc = Jsoup.parse(safeHtml, validUrl)
             val title = doc.title().trim()
 
-            // 【批次 23 增强】CSS Selector 提取
+            // CSS Selector 提取
             if (selector.isNotBlank()) {
                 val elements = doc.select(selector)
                 if (elements.isEmpty()) return@withContext "页面抓取成功，但选择器 '$selector' 未匹配到任何节点。"

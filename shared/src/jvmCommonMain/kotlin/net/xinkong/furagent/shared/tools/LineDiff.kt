@@ -41,7 +41,7 @@ object LineDiff {
         val a = oldText.lines()
         val b = newText.lines()
 
-        // 【关键优化】先裁掉公共前缀/后缀，只对中间差异区做 LCS。
+        // 关键优化 先裁掉公共前缀/后缀，只对中间差异区做 LCS。
         // 代码编辑通常只改局部，裁剪后中间区往往只有几十行，
         // 这样 3000+ 行的大文件也能给出精确 patch（之前直接退化成整文件替换）。
         var prefix = 0

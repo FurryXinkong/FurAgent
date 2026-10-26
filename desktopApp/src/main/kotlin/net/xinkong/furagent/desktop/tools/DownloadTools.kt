@@ -79,7 +79,7 @@ object DownloadTools {
             if (taskId != null) {
                 TaskRuntime.registerCancel(taskId) { cancelled.set(true) }
             }
-            // 【与 phone_receive_file / 状态面板对齐】把下载进度旁路登记到 DownloadManager，
+            // 与 phone_receive_file / 状态面板对齐 把下载进度旁路登记到 DownloadManager，
             // 让右下角 DownloadToastBar 也能看到进度（旧实现只有 TaskFloatingBar 可见）。
             val displayId = try {
                 DownloadManager.beginExternal(url, savePath)

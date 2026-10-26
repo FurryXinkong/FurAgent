@@ -14,7 +14,7 @@ object WorkflowStore {
     private fun file(context: Context) = File(context.filesDir, FILE_NAME)
 
     /**
-     * 【修复 P0】单条脏数据不再清空整个工作流列表。
+     * 单条脏数据不再清空整个工作流列表。
      * 顶层反序列化失败 → FileRecovery 备份损坏文件。
      */
     fun list(context: Context): List<Workflow> {
@@ -120,7 +120,7 @@ object WorkflowStore {
      * 支持语法：$var / ${var} / {var}
      */
     /**
-     * 【冗余清理 Batch 7】substitute 抽到 shared/data/WorkflowCodec。
+     * substitute 抽到 shared/data/WorkflowCodec。
      * 保留函数名，让既有调用点（WorkflowTools / SystemTools）不改。
      */
     fun substitute(template: String, vars: Map<String, String>): String =

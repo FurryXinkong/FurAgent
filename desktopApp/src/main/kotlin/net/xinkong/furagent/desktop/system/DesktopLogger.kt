@@ -22,9 +22,9 @@ import kotlin.time.Duration.Companion.milliseconds
  *  - 内存（StateFlow 供 UI 订阅"实时"）
  *  - 文件（~/.furagent/logs/yyyy-MM-dd.log，按天滚动，保留 7 天，单文件超 10MB 切分）
  *
- * 【性能】环形 ArrayDeque + 100ms 节流。
+ * 性能 环形 ArrayDeque + 100ms 节流。
  *
- * 【完整性】单条 content 上限 1_000_000 字符（约 1MB），与 Android 端对齐。
+ * 完整性 单条 content 上限 1_000_000 字符（约 1MB），与 Android 端对齐。
  */
 object DesktopLogger {
 

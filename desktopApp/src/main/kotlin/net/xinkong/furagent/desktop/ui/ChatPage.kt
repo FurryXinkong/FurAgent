@@ -77,7 +77,7 @@ private val RE_WHITESPACE = Regex("[ \\t]+")
 private val RE_MULTI_NL = Regex("\\n{2,}")
 
 internal fun cleanForSpeech(text: String): String =
-    // 【P1-抽 shared】完整 15 正则清洗已移入 shared/util/SpeechCleaner
+    // 完整 15 正则清洗已移入 shared/util/SpeechCleaner
     SpeechCleaner.cleanForSpeech(text)
 
 
@@ -92,7 +92,7 @@ fun ChatPage(
     streamingText: String,
     thinking: String,
     reasoning: String,
-    /** 【错误状态】API 错误（如「HTTP 429 · 用量配额已用尽」），渲染成状态小气泡。 */
+    /* 错误状态 API 错误（如「HTTP 429 · 用量配额已用尽」），渲染成状态小气泡。 */
     errorText: String = "",
     isLoading: Boolean,
     inputText: String,
@@ -121,7 +121,7 @@ fun ChatPage(
     var attachments by remember { mutableStateOf<List<PendingAttachment>>(emptyList()) }
     var bottomReservedPx by remember { mutableIntStateOf(140) }
     var viewingImage by remember { mutableStateOf<String?>(null) }
-    // 【子代理只读】子会话（sub_ 开头）是 AI 派发的任务上下文，用户只能看不能发
+    // 子代理只读 子会话（sub_ 开头）是 AI 派发的任务上下文，用户只能看不能发
     val isSubSession = sessionId?.startsWith("sub_") == true
 
     val speechState by DesktopSpeechHelper.state.collectAsState()
@@ -192,7 +192,7 @@ fun ChatPage(
             ) {
                 Box(Modifier.fillMaxWidth(0.75f).widthIn(max = 1800.dp)) {
                     Column {
-                        // 【子代理页不要输入框】不是禁用，是根本不渲染。
+                        // 子代理页不要输入框 不是禁用，是根本不渲染。
                         // 子会话是 AI 派发的任务上下文，用户没有发消息的场景，
                         // 留个灰掉的输入框只会让人一直想点。
                         if (!isSubSession) {
@@ -417,7 +417,7 @@ private fun ChatMessageList(
         val chatItems = remember(messages) { buildChatItems(messages) }
         // 任务完成结果卡的数据源（remember 必须在 Composable 上下文，不能放 LazyListScope）
         val modifiedFiles = remember(messages) {
-            // 【体验】只统计「本次对话」这一轮（最后一条 user 消息之后）改过的文件，
+            // 体验 只统计「本次对话」这一轮（最后一条 user 消息之后）改过的文件，
             // 而不是整个会话历史里所有改过的文件。
             val lastUserIdx = messages.indexOfLast { it.role == "user" }
             val turn = if (lastUserIdx >= 0) messages.subList(lastUserIdx, messages.size) else messages
@@ -466,7 +466,7 @@ private fun ChatMessageList(
             }
         }
 
-        // 【滚动修复】用 userScrolledUp 标志替代 canScrollForward 判断。
+        // 滚动修复 用 userScrolledUp 标志替代 canScrollForward 判断。
         // canScrollForward 在新内容刚加入时因布局未稳定而返回错误值，导致滚动永远不触发。
         var userScrolledUp by remember { mutableStateOf(false) }
         var programmaticScroll by remember { mutableStateOf(false) }
@@ -602,7 +602,7 @@ private fun ChatMessageList(
                                         onReExecute = onReExecuteTool,
                                         onDelete = onDeleteMessage,
                                         onImageClick = onImageClick,
-                                        // 【实时思考归位】运行中把流式思考挂到最后一条工作过程里（
+                                        // 实时思考归位 运行中把流式思考挂到最后一条工作过程里（
                                         // 即最后一个工具调用之后）展开显示。
                                         liveReasoning = if (isLoading &&
                                             item === chatItems.lastOrNull() &&
@@ -624,7 +624,7 @@ private fun ChatMessageList(
                     }
                 }
 
-                // 【深度思考直显】还没出现工作过程气泡时（第一次工具调用之前），
+                // 深度思考直显 还没出现工作过程气泡时（第一次工具调用之前），
                 // 流式思考没有宿主可挂；而下面的 thinking 气泡又只在 reasoning 为空时显示，
                 // 结果开了深度思考后，从发消息到第一次工具调用之间思考过程完全看不到。
                 // 这里在没有宿主时把思考过程单独显示出来。
@@ -637,7 +637,7 @@ private fun ChatMessageList(
                     }
                 }
 
-                // 【实时思考】已归位到工作过程末尾（见 WorkProcessRow 的 liveReasoning），
+                // 实时思考 已归位到工作过程末尾（见 WorkProcessRow 的 liveReasoning），
                 // 不再在气泡外面单独画一行「深度思考」。
                 if (thinking.isNotEmpty() && streamingText.isEmpty() && reasoning.isBlank()) {
                     item {
@@ -658,7 +658,7 @@ private fun ChatMessageList(
                     }
                 }
 
-                // 【错误状态气泡】与「重试中」同款样式，不是 AI 聊天气泡。
+                // 错误状态气泡 与「重试中」同款样式，不是 AI 聊天气泡。
                 // 任务结束后仍保留（sessionError 不在 finally 里清），
                 // 直到用户下次发消息才清。
                 if (errorText.isNotEmpty() && streamingText.isEmpty()) {
@@ -727,7 +727,7 @@ private fun ChatMessageList(
                 ExtendedFloatingActionButton(
                     onClick = {
                         scope.launch {
-                            // 【优化】复用 jumpToBottom 的两阶段滚动逻辑，
+                            // 复用 jumpToBottom 的两阶段滚动逻辑，
                             // 等布局稳定后持续滚动直到真正触底。
                             jumpToBottom()
                         }
@@ -891,7 +891,7 @@ private fun ToolsGroupRow(
             }
         }
     ) {
-        // 【体验修复】此前这里对每条消息直接渲染完整卡片（tool_call / tool_result 各一张大卡），
+        // 体验修复 此前这里对每条消息直接渲染完整卡片（tool_call / tool_result 各一张大卡），
         // 工具返回会像气泡一样“抛”在聊天流里。改为与工作过程一致的配对紧凑渲染：
         // 一次调用一行，结果折成「输出 N 行」，点击才展开详情。
         WorkProcessItemList(

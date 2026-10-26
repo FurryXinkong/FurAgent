@@ -13,7 +13,7 @@ data class Memory(
     val content: String,
     val createdAt: Long,
     /**
-     * 【F2 新增】是否注入 system prompt。
+     * 是否注入 system prompt。
      * 新建的记忆默认 true；用户可在记忆列表手动关闭某条。
      * 反序列化时默认 true，保证旧数据不丢失。
      */
@@ -25,7 +25,7 @@ object MemoryStore {
 
     private fun file(context: Context) = File(context.filesDir, FILE_NAME)
 
-    // 【批次 21 性能优化】内存缓存。
+    // 内存缓存。
     // 每轮对话组装 prompt 都会调 toPromptString -> list()，如果每次都读盘解析 JSON，
     // 记忆条目多了会严重拖慢 Agent 响应速度。
     @Volatile private var cachedMemories: List<Memory>? = null
@@ -38,10 +38,10 @@ object MemoryStore {
     /**
      * 读取全部记忆。
      *
-     * 【P0 已修】单条容错 + FileRecovery
+     * P0 已修 单条容错 + FileRecovery
      * 反序列化 enabled，缺省 true
      *
-     * 【缓存关键】按 createdAt 升序（旧 → 新）。
+     * 缓存关键 按 createdAt 升序（旧 → 新）。
      * 记忆会拼进 system prompt，顺序稳定才能保住前缀缓存。
      */
     fun list(context: Context): List<Memory> {
@@ -165,7 +165,7 @@ object MemoryStore {
     }
 
     /**
-     * 【F2 新增】切换单条记忆的启用状态。
+     * 切换单条记忆的启用状态。
      * 关闭后该条不注入 system prompt，但仍留在列表可随时重开。
      */
     fun setEnabled(context: Context, id: String, enabled: Boolean) {
@@ -223,7 +223,7 @@ object MemoryStore {
     /**
      * 只注入 enabled=true 的记忆。
      *
-     * 【缓存关键】取最近 maxEntries 条（list() 已按 createdAt 升序，故取尾部）。
+     * 缓存关键 取最近 maxEntries 条（list() 已按 createdAt 升序，故取尾部）。
      * 尾部追加语义：新增记忆只影响末尾，前面已缓存的前缀不受影响。
      */
     fun toPromptString(context: Context, maxEntries: Int = 20): String {

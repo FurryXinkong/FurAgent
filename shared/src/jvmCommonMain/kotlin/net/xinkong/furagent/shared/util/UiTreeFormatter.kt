@@ -12,10 +12,10 @@ package net.xinkong.furagent.shared.util
  * {gN} 只在节点来自"被穿透的父容器"时出现（groupId != 0）。
  * 同一组内的节点通常有并列关系（同一列表行、同一组 Tab）。
  *
- * 【不做豁免】全部节点照常渲染，不按"是否有意义"做过滤——
+ * 不做豁免 全部节点照常渲染，不按"是否有意义"做过滤——
  * 过滤会让 AI 看不到本应看到的元素。层级缩进保持原树结构。
  *
- * 【默认不截断】
+ * 默认不截断
  *  maxChars / maxLines / nodeTextLimit 默认都是 0，表示不限制。
  *  UI 树的文本量本身不大（复杂屏幕也就几万字符），真正的 token 大户是图片。
  *  用户如果确实想限制，可以显式传参。
@@ -57,7 +57,7 @@ object UiTreeFormatter {
     ) {
         if (maxLines > 0 && lineCount[0] >= maxLines) return
 
-        // 【不做豁免】原先 isSignificant 为 false 的节点会被跳过（"无意义空容器"），
+        // 不做豁免 原先 isSignificant 为 false 的节点会被跳过（"无意义空容器"），
         // 属于会让 AI 看不到元素的过滤，现全部渲染。
         val indent = "  ".repeat(depth.coerceAtMost(15))
         sb.append(indent).append(buildNodeLine(node, nodeTextLimit)).append('\n')
@@ -92,7 +92,7 @@ object UiTreeFormatter {
         }
         if (!node.enabled) sb.append(" (disabled)")
         if (!node.visible) sb.append(" (invisible)")
-        // 【新增】来源容器组标记
+        // 来源容器组标记
         if (node.groupId != 0) {
             sb.append(" {g").append(node.groupId).append('}')
         }

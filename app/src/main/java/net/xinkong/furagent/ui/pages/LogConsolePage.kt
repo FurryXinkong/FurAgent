@@ -51,7 +51,6 @@ import kotlinx.coroutines.withContext
 /**
  * 日志控制台 —— 整屏页面。
  *
- * 【本次改动】
  *  - 新增：级别多选过滤（调试 / 信息 / 警告 / 错误）
  *    点任意 chip 就是 toggle 该级别，默认全部启用。
  *  - 新增：「复制可见」按钮（把当前过滤后可见的日志拼成文本复制到剪贴板）。
@@ -81,10 +80,10 @@ fun LogConsolePage(
     var fileLogs by remember { mutableStateOf<List<LogEntry>>(emptyList()) }
     var availableDates by remember { mutableStateOf<List<String>>(emptyList()) }
     var refreshKey by remember { mutableIntStateOf(0) }
-    // 【体验优化 B23】清空按钮加二次确认，区分实时视图 / 文件视图
+    // 体验优化 清空按钮加二次确认，区分实时视图 / 文件视图
     var showClearConfirm by remember { mutableStateOf(false) }
 
-    // 【新增】级别多选：默认全部启用
+    // 级别多选：默认全部启用
 
     val allLevels = remember {
         listOf(
@@ -106,12 +105,12 @@ fun LogConsolePage(
 
     val sourceLogs = if (selectedDate == null) logs else fileLogs
 
-    // 【新增】按级别过滤（type → 级别归类后再判断）
+    // 按级别过滤（type → 级别归类后再判断）
     val displayLogs = remember(sourceLogs, enabledLevels) {
         sourceLogs.filter { levelOf(it.type) in enabledLevels }
     }
 
-    // 【新增】复制可见日志到剪贴板
+    // 复制可见日志到剪贴板
     fun copyVisibleLogs() {
         try {
             if (displayLogs.isEmpty()) {
@@ -130,7 +129,7 @@ fun LogConsolePage(
         }
     }
 
-    // 【体验优化 B23】清空二次确认
+    // 体验优化 清空二次确认
     if (showClearConfirm) {
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
@@ -253,7 +252,7 @@ fun LogConsolePage(
                     }
                 }
 
-                // ============ 【新增】级别多选行 ============
+                // 级别多选行 ============
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -299,7 +298,7 @@ fun LogConsolePage(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    // 【新增】复制可见
+                    // 复制可见
                     OutlinedButton(
                         onClick = { copyVisibleLogs() },
                         shape = RoundedCornerShape(AppRadius.SM),
@@ -583,7 +582,7 @@ private fun LogEntryCard(entry: LogEntry) {
                 )
             }
             Spacer(Modifier.height(8.dp))
-            // 【体验优化 B4】超长日志折叠：默认只显示前 2000 字符，避免 UI 卡顿
+            // 体验优化 超长日志折叠：默认只显示前 2000 字符，避免 UI 卡顿
             var expanded by remember(entry.timestamp, entry.type) { mutableStateOf(false) }
             if (entry.content.length > 2000) {
                 SelectionContainer {

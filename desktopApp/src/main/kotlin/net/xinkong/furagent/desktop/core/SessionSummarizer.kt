@@ -17,7 +17,7 @@ import java.util.*
 import java.util.concurrent.TimeUnit
 
 /**
- * 【P1-2】会话摘要器。
+ * 会话摘要器。
  *
  * 目标：把"历史会话在聊什么"压成一句 20-30 字的标签，存进长期记忆，
  * 让新会话的模型知道"用户之前聊过什么"。
@@ -149,7 +149,7 @@ object SessionSummarizer {
                 var processed = 0
                 var summarized = 0
 
-                // 【脆弱解构清理】显式字段访问，不依赖 SessionMeta 字段位置顺序。
+                // 脆弱解构清理 显式字段访问，不依赖 SessionMeta 字段位置顺序。
                 for (meta in sessions) {
                     if (processed >= MAX_SESSIONS_PER_RUN) break
                     val id = meta.id
@@ -183,7 +183,7 @@ object SessionSummarizer {
     }
 
     /**
-     * 【修复】会话删除后，摘要本体由 DesktopSessionStore.delete 级联清掉，
+     * 会话删除后，摘要本体由 DesktopSessionStore.delete 级联清掉，
      * 但 session_summary_state.json 里的脏标记会变成孤儿键（永久累积、无限增长）。
      * 删除会话 / 清空会话后调用本方法，把已不存在会话的标记清掉。
      */
@@ -233,7 +233,7 @@ object SessionSummarizer {
 
         val date = DateFormats.formatDate(session.updatedAt)
         val content = "$SUMMARY_PREFIX[$date] $label"
-        // 【P1-3】构造摘要详情 JSON，供 UI 展示“摘要怎么来的”
+        // 构造摘要详情 JSON，供 UI 展示“摘要怎么来的”
         val detail = try {
             JSONObject().apply {
                 put("tools", JSONArray(signals.tools))
@@ -257,7 +257,7 @@ object SessionSummarizer {
         val words: List<String>
     )
 
-    // 【注意】不能用原始字符串 """..."""，否则 \u4e00 / \s / \d 会被当字面量。
+    // 注意 不能用原始字符串 """..."""，否则 \u4e00 / \s / \d 会被当字面量。
     private val PATH_REGEX = Regex("[A-Za-z]:\\\\[^\\s\"'<>|*?]+|/[A-Za-z0-9_\\-./]{4,}")
     private val CJK_REGEX = Regex("[\u4e00-\u9fa5]{2,4}")
 
@@ -267,7 +267,7 @@ object SessionSummarizer {
         val commandList = mutableListOf<String>()
         val wordCounts = LinkedHashMap<String, Int>()
 
-        // 【脆弱解构清理】显式字段访问，不依赖 ChatMessage 字段位置顺序。
+        // 脆弱解构清理 显式字段访问，不依赖 ChatMessage 字段位置顺序。
         for (msg in session.messages) {
             val content = msg.content
             val type = msg.type
@@ -317,7 +317,7 @@ object SessionSummarizer {
     /**
      * 路径压缩：把完整路径压成"末两段"，并合并同目录。
      *
-     * 【为什么】完整路径（如 D:\JavaSource\FurAgent\desktopApp\src\main\kotlin\
+     * 为什么 完整路径（如 D:\JavaSource\FurAgent\desktopApp\src\main\kotlin\
      * net\xinkong\furagent\desktop\core\DesktopAgent.kt）动辄上百字符，
      * 8 条就能吃掉上千 token，而模型只需要知道"在改哪个文件"。
      *
@@ -358,7 +358,7 @@ object SessionSummarizer {
     /**
      * 命令压缩：去重 + 截断。
      *
-     * 【为什么】同一会话里 AI 常反复跑几乎相同的 cd / 构建命令，
+     * 为什么 同一会话里 AI 常反复跑几乎相同的 cd / 构建命令，
      * 原样拼进去既重复又长。
      */
     private fun compactCommands(commands: List<String>): List<String> {
@@ -410,7 +410,7 @@ object SessionSummarizer {
                 // 推理模型会先输出 reasoning_content，max_tokens 太小会被思考吃光
                 put("max_tokens", 2000)
             }
-            // 【P1-2】按模型能力强制关闭思考（复用 DesktopAgent 的逻辑）
+            // 按模型能力强制关闭思考（复用 DesktopAgent 的逻辑）
             DesktopAgent.applyDisableThinking(body, profile)
 
             val request = Request.Builder()

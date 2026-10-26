@@ -42,7 +42,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * 会话列表 —— 整屏页面。
  *
- * 【UI 统一约定】
+ * UI 统一约定
  *   - 卡片统一 PocoCard
  *   - 页背景 glassPageBg()
  *   - 空状态图标 56dp + onSurfaceVariant 文案
@@ -258,11 +258,11 @@ fun SessionsPage(
     }
 }
 
-// 【批次 20 UI 收口】EmptySessionsState 已合并到 PocoEmptyState（Glass.kt）。
+// 批次 20 UI 收口 EmptySessionsState 已合并到 PocoEmptyState（Glass.kt）。
 
 // 会话行
 
-// 【UI 统一】用 PocoCard 承载。选中态用 primary 描边包裹。
+// UI 统一 用 PocoCard 承载。选中态用 primary 描边包裹。
 
 @Composable
 private fun SessionRow(

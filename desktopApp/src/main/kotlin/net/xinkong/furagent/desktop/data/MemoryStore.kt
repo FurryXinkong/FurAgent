@@ -12,18 +12,18 @@ data class Memory(
     val content: String,
     val createdAt: Long,
     /**
-     * 【F2 新增】是否注入 system prompt。
+     * 是否注入 system prompt。
      * 新建的记忆默认 true；用户可在记忆列表手动关闭某条。
      * 反序列化时默认 true，保证旧数据不丢失。
      */
     val enabled: Boolean = true,
     /**
-     * 【P1-2 新增】会话摘要专用：来源会话 id。
+     * 会话摘要专用：来源会话 id。
      * 普通记忆为空串；会话摘要填对应 sessionId，用于幂等覆盖。
      */
     val sessionId: String = "",
     /**
-     * 【P1-3 新增】会话摘要专用：摘要生成详情（JSON 字符串）。
+     * 会话摘要专用：摘要生成详情（JSON 字符串）。
      * 包含提取到的工具/路径/命令/高频词、喂给模型的 prompt、模型原始输出。
      * 普通记忆为空串。
      */
@@ -48,15 +48,15 @@ object MemoryStore {
     /**
      * 读取全部记忆。
      *
-     * 【P0 已修】单条容错 + FileRecovery
+     * P0 已修 单条容错 + FileRecovery
      * 反序列化 enabled，缺省 true
      *
-     * 【缓存关键】按 createdAt 升序（旧→新）。
+     * 缓存关键 按 createdAt 升序（旧→新）。
      * 记忆会注入 system prompt，若顺序不稳定，新增一条就会让
      * 整个对话历史的 prompt 前缀缓存全部失效。
      * 升序 + 追加写入 = 已有记忆位置不变，只有尾部新增部分未命中。
      *
-     * 【内存缓存】通过文件 mtime 判断是否需要重新读盘。
+     * 内存缓存 通过文件 mtime 判断是否需要重新读盘。
      * 命中缓存时直接返回，避免每次都解析 JSON。
      */
     fun list(): List<Memory> {
@@ -174,7 +174,7 @@ object MemoryStore {
     }
 
     /**
-     * 【F2 新增】切换单条记忆的启用状态。
+     * 切换单条记忆的启用状态。
      * 关闭后该条不注入 system prompt，但仍留在列表可随时重开。
      */
     fun setEnabled(id: String, enabled: Boolean) {
@@ -193,9 +193,9 @@ object MemoryStore {
     }
 
     /**
-     * 【P1-2】新增一条会话摘要（幂等：同 sessionId 只保留一条）。
+     * 新增一条会话摘要（幂等：同 sessionId 只保留一条）。
      * 调用前应先 removeBySessionId。
-     * 【P1-3】detail：摘要生成详情 JSON（可为空）。
+     * detail：摘要生成详情 JSON（可为空）。
      */
     fun addSessionSummary(sessionId: String, content: String, detail: String = ""): Memory {
         val current = list().toMutableList()
@@ -213,7 +213,7 @@ object MemoryStore {
     }
 
     /**
-     * 【P1-2】删除某会话的旧摘要（幂等覆盖用）。
+     * 删除某会话的旧摘要（幂等覆盖用）。
      */
     fun removeBySessionId(sessionId: String) {
         if (sessionId.isBlank()) return
@@ -245,14 +245,14 @@ object MemoryStore {
                     put("createdAt", it.createdAt)
                     // 序列化 enabled
                     put("enabled", it.enabled)
-                    // 【P1-2】序列化 sessionId（普通记忆为空串）
+                    // 序列化 sessionId（普通记忆为空串）
                     if (it.sessionId.isNotBlank()) put("sessionId", it.sessionId)
-                    // 【P1-3】序列化 summaryDetail（普通记忆为空串）
+                    // 序列化 summaryDetail（普通记忆为空串）
                     if (it.summaryDetail.isNotBlank()) put("summaryDetail", it.summaryDetail)
                 })
             }
             atomicWrite(file(), arr.toString())
-            // 【缓存同步】写盘成功后立即更新缓存，避免下次 list() 再读盘。
+            // 缓存同步 写盘成功后立即更新缓存，避免下次 list() 再读盘。
             // 用写入后的时间戳作为 mtime（atomicWrite 可能跨线程，取当前时间兜底）。
             synchronized(cacheLock) {
                 cachedMemories = list
@@ -269,7 +269,7 @@ object MemoryStore {
     /**
      * 只注入 enabled=true 的记忆。
      *
-     * 【缓存关键】取最近 maxEntries 条（list() 已按 createdAt 升序，故取尾部）。
+     * 缓存关键 取最近 maxEntries 条（list() 已按 createdAt 升序，故取尾部）。
      */
     fun toPromptString(maxEntries: Int = 20): String {
         val enabledList = list().filter { it.enabled }

@@ -7,7 +7,7 @@ import java.io.File
 /**
  * JSON 文件的原子读写工具（双端共用）。
  *
- * 【冗余清理 Batch 12a】原来 Android 5 个 Store + 桌面 6 个 Store
+ * 原来 Android 5 个 Store + 桌面 6 个 Store
  * 各有一份几乎相同的 atomicWrite。现统一到这里。
  */
 object JsonFile {

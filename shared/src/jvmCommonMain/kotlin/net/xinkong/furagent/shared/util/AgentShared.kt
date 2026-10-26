@@ -10,13 +10,13 @@ import java.util.Locale
 /**
  * 桌面端 DesktopAgent 与手机端 Agent.kt 共用的 Agent 循环纯逻辑。
  *
- * 【为什么抽这里】
+ * 为什么抽这里
  * 这两端原本各自维护一份几乎逐字相同的实现（SSE 解析、applyDisableThinking、
  * toolSignature、token 估算、tool_search 结果解析、历史截断起点计算）。
  * 任何一处改动都要同步两处，极易漂移。统一到 shared/jvmCommonMain 后，
  * 两端只保留平台差异（回调签名、日志器、工具注册表）。
  *
- * 【不抽的部分】
+ * 不抽的部分
  * - buildHistoryMessages：两端消息模型（DesktopMessage / ChatMessage）不同，
  *   且桌面端有 degradeToolResult 降级、手机端没有，差异较大，各自保留。
  * - 工具执行分发：两端 ToolRegistry / DesktopTools 接口不同，各自保留。
@@ -56,7 +56,7 @@ fun applyDisableThinking(body: JSONObject, baseUrl: String) {
  * 与 applyDisableThinking 对称：各厂商字段名不同，按 baseUrl 关键字分派。
  * 仅当 level != OFF 时由调用方调用。
  *
- * 【强度降级】
+ * 强度降级
  * 各厂商支持程度不同，不支持的档位降级到最接近的可用值：
  *  - DeepSeek：low / high / max 全支持
  *  - OpenAI：low / medium / high（无 max，MAX 降为 high）
@@ -131,7 +131,7 @@ fun parseToolNamesFromSearchResult(text: String): List<String> {
 /**
  * 工具调用签名，用于"同一工具同一参数连续失败 N 次"计数。
  *
- * 【失败去重】签名只取"定位性"参数，忽略翻页/数量类参数。
+ * 失败去重 签名只取"定位性"参数，忽略翻页/数量类参数。
  * 原因：模型重试时常常只改 limit/offset/max_results 这类无关参数，
  * 若把它们算进签名，每次签名都不同，失败计数永远清零，
  * 导致"同一工具反复失败"无法累计到 3 次中断，白白烧 token。
@@ -246,7 +246,7 @@ suspend fun parseSseStream(
         if (choices.length() == 0) continue
         val delta = choices.optJSONObject(0)?.optJSONObject("delta") ?: continue
 
-        // 【坑】org.json 的 optString(key, default) 在字段存在但值为 JSON null 时，
+        // 坑 org.json 的 optString(key, default) 在字段存在但值为 JSON null 时，
         // 返回的是字符串 "null" 而不是 default（内部是 object.toString()）。
         // DeepSeek 官方 API 的流式 chunk 会显式返回 content: null / reasoning_content: null，
         // 直接 optString 会把 "null" 拼进正文和思考面板，表现为满屏 nullnullnull。
@@ -255,7 +255,7 @@ suspend fun parseSseStream(
         val content = if (delta.isNull("content")) "" else delta.optString("content", "")
         if (content.isNotEmpty()) onContent(content)
 
-        // 【深度思考】兼容三种字段名：reasoning_content（DeepSeek 系）/ reasoning（部分中转）/ thinking。
+        // 深度思考 兼容三种字段名：reasoning_content（DeepSeek 系）/ reasoning（部分中转）/ thinking。
         // 只用于实时展示，不持久化、不回传。
         val reasoning = when {
             !delta.isNull("reasoning_content") -> delta.optString("reasoning_content", "")
@@ -353,12 +353,12 @@ data class ToolBudgetResult<T>(
 /**
  * 按 token 预算裁剪历史里的「工具过程」。
  *
- * 【为什么需要】
+ * 为什么需要
  * 只按轮次数截断时，用户消息很少、工具结果很大的会话会失控：
  * 一个轮次里连着读十个大文件，光工具输出就能吃掉几万 token，
  * 而 maxTurns 完全拦不住。结果是“没聊几句就把上下文塞满了”。
  *
- * 【规则】
+ * 规则
  * 估算整段历史的 token。若超出 [budgetTokens]，则**从最旧的一段工具过程开始丢**，
  * 直到落回预算内或工具过程丢完：
  *   - 用户消息（human）和助手文字回复**不丢**：它们决定“之前聊了什么、改了什么”，

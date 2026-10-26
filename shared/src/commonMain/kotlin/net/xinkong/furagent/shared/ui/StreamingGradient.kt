@@ -23,7 +23,7 @@ fun applyStreamingGradient(
 ): AnnotatedString {
     if (content.length <= 1) return AnnotatedString(content)
 
-    // 【渐变曲线 vs 卡顿感】
+    // 渐变曲线 vs 卡顿感
     // 原来 fadeChars = 5 时，字符从 0.15 → 1.0 只跨 5 个字符，
     // 每 32ms 新增一个字符，5 字符 = 160ms 走完，视觉上像"一格一格跳"。
     // 延长到 14 字符后，每字符从最淡到不透明约 450ms，明显更平滑。
@@ -38,7 +38,7 @@ fun applyStreamingGradient(
         val tail = content.substring(gradientStart)
         append(tail)
 
-        // 【性能】原实现逐字符 withStyle（每个字符 create 一次 pushStyle/pop），
+        // 性能 原实现逐字符 withStyle（每个字符 create 一次 pushStyle/pop），
         // 现在改为 addStyle 一次性加 SpanStyle，span 树深度浅、渲染更轻。
         for (i in tail.indices) {
             val posFromEnd = tail.length - 1 - i

@@ -235,7 +235,7 @@ private fun McpServerCard(
     val state = client?.state?.collectAsState()?.value
     val tools = client?.tools?.collectAsState()?.value ?: emptyList()
 
-    // 【F5 补充】算出禁用的工具数
+    // 算出禁用的工具数
     val disabledCount = remember(tools, disabledTools, config.id) {
         tools.count { McpManager.prefixedToolName(config.id, it.name) in disabledTools }
     }
@@ -306,7 +306,7 @@ private fun McpServerCard(
                             color = stateColor,
                             maxLines = 1
                         )
-                        // 【F5 补充】禁用数红字
+                        // 禁用数红字
                         if (disabledCount > 0 && state is McpClient.State.Ready) {
                             Spacer(Modifier.width(6.dp))
                             Text(
