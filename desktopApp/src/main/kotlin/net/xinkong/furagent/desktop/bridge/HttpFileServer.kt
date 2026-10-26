@@ -194,11 +194,6 @@ object HttpFileServer {
     /**
      * 解析 HTTP 请求里的 path 参数。
      *
-     * 原实现只做 File(receiveDir, rawPath).absolutePath，不做规范化，
-     * 也不校验系统目录，导致 `?path=../../etc/passwd` 能读到 receiveDir 之外的文件。
-     * token 泄露 = 任意文件读，必须修。
-     *
-     * 修复策略：
      *   1. canonicalPath 展开 `..` 与软链，得到真实访问路径
      *   2. 明确拒绝系统敏感目录（Linux /proc /sys /dev /boot + Windows System32）
      *   3. 返回 null 表示拒绝访问（不改 resolveRemotePath 的"绝对路径原样访问"能力，
@@ -264,16 +259,7 @@ object HttpFileServer {
                 "Content-Disposition",
                 "attachment; filename=\"${file.name.replace("\"", "_")}\""
             )
-            // 大文件下载 unexpected end of stream。
-            //
-            // 根因：com.sun.net.httpserver 在 sendResponseHeaders(200, contentLength) 声明了
-            // Content-Length 的模式下，JDK 内部在 close() 时检查实际写入是否等于声明长度。
-            // Windows JVM 17/21 上，当响应体 > socket buffer 时，JDK 的节流逻辑偶尔在检查前
-            // 提前 shutdown socket 输出流，客户端（OkHttp）读到 EOF 时实际字节数少于声明值，
-            // 抛 IOException: unexpected end of stream on http://...
-            // KB 级响应一次写完就 flush 不触发；MB 级要分多次写 socket，触发这个竞态。
-            //
-            // 修复：改用 chunked 传输编码（sendResponseHeaders(200, 0)），显式 flush。
+            // chunked 传输编码（sendResponseHeaders(200, 0)），显式 flush。
             // 这是 JDK 官方推荐的流式大文件写法，OkHttp 完全支持 chunked 解码。
             // 副作用：客户端看不到 Content-Length（resp.body.contentLength() 返回 -1），
             //       下载进度条走不确定动画，功能不受影响。

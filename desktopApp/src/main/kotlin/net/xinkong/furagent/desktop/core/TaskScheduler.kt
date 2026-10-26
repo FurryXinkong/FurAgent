@@ -37,8 +37,6 @@ import kotlin.time.Duration.Companion.milliseconds
  *  - 执行超时保护：每个任务最多 10 分钟
  *  - ScheduleStore 读写全部走 Dispatchers.IO，不阻塞 tick
  *
- * 性能修复 原实现里每个到期任务都单独调 ScheduleStore.add / delete，
- * 每次都要读写整个 schedules.json。改为 tick 末尾批量写一次。
  */
 object TaskScheduler {
 
@@ -109,8 +107,6 @@ object TaskScheduler {
         val tasks = withContext(Dispatchers.IO) { ScheduleStore.list() }
         if (tasks.isEmpty()) return
 
-        // 性能修复 本次 tick 内所有 reschedule 操作先收集到内存，
-        // 末尾一次性 batchUpdate 写盘，避免每个到期任务都读写整个 JSON。
         val pendingUpdates = mutableListOf<ScheduledTask>()
         val pendingDeletes = mutableListOf<String>()
 

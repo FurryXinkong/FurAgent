@@ -73,9 +73,7 @@ private const val MAX_EXTRA_ROWS = 3
 /**
  * 收起态在屏幕上露出的宽度/高度。
  *
- * 关键修复 不再用「缩小窗口尺寸」的方式做收起，
- * 改成窗口尺寸恒定为卡片尺寸、只把窗口移到屏幕外。
- * 原来每帧都调 windowState.size，透明分层窗口每次 resize 都要重建
+ * 恒定为卡片尺寸、只把窗口移到屏幕外。
  * 渲染表面 → 拉出/拉回时一闪一闪、还掉帧。
  */
 private val COLLAPSED_PEEK = 8.dp
@@ -366,7 +364,7 @@ private fun FloatingStatusWindowInner(visible: Boolean, onOpenMainWindow: () -> 
         size = cardSize,
     )
 
-    // 修复闪烁 窗口尺寸恒定为卡片尺寸，收起靠移动到屏幖外实现。
+    // 窗口尺寸恒定为卡片尺寸，收起靠移动到屏幖外实现。
     // 只有会话数变化（多会话 +1 行）才改一次尺寸。
     val targetSize: DpSize = cardSize
 

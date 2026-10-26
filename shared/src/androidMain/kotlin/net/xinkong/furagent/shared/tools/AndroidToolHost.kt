@@ -170,7 +170,7 @@ class AndroidToolHost(
     }
 
     /**
-     * 性能修复 原来 `forEach` 里 `if (hits.size < maxResults) hits.add(...)`
+     * 原来 `forEach` 里 `if (hits.size < maxResults) hits.add(...)`
      * 不会提前退出，仍要遍历完 5 万个文件才结束。
      *
      * 改用 Sequence.take(maxResults)：达到数量上限时自动停止上游遍历。

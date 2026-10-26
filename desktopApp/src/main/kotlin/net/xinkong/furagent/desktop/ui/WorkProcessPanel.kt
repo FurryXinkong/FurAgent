@@ -654,10 +654,7 @@ internal fun WorkProcessText(msg: DesktopMessage) {
 }
 
 /**
- * 思考过程（工作过程内部的一步）。
- *
- * 体验修复 原先是一个带背景的折叠面板，夹在紧凑的工具行里显得很空。
- * 现在与「输出 N 行」同构：一行小字「思考 N 行」，点击展开全文，无背景。
+ * 思考过程
  */
 @Composable
 internal fun ReasoningStep(text: String) {

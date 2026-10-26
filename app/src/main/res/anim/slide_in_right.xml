@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    悬浮聊天窗口的进出动画：只做水平位移，不做缩放/淡出。
+    系统 Animation.Dialog 是「缩小 + 淡出」，观感偏重，这里换成最朴素的切屏。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/fast_out_slow_in">
+    <translate
+        android:fromXDelta="100%p"
+        android:toXDelta="0"
+        android:duration="220" />
+</set>

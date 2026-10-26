@@ -155,7 +155,6 @@ private fun materialLight(c: FurColors) = lightColorScheme(
     onError = Color.White,
     errorContainer = c.error.copy(alpha = 0.12f),
     onErrorContainer = Color(0xFF7F1D1D),
-    // C3 修复 显式覆盖 surfaceContainer*，避免深色模式下弹窗用浅色底
     surfaceContainerLowest = Color(0xFFFFFFFF),
     surfaceContainerLow = Color(0xFFFAFAFC),
     surfaceContainer = Color(0xFFF3F3F5),
@@ -183,7 +182,6 @@ private fun materialDark(c: FurColors) = darkColorScheme(
     onError = Color.White,
     errorContainer = c.error.copy(alpha = 0.28f),
     onErrorContainer = Color(0xFFFFB4AB),
-    // C3 修复 显式覆盖 surfaceContainer*，避免深色模式下弹窗用浅色底
     surfaceContainerLowest = Color(0xFF0A0A0C),
     surfaceContainerLow = Color(0xFF151517),
     surfaceContainer = Color(0xFF1C1C1E),

@@ -116,9 +116,6 @@ fun buildChatItems(messages: List<ChatMessage>): List<ChatListItem> {
         }
         if (turn.isEmpty()) continue
 
-        // 体验修复 子会话返回（SUB_SESSION:）原先被单独提出来成卡，泡在聊天流里，
-        // 现在留在折叠组内，由 UI 渲染成一行可点击入口（ChatPage WorkProcessItemList）。
-
         // 工作过程 本轮除「最后一条文字」外的全部内容（思考 + 工具调用）
         // 都归入同一个工作过程面板，思考在组内折叠。
         // 这样一轮任务 = 一个面板，不会出现「思考」和「工作过程」交替平铺的割裂感。

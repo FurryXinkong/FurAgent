@@ -46,8 +46,8 @@ object MarkdownParser {
     private val RE_BLOCK_BULLET = Regex("""^[-*+]\s+.*""")
     private val RE_BLOCK_ORDERED = Regex("""^\d+\.\s+.*""")
     private val RE_BLOCK_DIVIDER = Regex("""^([-*_])\1{2,}\s*$""")
-    // S3 修复 GFM 规范只要 1 个 '-' 就能当表格分隔符（如 |-|-|）；
-    // 原来要求 2 个，导致 AI 输出的紧凑表格识别失败。
+    // GFM 规范只要 1 个 '-' 就能当表格分隔符（如 |-|-|）；
+    // 要求 2 个的话，AI 输出的紧凑表格会识别失败。
     private val RE_TABLE_SEP = Regex("""^:?-+:?$""")
 
     fun parseBlocks(text: String): List<MdBlock> {
@@ -289,7 +289,7 @@ object MarkdownParser {
             }
 
             // 斜体 *...*（不跨 **）
-            // S2 修复 GFM 规范：
+            // GFM 规范：
             //   - 起始 '*' 后面不能是空白
             //   - 结尾 '*' 前面不能是空白
             // 否则 `*a * b*` 里的 `a ` 会被误判成斜体。
@@ -318,9 +318,8 @@ object MarkdownParser {
             }
 
             // 链接 [text](url)
-            // S1 修复 URL 里可能有 '(' / ')'（如维基百科条目），
-            // 直接 indexOf(')') 会在第一个 ')' 处截断。
-            // 改成括号深度匹配。
+            // URL 里可能有 '(' / ')'（如维基百科条目），
+            // 直接 indexOf(')') 会在第一个 ')' 处截断，所以按括号深度匹配。
             if (c == '[') {
                 val textEnd = text.indexOf(']', i + 1)
                 if (textEnd > i + 1 && textEnd + 1 < n && text[textEnd + 1] == '(') {

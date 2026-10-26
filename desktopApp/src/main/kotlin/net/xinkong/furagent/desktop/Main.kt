@@ -27,6 +27,8 @@ import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.*
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.*
+import net.xinkong.furagent.shared.update.UpdateChecker
+import net.xinkong.furagent.shared.update.UpdateInfo
 import net.xinkong.furagent.shared.util.DateFormats
 import org.json.JSONObject
 import java.io.File
@@ -63,7 +65,7 @@ private fun shutdownAndExit() {
  * 日志位置：~/.furagent/logs/crash-*.log（与 DesktopLogger 同目录）。
  */
 private fun installGlobalCrashHandler() {
-    // EDT 弹框修复 AWT 的 EDT 不走 setDefaultUncaughtExceptionHandler，
+    // AWT 的 EDT 不走 setDefaultUncaughtExceptionHandler，
     // 必须把处理器类名设给 sun.awt.exception.handler，否则剪贴板被占用时
     // 会弹原生框 “cannot open system clipboard”。
     // 注意：这里必须设**类名**，设空字符串是无效值（AWT 会回退到默认弹框）。
@@ -216,7 +218,6 @@ fun main() {
                 if (!isMaximized) {
                     // 记一下原来的位置，个别 JVM 上系统还原会跑位，兜底用
                     restoreBounds = window.bounds
-                    // 修复“最大化 = 全屏”
                     // MAXIMIZED_BOTH 对无边框窗口不管用：Windows 看到「无边框 + 铺满整屏」
                     // 就按全屏独占路径处理（DirectFlip），所以最大化后跟全屏一样。
                     // 现在只铺「工作区」（已扣掉任务栏），窗口不覆盖整屏，
@@ -415,6 +416,18 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     var sessionMessages by remember { mutableStateOf<Map<String, List<DesktopMessage>>>(emptyMap()) }
     var inputText by remember { mutableStateOf("") }
 
+    // 检查更新结果。 = 还没查完 / 查失败，此时不显示红点也不改按钮文案。
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
+
+    // 启动时静默检查更新：UpdateChecker 内部切 Dispatchers.IO，
+    // 这里直接 launch 不会阻塞 UI 线程。失败静默忽略。
+    LaunchedEffect(Unit) {
+        val ver = DesktopVersion.current()
+        if (ver.isNotBlank()) {
+            UpdateChecker.check(ver).onSuccess { updateInfo = it }
+        }
+    }
+
     // 会话隔离 输入框草稿按会话保存：切走存盘、切回恢复、输入后防抖落盘。
     // 监听 currentSessionId 而非逐个改切换入口，新增入口也不会漏。
     // 从 Preferences 改为文件存储：Preferences 单值有 8KB 上限，
@@ -551,7 +564,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         sessionTokens = sessionTokens + (sessionId to ((sessionTokens[sessionId] ?: 0L) + 1))
         sessionJobs[sessionId]?.cancel()
         sessionJobs = sessionJobs - sessionId
-        // 中断修复 杀掉正在跑的工具进程（execute_command / ffmpeg / python 等）。
+        // 杀掉正在跑的工具进程（execute_command / ffmpeg / python 等）。
         // 光 cancel 协程只能停住“下一轮”，正在阻塞执行的子进程不会自己退出，
         // 必须主动触发 TaskRuntime 的取消回调（内部会 destroyForcibly + taskkill）。
         //
@@ -1237,7 +1250,29 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                         settings = settings,
                         onSettingsChange = onSettingsChange,
                         onExportAll = { doExportAll() },
-                        onImport = { pickAndImport() }
+                        onImport = { pickAndImport() },
+                        hasUpdate = updateInfo?.hasUpdate == true,
+                        onCheckUpdate = {
+                            scope.launch {
+                                val ver = DesktopVersion.current()
+                                if (ver.isBlank()) {
+                                    ToastBus.error("读取版本号失败")
+                                } else {
+                                    UpdateChecker.check(ver, force = true)
+                                        .onSuccess { info ->
+                                            updateInfo = info
+                                            if (info.hasUpdate) {
+                                                ToastBus.info("发现新版本 ${info.latestVersion}")
+                                            } else {
+                                                ToastBus.info("已是最新版本 ${info.currentVersion}")
+                                            }
+                                        }
+                                        .onFailure {
+                                            ToastBus.error("检查失败，请检查网络")
+                                        }
+                                }
+                            }
+                        }
                     )
                 }
             }

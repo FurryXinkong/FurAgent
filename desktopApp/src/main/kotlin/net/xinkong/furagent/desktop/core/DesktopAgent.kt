@@ -182,7 +182,7 @@ object DesktopAgent {
         val maxLoops = (maxLoopsOverride ?: settings.maxToolCallLoops).coerceAtLeast(1)
 
         repeat(maxLoops) { loopIndex ->
-            // 中断修复 每轮开头检查取消。用户点“停止”后 currentAgentJob.cancel()
+            // 每轮开头检查取消。用户点“停止”后 currentAgentJob.cancel()
             // 会在这里抛出 CancellationException，立即终止循环，不再继续请求/调工具。
             currentCoroutineContext().ensureActive()
 
@@ -267,7 +267,7 @@ object DesktopAgent {
             var toolCalls: MutableMap<Int, ToolCallAccumulator> = mutableMapOf()
 
             try {
-                // 中断修复 流式读取放到可取消包装里：
+                // 流式读取放到可取消包装里：
                 // readUtf8Line() 是阻塞读，协程取消不会中断它。
                 // 取消时主动 response.close()，让阻塞读抛异常退出。
                 withContext(Dispatchers.IO) {
@@ -416,7 +416,7 @@ object DesktopAgent {
 
             if (hasMetaTool || sortedCalls.size <= 1) {
                 sortedCalls.forEach { (idx, acc) ->
-                    // 中断修复 每个工具执行前检查取消
+                    // 每个工具执行前检查取消
                     currentCoroutineContext().ensureActive()
                     val argsJson = acc.arguments.toString()
                     onThinking("正在执行工具：${friendlyName(acc.name)}")
@@ -428,7 +428,6 @@ object DesktopAgent {
             } else {
                 onThinking("正在并行执行 ${sortedCalls.size} 个工具…")
                 DesktopLogger.info("Agent", "并行执行 ${sortedCalls.size} 个工具：${sortedCalls.map { it.second.name }}")
-                // 并行卡死修复
                 //   1) 用 supervisorScope 替代 coroutineScope：单个子协程失败不再取消整批；
                 //   2) 每个 async 内部 try/catch 兜底，把异常（含 CancellationException 之外的
                 //      一切 Throwable）转成 ToolResult.fail，保证子协程永不向外抛异常，
@@ -437,7 +436,7 @@ object DesktopAgent {
                 val executed = supervisorScope {
                     sortedCalls.map { (idx, acc) ->
                         async {
-                            // 中断修复 并行分支也要检查取消。
+                            // 并行分支也要检查取消。
                             // 之前只在串行路径和收尾阶段检查，并行时用户点停止后
                             // 所有分支仍会全部跑完（工具副作用已发生）。
                             currentCoroutineContext().ensureActive()
@@ -467,7 +466,7 @@ object DesktopAgent {
 
             // 串行收尾：UI 更新 + messages.put + 图片附加（保持顺序，drain 只做一次）
             sortedCalls.forEach { (idx, acc) ->
-                // 中断修复 工具跑完后、发结果前再检查一次取消。
+                // 工具跑完后、发结果前再检查一次取消。
                 // 否则用户已点停止，工具结果仍会被推给 UI（“中断像安慰人”的元凶之一）。
                 currentCoroutineContext().ensureActive()
                 val callId = callIds[idx] ?: "call_${loopIndex}_$idx"
@@ -718,7 +717,7 @@ object DesktopAgent {
                         })
                     })
 
-                    // 关键修复 按 toolCallId 配对，不能只看位置相邻。
+                    // 按 toolCallId 配对，不能只看位置相邻。
                     // 并行跑一批工具时，历史里是「A的call, B的call, C的call,
                     // B的result, A的result, C的result」这种错开的顺序。
                     // 旧逻辑只看下一条是不是 tool_result，于是 A 被判成
@@ -1048,7 +1047,7 @@ object DesktopAgent {
     private suspend fun executeTool(
         name: String, argsJson: String, settings: DesktopSettings
     ): ToolResult {
-        // 中断修复 工具执行前再确认一次未取消。
+        // 工具执行前再确认一次未取消。
         // 调用方（runOneTool）已经检查过，但元工具分支可能耗时（tool_search 扫目录），
         // 这里再兵一道，避免“用户已点停止但工具仍被执行”。
         currentCoroutineContext().ensureActive()

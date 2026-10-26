@@ -10,15 +10,7 @@ import kotlin.time.Duration.Companion.milliseconds
 /**
  * 桌面端确认协调器。
  *
- * 工具执行前挂起等待用户点击"允许"/"拒绝"。
- * UI 端订阅 pending 状态弹 AlertDialog。
- * 300 秒无响应视为拒绝（避免永远卡住）。
- *
- * 并行修复 原实现是单槽位（一个 deferred + 一个 pending），
- * 并行执行多个需要确认的工具时，后一个会覆盖前一个：
- *   - UI 只弹一次窗（pending 被覆盖）；
- *   - 先到的请求永远等不到 resolve，卡到 300s 超时。
- * 现改为队列：每个请求各自持有 CompletableDeferred，UI 依次弹窗，
+ * 每个请求各自持有 CompletableDeferred，UI 依次弹窗，
  * resolve 只完成队首，完成后自动把下一个设为 pending。
  *
  * 线程模型：request 在协程（可能多线程）调用；resolve 在 UI 线程调用。

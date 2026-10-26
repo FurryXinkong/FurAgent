@@ -27,6 +27,8 @@ import kotlinx.coroutines.launch
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.EnvDetector
 import net.xinkong.furagent.shared.tools.BackupHelper
+import net.xinkong.furagent.shared.update.UpdateChecker
+import net.xinkong.furagent.desktop.system.openExternalUrl
 import net.xinkong.furagent.shared.tools.TrashHelper
 import net.xinkong.furagent.desktop.system.TempCleaner
 import net.xinkong.furagent.desktop.tools.DesktopTools
@@ -57,7 +59,11 @@ fun SettingsPage(
     settings: DesktopSettings,
     onSettingsChange: (DesktopSettings) -> Unit,
     onExportAll: () -> Unit,
-    onImport: () -> Unit
+    onImport: () -> Unit,
+    /** 是否检测到新版本，用于在「关于我们」分组标题上点红点 */
+    hasUpdate: Boolean = false,
+    /** 手动检查更新（忽略缓存） */
+    onCheckUpdate: () -> Unit = {}
 ) {
     var wfRefreshKey by remember { mutableIntStateOf(0) }
     var showWorkflowEditor by remember { mutableStateOf(false) }
@@ -897,6 +903,53 @@ fun SettingsPage(
                     }
                 }
 
+                // 关于我们
+                SettingGroup(
+                    title = "关于我们",
+                    groupKey = "about",
+                    expanded = isExpanded("about"),
+                    onToggle = { toggleGroup("about") },
+                    badge = hasUpdate
+                ) {
+                    Text(
+                        "FurAgent By Xinkong",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = TextPrimary()
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (hasUpdate) "检测到新版本，点下方按钮查看" else "已是最新版本",
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        color = if (hasUpdate) AccentColor() else TextSecondary()
+                    )
+
+                    Spacer(Modifier.height(12.dp))
+                    GlassDivider(color = BorderSubtle())
+                    Spacer(Modifier.height(12.dp))
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        SecondaryButton(
+                            text = "QQ 群",
+                            onClick = { openExternalUrl(UpdateChecker.QQ_GROUP_URL) }
+                        )
+                        SecondaryButton(
+                            text = if (hasUpdate) "检测到更新" else "GitHub",
+                            onClick = {
+                                openExternalUrl(
+                                    if (hasUpdate) UpdateChecker.RELEASES_URL
+                                    else UpdateChecker.PROJECT_URL
+                                )
+                            }
+                        )
+                        SecondaryButton(
+                            text = "检查更新",
+                            onClick = onCheckUpdate
+                        )
+                    }
+                }
+
                 // 高级
                 SettingGroup(
                     title = "高级",
@@ -1041,6 +1094,8 @@ private fun SettingGroup(
     groupKey: String,
     expanded: Boolean,
     onToggle: () -> Unit,
+    /** true 时在标题右侧点一个小红点（如「关于我们」检测到新版本） */
+    badge: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(Modifier.fillMaxWidth()) {
@@ -1059,6 +1114,14 @@ private fun SettingGroup(
                 color = TextPrimary(),
                 modifier = Modifier.weight(1f)
             )
+            if (badge) {
+                Box(
+                    Modifier
+                        .padding(end = 8.dp)
+                        .size(7.dp)
+                        .background(AccentColor(), CircleShape)
+                )
+            }
             val rotation by androidx.compose.animation.core.animateFloatAsState(
                 targetValue = if (expanded) 180f else 0f,
                 animationSpec = tween(200, easing = FastOutSlowInEasing),

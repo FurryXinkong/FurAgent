@@ -443,7 +443,7 @@ private fun buildHistoryMessages(
                         })
                     })
 
-                    // 关键修复 按 toolCallId 配对，不能只看位置相邻。
+                    // 按 toolCallId 配对，不能只看位置相邻。
                     // 并行跑一批工具时，历史里是「A的call, B的call, C的call,
                     // B的result, A的result, C的result」这种错开的顺序。
                     // 旧逻辑只看下一条是不是 tool_result，于是 A 被判成

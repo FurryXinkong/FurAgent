@@ -10,6 +10,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -17,6 +18,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
@@ -85,7 +87,11 @@ fun SettingsPage(
     themeMode: String,
     onThemeModeChanged: (String) -> Unit,
     onSettingsChanged: (Int, AppSettings) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /** 是否检测到新版本，用于在「关于」分组标题上点红点 */
+    hasUpdate: Boolean = false,
+    /** 手动检查更新（忽略缓存） */
+    onCheckUpdate: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE) }
@@ -718,6 +724,61 @@ fun SettingsPage(
                 }
                 item { Spacer(Modifier.height(8.dp)) }
                 }  // isVisible("new_features")
+
+                // ============ 关于 ============
+                item {
+                    Row(
+                        modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "关于",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            letterSpacing = 0.3.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f)
+                        )
+                        if (hasUpdate) {
+                            Spacer(Modifier.width(6.dp))
+                            // 小红点：检测到新版本时提示
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .background(
+                                        MaterialTheme.colorScheme.error,
+                                        CircleShape
+                                    )
+                            )
+                        }
+                    }
+                }
+                item {
+                    PocoCard {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "FurAgent By Xinkong",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                if (hasUpdate) "检测到新版本，点下方按钮查看" else "已是最新版本",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (hasUpdate) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            OutlinedButton(
+                                onClick = onCheckUpdate,
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(AppRadius.SM)
+                            ) {
+                                Text("检查更新")
+                            }
+                        }
+                    }
+                }
+                item { Spacer(Modifier.height(8.dp)) }
 
                 // ============ 高级（分组可见性，此分组自身不可隐藏） ============
                 item { PocoGroupTitle("高级") }

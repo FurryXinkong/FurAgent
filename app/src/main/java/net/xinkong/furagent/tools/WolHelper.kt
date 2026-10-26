@@ -15,7 +15,6 @@ import java.util.*
 /**
  * Wake-on-LAN。
  *
- * 本版关键修复
  *  1. DatagramSocket 必须用 DatagramSocket(null) 创建（未绑定），否则
  *     DatagramSocket() 无参构造会隐式 bind 到通配地址，之后 network.bindSocket
  *     会抛 IllegalStateException: Socket is already bound。
@@ -72,7 +71,7 @@ object WolHelper {
                 socket.broadcast = true
                 try { socket.reuseAddress = true } catch (_: Exception) { }
 
-                // 关键修复 在 bind 之前绑定 WiFi 网络
+                // 在 bind 之前绑定 WiFi 网络
                 if (context != null) {
                     try {
                         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE)

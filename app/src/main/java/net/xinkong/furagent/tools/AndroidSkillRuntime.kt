@@ -158,7 +158,7 @@ class AndroidSkillRuntime(private val context: Context) : SkillRuntime {
         cfg: SkillConfig,
         timeout: Int
     ): ToolResult = withContext(Dispatchers.IO) {
-        // 并发串结果修复 Chaquopy 是单进程单解释器，sys.stdin/stdout 是全局状态。
+        // Chaquopy 是单进程单解释器，sys.stdin/stdout 是全局状态。
         // 两个脚本同时跑时，A 把 sys.stdout 换成自己的 buffer，B 又换一次，
         // A 的输出就写进了 B 的 buffer——表现为“拿到另一个脚本的结果”、
         // “参数丢失”、“报别的脚本的参数校验错误”。

@@ -47,18 +47,15 @@ kotlin {
             api("org.jsoup:jsoup:1.23.2")
         }
 
-        // ★ 关键：让 androidMain 和 jvmMain 显式继承 jvmCommonMain
         val androidMain = getByName("androidMain")
         androidMain.dependsOn(jvmCommonMain)
         androidMain.dependencies {
-            // 构建修复 Android 自带 org.json，不需要额外打包三方库，防 Duplicate Class
             compileOnly("org.json:json:20260814")
         }
 
         val jvmMain = getByName("jvmMain")
         jvmMain.dependsOn(jvmCommonMain)
         jvmMain.dependencies {
-            // 桌面端 JVM 环境没有自带 org.json，必须显式引入
             api("org.json:json:20260814")
         }
     }

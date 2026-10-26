@@ -65,12 +65,7 @@ object TrashHelper {
                 seq++
             }
 
-            // 数据安全修复
-            // 旧实现：renameTo 失败 → 复制 → 无条件 deleteRecursively(src)。
-            // 复制中途 IO 出错（磁盘满 / 中断）时，控制流会进 catch 返回失败，
-            // 但如果 copyTo 只写了一部分就返回（某些 FS 上会发生），
-            // 后面无条件删源 = 数据丢。
-            // 新实现：复制 → 校验 → 通过才删源；失败清掉半成品、保留源。
+            // 复制 → 校验 → 通过才删源；失败清掉半成品、保留源。
             val moved: Boolean = try {
                 if (src.renameTo(dest)) {
                     true

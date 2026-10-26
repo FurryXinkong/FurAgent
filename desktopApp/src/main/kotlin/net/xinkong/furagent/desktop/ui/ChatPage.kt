@@ -466,7 +466,7 @@ private fun ChatMessageList(
             }
         }
 
-        // 滚动修复 用 userScrolledUp 标志替代 canScrollForward 判断。
+        // 用 userScrolledUp 标志替代 canScrollForward 判断。
         // canScrollForward 在新内容刚加入时因布局未稳定而返回错误值，导致滚动永远不触发。
         var userScrolledUp by remember { mutableStateOf(false) }
         var programmaticScroll by remember { mutableStateOf(false) }
@@ -891,7 +891,7 @@ private fun ToolsGroupRow(
             }
         }
     ) {
-        // 体验修复 此前这里对每条消息直接渲染完整卡片（tool_call / tool_result 各一张大卡），
+        // 此前这里对每条消息直接渲染完整卡片（tool_call / tool_result 各一张大卡），
         // 工具返回会像气泡一样“抛”在聊天流里。改为与工作过程一致的配对紧凑渲染：
         // 一次调用一行，结果折成「输出 N 行」，点击才展开详情。
         WorkProcessItemList(

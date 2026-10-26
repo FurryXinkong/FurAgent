@@ -320,11 +320,7 @@ private fun NewChatButton(expanded: Boolean, onClick: () -> Unit) {
         label = "newChatBg"
     )
 
-    // 动画修复 原来 horizontal padding 直接用 if 切换、horizontalArrangement 也用
-    // if 切换，两者都在布尔变化时"跳变"。同时 AnimatedVisibility 里的文字在展开，
-    // 三者不同步 → 图标先跳、文字才跟上，视觉上乱跳。
-
-    // 现在：Arrangement 固定 Start，用 animateDpAsState 平滑动画图标位置。
+    // Arrangement 固定 Start，用 animateDpAsState 平滑动画图标位置。
     // 展开：start = 14.dp（内容左侧留白）
     // 折叠：start = 21.dp（让图标在 60dp 宽 - 6dp*2 侧边留白 = 48dp 里居中：
     //                    (48 - 18) / 2 = 15，加上侧边栏外层的 6，实际给 start 15）
@@ -408,7 +404,7 @@ private fun NavItem(
         label = "navTextColor"
     )
 
-    // 动画修复 同 NewChatButton：图标位置用动画，Arrangement 固定。
+    // 同 NewChatButton：图标位置用动画，Arrangement 固定。
     // 展开：start = 12.dp
     // 折叠：start = 15.dp（48dp 可用宽度里让 18dp 图标居中）
     val startPadding by animateDpAsState(
@@ -551,7 +547,7 @@ private fun SessionItem(
                 modifier = Modifier.weight(1f)
             )
             Spacer(Modifier.width(4.dp))
-            // hover 移动修复 菜单按钮常驻占位：标题宽度恒定，鼠标悬停不再
+            // 菜单按钮常驻占位：标题宽度恒定，鼠标悬停不再
             // 插入/移除按钮导致整行文字重排位移。悬停只改变按钮存在感（纯视觉）。
             Box(
                 Modifier

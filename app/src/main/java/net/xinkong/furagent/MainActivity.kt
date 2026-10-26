@@ -22,6 +22,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
@@ -85,6 +86,8 @@ import net.xinkong.furagent.tools.SDCARD_PATH
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.tools.ToolRegistry.SubSessionProgress
 import net.xinkong.furagent.ui.*
+import net.xinkong.furagent.shared.update.UpdateChecker
+import net.xinkong.furagent.shared.update.UpdateInfo
 import net.xinkong.furagent.ui.pages.*
 import net.xinkong.furagent.ui.theme.FurAgentTheme
 import net.xinkong.furagent.ui.theme.AppRadius
@@ -499,12 +502,27 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     // 短交互（更多功能面板、关于）保留 boolean。
     var currentPage by rememberSaveable { mutableStateOf<AppPage?>(null) }
     var showAbout by rememberSaveable { mutableStateOf(false) }
+    // 检查更新结果。 = 还没查完 / 查失败，此时不显示红点也不改按钮文案。
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var showMorePanel by rememberSaveable { mutableStateOf(false) }
     // 会话专用提示词弹窗
     var showSessionPrompt by remember { mutableStateOf(false) }
 
 
     var maxTurns by remember { mutableIntStateOf(prefs.getInt("max_turns", 5)) }
+
+    // 启动时静默检查更新：后台 IO 线程跑，失败不打扰用户。
+    // 结果只用来点亮设置页红点、改「关于我们」里的 GitHub 按钮文案。
+    LaunchedEffect(Unit) {
+        val ver = try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+        if (ver.isNotBlank()) {
+            UpdateChecker.check(ver).onSuccess { updateInfo = it }
+        }
+    }
     var crashInfo by remember { mutableStateOf(CrashStore.load(context)) }
     var selectedMessage by remember { mutableStateOf<ChatMessage?>(null) }
     var editingMessage by remember { mutableStateOf<ChatMessage?>(null) }
@@ -1009,7 +1027,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 val userMsg = ChatMessage(role = "user", content = text, imagePaths = finalImages)
                 val withUser = chatHistory + userMsg
                 chatHistory = withUser
-                // 滚动修复 用户主动发消息时无需在此重置上滑锁定：
+                // 用户主动发消息时无需在此重置上滑锁定：
                 // userScrolledUp 是聊天页 Composable 内的局部 remember 状态，本函数作用域访问不到；
                 // 且自动滚动逻辑里 shouldFollow = !userScrolledUp || last?.role == "user"，
                 // 最后一条是 user 消息时本就会强制跟随滚动，功能上无需额外重置。
@@ -1574,6 +1592,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     }
 
     if (showAbout) {
+        val hasUpdate = updateInfo?.hasUpdate == true
         PocoAlertDialog(
             onDismiss = { showAbout = false },
             title = "关于我们",
@@ -1582,26 +1601,33 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     Text("FurAgent By Xinkong", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     Spacer(Modifier.height(4.dp))
                     Text("QQ: 226355502", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        "内部测试版 请勿泄露",
-                        color = MaterialTheme.colorScheme.error,
-                        fontWeight = FontWeight.Medium
-                    )
+                    updateInfo?.let { info ->
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            if (info.hasUpdate) {
+                                "当前版本 ${info.currentVersion} · 最新 ${info.latestVersion}"
+                            } else {
+                                "当前版本 ${info.currentVersion} · 已是最新"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (info.hasUpdate) MaterialTheme.colorScheme.primary
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             },
-            confirmText = "访问 Bilibili",
+            // 有更新时主按钮变成「检测到更新」，跳 Release 页；否则是普通项目页
+            confirmText = if (hasUpdate) "检测到更新" else "GitHub",
             onConfirm = {
-                try {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, "https://space.bilibili.com/454325752".toUri())
-                    )
-                } catch (e: Exception) {
-                    AgentLogger.log(
-                        "ERR",
-                        "打开 Bilibili 失败：${e.javaClass.simpleName}: ${e.message}"
-                    )
-                }
+                openUrlSafely(
+                    context,
+                    if (hasUpdate) UpdateChecker.RELEASES_URL else UpdateChecker.PROJECT_URL,
+                    "GitHub"
+                )
+            },
+            extraDismissText = "QQ 群",
+            onExtraDismissClick = {
+                openUrlSafely(context, UpdateChecker.QQ_GROUP_URL, "QQ 群")
             },
             dismissText = "关闭",
             onDismissClick = { showAbout = false }
@@ -2570,31 +2596,31 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         AnimatedContent(
             targetState = currentPage,
             transitionSpec = {
-                // 标准水平平移（iOS / Material 通用）：
-                // 进入：新页从右整屏滑入，旧页左移 1/4
-                // 退出：旧页右滑整屏离场，下层从 -1/4 归位
-                // 不做淡入淡出，纯位移最稳、最不抢戏
+                // 纯水平位移切屏：进入从右滑入，退出向右滑出。
+                // 必须显式关掉 SizeTransform 的 clip，否则新旧内容尺寸不同时
+                // AnimatedContent 会裁剪并缩放内容，观感就是"画面缩小"。
                 if (targetState != null) {
                     slideInHorizontally(
-                        animationSpec = tween(300, easing = FastOutSlowInEasing),
+                        animationSpec = tween(260, easing = FastOutSlowInEasing),
                         initialOffsetX = { it }
                     ) togetherWith
                             slideOutHorizontally(
-                                animationSpec = tween(300, easing = FastOutSlowInEasing),
-                                targetOffsetX = { -it / 4 }
+                                animationSpec = tween(260, easing = FastOutSlowInEasing),
+                                targetOffsetX = { it }
                             )
                 } else {
                     slideInHorizontally(
-                        animationSpec = tween(300, easing = FastOutSlowInEasing),
-                        initialOffsetX = { -it / 4 }
+                        animationSpec = tween(260, easing = FastOutSlowInEasing),
+                        initialOffsetX = { -it }
                     ) togetherWith
                             slideOutHorizontally(
-                                animationSpec = tween(300, easing = FastOutSlowInEasing),
+                                animationSpec = tween(260, easing = FastOutSlowInEasing),
                                 targetOffsetX = { it }
                             )
-                }
+                }.using(SizeTransform(clip = false))
             },
             label = "pageTransition",
+            contentAlignment = Alignment.Center,
             modifier = Modifier.fillMaxSize()
         ) { page ->
             if (page != null) {
@@ -2686,6 +2712,36 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         settings = settings,
                         maxTurns = maxTurns,
                         themeMode = themeMode,
+                        hasUpdate = updateInfo?.hasUpdate == true,
+                        onCheckUpdate = {
+                            scope.launch {
+                                val ver = try {
+                                    context.packageManager
+                                        .getPackageInfo(context.packageName, 0).versionName ?: ""
+                                } catch (e: Exception) {
+                                    ""
+                                }
+                                if (ver.isBlank()) {
+                                    notifyToast(context, "读取版本号失败")
+                                } else {
+                                    UpdateChecker.check(ver, force = true)
+                                        .onSuccess { info ->
+                                            updateInfo = info
+                                            notifyToast(
+                                                context,
+                                                if (info.hasUpdate) {
+                                                    "发现新版本 ${info.latestVersion}"
+                                                } else {
+                                                    "已是最新版本 ${info.currentVersion}"
+                                                }
+                                            )
+                                        }
+                                        .onFailure {
+                                            notifyToast(context, "检查失败，请检查网络")
+                                        }
+                                }
+                            }
+                        },
                         onThemeModeChanged = { newMode ->
                             themeMode = newMode
                             onThemeModeChanged(newMode)
@@ -2803,5 +2859,19 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             else -> Unit
         }
     }
+
+/**
+ * 安全打开外部链接。
+ *
+ * 设备上没有能处理该 scheme 的应用时 startActivity 会抛
+ * ActivityNotFoundException，这里统一兜住并记日志，避免点按钮直接崩。
+ */
+private fun openUrlSafely(context: android.content.Context, url: String, label: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+    } catch (e: Exception) {
+        AgentLogger.log("ERR", "打开 $label 失败：${e.javaClass.simpleName}: ${e.message}")
+    }
+}
 
 /** 子代理入口 + 修改历史对话框 → 已拆到 ui/AndroidDialogs.kt */

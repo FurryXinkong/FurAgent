@@ -36,6 +36,22 @@ kotlin {
     jvmToolchain(21)
 }
 
+// 把版本号写进 jar Manifest 的 Implementation-Version，
+// 运行时 DesktopVersion.current() 通过 Package.implementationVersion 读出来，
+// 用于检查更新时和 GitHub Release 的 tag 比较。
+tasks.jar {
+    manifest {
+        attributes["Implementation-Version"] = furagentVersion
+        attributes["Implementation-Title"] = "FurAgent"
+        attributes["Implementation-Vendor"] = "Xinkong"
+    }
+}
+
+// 开发期直接 gradle run 时没有 Manifest，用系统属性兜底
+tasks.withType<JavaExec>().configureEach {
+    systemProperty("furagent.version", furagentVersion)
+}
+
 compose.desktop {
     application {
         mainClass = "net.xinkong.furagent.desktop.MainKt"

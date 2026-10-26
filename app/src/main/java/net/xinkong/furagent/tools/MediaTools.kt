@@ -112,7 +112,6 @@ object MediaTools {
     /**
      * preset 处理。
      *
-     * P1/P2 修复
      *   - concat / grid / slideshow 的多文件列表：split 后**逐个** normalizeAlias，
      *     否则中文别名 / 相对路径会走到 PathGuard.check 时按 cwd 解析被误杀。
      *   - watermark_path / subtitle_path / overlay / audio 也是用户提供的文件路径，

@@ -794,14 +794,6 @@ internal fun SystemNoteRow(msg: DesktopMessage) {
 }
 
 // 深度思考面板（默认折叠，可展开）
-
-/**
- * 展示模型返回的深度思考内容（reasoning_content / reasoning / thinking）。
- * 默认折叠，点标题栏展开。不持久化，仅实时展示。
- *
- * 体验修复 原先用带背景的 CollapsiblePanel，内容少时显得很空；
- * 改为与工作过程内「思考 N 行」一致的无背景紧凑行。
- */
 @Composable
 internal fun ReasoningPanel(text: String) {
     val accent = Color(0xFF7C5CFF)

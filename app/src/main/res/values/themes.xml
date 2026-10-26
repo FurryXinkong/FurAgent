@@ -16,6 +16,7 @@
         <item name="android:windowBackground">@android:color/transparent</item>
         <item name="android:windowNoTitle">true</item>
         <item name="android:backgroundDimEnabled">true</item>
-        <item name="android:windowAnimationStyle">@android:style/Animation.Dialog</item>
+        <!-- 纯水平位移切屏，不用系统的 Animation.Dialog（那是缩小+淡出） -->
+        <item name="android:windowAnimationStyle">@style/Animation.FurAgent.Slide</item>
     </style>
 </resources>

@@ -137,7 +137,7 @@ fun ModelProfileCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
-            // hover 移动修复 按钮行常驻占位，悬停/选中只改透明度——
+            // 按钮行常驻占位，悬停/选中只改透明度——
             // 左侧文字宽度恒定，鼠标移入不再因按钮插入而挤压重排。
             // 未显示时鼠标不在行上，透明按钮不会被误触。
             Row(
