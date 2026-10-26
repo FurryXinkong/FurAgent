@@ -130,4 +130,10 @@ A：只要兼容 OpenAI 规范且支持 Tool Calling 的接口理论上都能接
 
 ## 开源协议
 
-本项目基于 **Apache License 2.0** 开源。你可以随时审查代码或自行编译分发。
+本项目基于 **Apache License 2.0** 开源，许可证全文见 [LICENSE](LICENSE)。你可以随时审查代码或自行编译分发。
+
+### 第三方资源
+
+本项目内置的 **MiSans 字体**（`shared/src/commonMain/composeResources/font/misans_vf.ttf`）由小米科技有限责任公司开发，面向全球免费商用，**不受本项目 Apache-2.0 约束**，其权利归小米所有。根据小米官方要求，使用方应在软件中注明使用了 MiSans 字体——详见 [NOTICE](NOTICE)。
+
+其它第三方组件与完整声明见 [NOTICE](NOTICE)。

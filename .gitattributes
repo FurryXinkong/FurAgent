@@ -1,0 +1,75 @@
+# ============================================================
+# 换行符统一
+# ------------------------------------------------------------
+# 目标：仓库内一律存 LF，检出到工作区时按类型还原。
+# 好处：避免 Windows/Mac 混用导致「改一行、diff 整个文件全变」。
+# ============================================================
+* text=auto eol=lf
+
+# Shell 脚本必须是 LF，否则 Linux/macOS 下执行会报 bad interpreter
+*.sh text eol=lf
+gradlew text eol=lf
+*.fish text eol=lf
+*.properties text eol=lf
+
+# Windows 批处理必须是 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Windows PowerShell 脚本保持 CRLF（避免旧版 PowerShell 解析问题）
+*.ps1 text eol=crlf
+
+# ============================================================
+# 显式声明文本文件（保证 diff 正常、不被当成二进制）
+# ============================================================
+*.kt text
+*.kts text
+*.java text
+*.py text
+*.xml text
+*.json text
+*.md text
+*.MD text
+*.txt text
+*.yml text
+*.yaml text
+*.toml text
+*.pro text
+*.gradle text
+
+# LICENSE 类文件不加 CRLF 转换，保持原文
+LICENSE text eol=lf
+NOTICE text eol=lf
+
+# ============================================================
+# 二进制文件（禁止 git 尝试按文本 diff）
+# ============================================================
+*.ttf binary
+*.otf binary
+*.woff binary
+*.woff2 binary
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.zip binary
+*.jar binary
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.apk binary
+*.aab binary
+*.jks binary
+*.keystore binary
+
+# ============================================================
+# GitHub 语言统计：把生成代码/资源从占比里排除，使统计真实反映手写代码
+# ============================================================
+shared/src/commonMain/kotlin/net/xinkong/furagent/shared/icons/AppIcons.kt linguist-generated=true
+app/src/main/java/net/xinkong/furagent/tools/ToolRegistry.kt linguist-generated=true
+shared/src/commonMain/composeResources/font/** linguist-detectable=false
+app/src/main/res/** linguist-detectable=false
+desktopApp/src/main/resources/icon.ico linguist-detectable=false

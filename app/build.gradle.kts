@@ -53,7 +53,13 @@ android {
     signingConfigs {
         create("release") {
             // 路径与别名非敏感，保留默认值；密码类字段无默认值，必须外部配置。
-            storeFile = file(signingSecret("furagent.storeFile", "FURAGENT_STORE_FILE", "D:\\JavaSource\\FurAgent\\furagent.jks"))
+            // 不内置任何机器相关的默认路径：storeFile 必须由 local.properties
+            // 的 furagent.storeFile 或环境变量 FURAGENT_STORE_FILE 显式提供。
+            // 未提供时 storeFile 为 null，release 构建会因缺少签名而失败，
+            // 不会静默使用某个本地路径（也避免把作者本机目录结构写进仓库）。
+            storeFile = signingSecret("furagent.storeFile", "FURAGENT_STORE_FILE")
+                .takeIf { it.isNotBlank() }
+                ?.let { file(it) }
             storePassword = signingSecret("furagent.storePassword", "FURAGENT_STORE_PASSWORD")
             keyAlias = signingSecret("furagent.keyAlias", "FURAGENT_KEY_ALIAS", "furagent")
             keyPassword = signingSecret("furagent.keyPassword", "FURAGENT_KEY_PASSWORD")
