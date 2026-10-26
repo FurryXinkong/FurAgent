@@ -36,7 +36,10 @@ android {
         minSdk = 30
         targetSdk = 37
         versionCode = rootProject.extra["buildVersionCode"] as Int
-        versionName = rootProject.extra["buildVersionName"] as String
+        // 版本号格式与桌面端统一为 yy.mm.build（如 26.10.24119）。
+        // 两端格式一致，同一个 GitHub Release tag 才能同时服务双端；
+        // 否则安卓的 yyyyMMddHHmm 和桌面的 yy.mm.build 按段比较会永远判定"有更新"。
+        versionName = rootProject.extra["buildVersionNameDotted"] as String
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

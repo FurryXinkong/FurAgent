@@ -424,7 +424,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     LaunchedEffect(Unit) {
         val ver = DesktopVersion.current()
         if (ver.isNotBlank()) {
-            UpdateChecker.check(ver).onSuccess { updateInfo = it }
+            UpdateChecker.check(ver, UpdateChecker.Platform.DESKTOP).onSuccess { updateInfo = it }
         }
     }
 
@@ -1258,7 +1258,11 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                                 if (ver.isBlank()) {
                                     ToastBus.error("读取版本号失败")
                                 } else {
-                                    UpdateChecker.check(ver, force = true)
+                                    UpdateChecker.check(
+                                        ver,
+                                        UpdateChecker.Platform.DESKTOP,
+                                        force = true
+                                    )
                                         .onSuccess { info ->
                                             updateInfo = info
                                             if (info.hasUpdate) {
@@ -1271,6 +1275,24 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                                             ToastBus.error("检查失败，请检查网络")
                                         }
                                 }
+                            }
+                        },
+                        onDownloadUpdate = {
+                            val info = updateInfo
+                            val url = info?.downloadUrl
+                            if (url.isNullOrBlank()) {
+                                // 没有对应平台的安装包附件，退回 Release 页面让用户自己选
+                                ToastBus.warn("没有找到安装包，已打开更新页面")
+                                openExternalUrl(UpdateChecker.RELEASES_URL)
+                            } else {
+                                // 存到 ~/.furagent/downloads，文件名沿用 Release 附件名
+                                val dir = DesktopPaths.receivedDir()
+                                val name = url.substringAfterLast('/').ifBlank {
+                                    "FurAgent-${info.latestVersion}.exe"
+                                }
+                                val target = File(dir, name)
+                                DownloadManager.download(url, target.absolutePath)
+                                ToastBus.info("开始下载 $name")
                             }
                         }
                     )

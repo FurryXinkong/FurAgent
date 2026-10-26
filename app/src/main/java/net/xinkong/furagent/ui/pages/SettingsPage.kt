@@ -91,7 +91,9 @@ fun SettingsPage(
     /** 是否检测到新版本，用于在「关于」分组标题上点红点 */
     hasUpdate: Boolean = false,
     /** 手动检查更新（忽略缓存） */
-    onCheckUpdate: () -> Unit = {}
+    onCheckUpdate: () -> Unit = {},
+    /** 一键下载更新包（检测到更新时可用） */
+    onDownloadUpdate: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE) }
@@ -768,6 +770,17 @@ fun SettingsPage(
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(Modifier.height(12.dp))
+                            // 检测到更新时，主按钮直接下安装包
+                            if (hasUpdate) {
+                                Button(
+                                    onClick = onDownloadUpdate,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(AppRadius.SM)
+                                ) {
+                                    Text("下载更新")
+                                }
+                                Spacer(Modifier.height(8.dp))
+                            }
                             OutlinedButton(
                                 onClick = onCheckUpdate,
                                 modifier = Modifier.fillMaxWidth(),

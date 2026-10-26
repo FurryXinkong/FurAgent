@@ -23,6 +23,17 @@ import java.util.concurrent.TimeUnit
  */
 object UpdateChecker {
 
+    /**
+     * 平台标识。决定从 Release 附件里挑哪种安装包。
+     *
+     * 一个 Release 同时挂 apk 和 exe，如果只按"第一个匹配的扩展名"取，
+     * 两端都会命中排在前面的 apk。必须按平台精确过滤。
+     */
+    enum class Platform(val extensions: List<String>) {
+        ANDROID(listOf(".apk")),
+        DESKTOP(listOf(".exe", ".msi"))
+    }
+
     const val OWNER = "FurryXinkong"
     const val REPO = "FurAgent"
 
@@ -56,18 +67,26 @@ object UpdateChecker {
     /**
      * 检查更新。
      *
-     * @param currentVersion 本地版本号。Android 传 versionName（yyyyMMddHHmm），
-     *                       桌面传 version（yy.mm.build）。两者都是纯数字分段，
-     *                       可以直接按段比较大小。
+     * @param currentVersion 本地版本号。双端统一为 yy.mm.build（如 26.10.24119），
+     *                       纯数字分段，可以直接按段比较大小。
      * @param force true 时忽略缓存，强制重新请求（用户手动点「检查更新」时用）
      */
-    suspend fun check(currentVersion: String, force: Boolean = false): Result<UpdateInfo> =
+    suspend fun check(
+        currentVersion: String,
+        platform: Platform,
+        force: Boolean = false
+    ): Result<UpdateInfo> =
         withContext(Dispatchers.IO) {
             // 缓存命中且未过期
             if (!force) {
                 val c = cached
                 if (c != null && System.currentTimeMillis() - cachedAt < CACHE_TTL_MS) {
-                    return@withContext Result.success(c.copy(currentVersion = currentVersion))
+                    return@withContext Result.success(
+                        c.copy(
+                            currentVersion = currentVersion,
+                            downloadUrl = pickAsset(c.assets, platform)
+                        )
+                    )
                 }
             }
 
@@ -89,7 +108,8 @@ object UpdateChecker {
                                 currentVersion = currentVersion,
                                 releaseNotes = "",
                                 downloadUrl = null,
-                                htmlUrl = PROJECT_URL
+                                htmlUrl = PROJECT_URL,
+                                assets = emptyList()
                             )
                             cached = info
                             cachedAt = System.currentTimeMillis()
@@ -107,16 +127,17 @@ object UpdateChecker {
                     val notes = json.optString("body").trim()
                     val htmlUrl = json.optString("html_url").ifBlank { RELEASES_URL }
 
-                    // 优先找 .apk（Android）/ .exe 或 .msi（桌面），找不到就退回更新页
-                    var downloadUrl: String? = null
-                    val assets = json.optJSONArray("assets")
-                    if (assets != null) {
-                        for (i in 0 until assets.length()) {
-                            val a = assets.optJSONObject(i) ?: continue
-                            val name = a.optString("name").lowercase()
-                            if (name.endsWith(".apk") || name.endsWith(".exe") || name.endsWith(".msi")) {
-                                downloadUrl = a.optString("browser_download_url").ifBlank { null }
-                                if (downloadUrl != null) break
+                    // 收集所有附件（名称 + 直链），再按平台挑。
+                    // 不能边遍历边 break：一个 Release 同时挂 apk 和 exe，
+                    // 谁排在前面就命中谁，桌面端会下到安卓包。
+                    val assets = mutableListOf<Asset>()
+                    json.optJSONArray("assets")?.let { arr ->
+                        for (i in 0 until arr.length()) {
+                            val a = arr.optJSONObject(i) ?: continue
+                            val name = a.optString("name")
+                            val url = a.optString("browser_download_url")
+                            if (name.isNotBlank() && url.isNotBlank()) {
+                                assets += Asset(name, url)
                             }
                         }
                     }
@@ -126,8 +147,9 @@ object UpdateChecker {
                         latestVersion = latest,
                         currentVersion = currentVersion,
                         releaseNotes = notes,
-                        downloadUrl = downloadUrl,
-                        htmlUrl = htmlUrl
+                        downloadUrl = pickAsset(assets, platform),
+                        htmlUrl = htmlUrl,
+                        assets = assets
                     )
                     cached = info
                     cachedAt = System.currentTimeMillis()
@@ -138,6 +160,18 @@ object UpdateChecker {
                 Result.failure(e)
             }
         }
+
+    /**
+     * 从附件列表里挑出当前平台该下的那个。
+     *
+     * 只认本平台的扩展名，避免安卓包被桌面端命中。
+     * 找不到返回 null，调用方退回跳 Release 页面。
+     */
+    private fun pickAsset(assets: List<Asset>, platform: Platform): String? =
+        assets.firstOrNull { a ->
+            val lower = a.name.lowercase()
+            platform.extensions.any { lower.endsWith(it) }
+        }?.url
 
     /** 清掉缓存，测试用 */
     fun clearCache() {
@@ -193,6 +227,12 @@ data class UpdateInfo(
     val latestVersion: String,
     val currentVersion: String,
     val releaseNotes: String,
+    /** 当前平台对应的安装包直链，没有则为 null */
     val downloadUrl: String?,
-    val htmlUrl: String
+    val htmlUrl: String,
+    /** Release 的全部附件，缓存命中时用它重新按平台挑 */
+    val assets: List<Asset> = emptyList()
 )
+
+/** Release 附件：文件名 + 下载直链 */
+data class Asset(val name: String, val url: String)

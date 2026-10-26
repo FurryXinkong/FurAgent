@@ -520,7 +520,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             ""
         }
         if (ver.isNotBlank()) {
-            UpdateChecker.check(ver).onSuccess { updateInfo = it }
+            UpdateChecker.check(ver, UpdateChecker.Platform.ANDROID).onSuccess { updateInfo = it }
         }
     }
     var crashInfo by remember { mutableStateOf(CrashStore.load(context)) }
@@ -2724,7 +2724,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 if (ver.isBlank()) {
                                     notifyToast(context, "读取版本号失败")
                                 } else {
-                                    UpdateChecker.check(ver, force = true)
+                                    UpdateChecker.check(
+                                        ver,
+                                        UpdateChecker.Platform.ANDROID,
+                                        force = true
+                                    )
                                         .onSuccess { info ->
                                             updateInfo = info
                                             notifyToast(
@@ -2739,6 +2743,38 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         .onFailure {
                                             notifyToast(context, "检查失败，请检查网络")
                                         }
+                                }
+                            }
+                        },
+                        onDownloadUpdate = {
+                            val info = updateInfo
+                            val url = info?.downloadUrl
+                            if (url.isNullOrBlank()) {
+                                // 没有 apk 附件，退回 Release 页面让用户自己选
+                                notifyToast(context, "没有找到安装包，已打开更新页面")
+                                openUrlSafely(context, UpdateChecker.RELEASES_URL, "更新页面")
+                            } else {
+                                scope.launch {
+                                    val name = url.substringAfterLast('/').ifBlank {
+                                        "FurAgent-${info.latestVersion}.apk"
+                                    }
+                                    val dir = java.io.File("/sdcard/FurAgent/downloads")
+                                    if (!dir.exists()) dir.mkdirs()
+                                    val target = java.io.File(dir, name)
+                                    notifyToast(context, "开始下载 $name")
+                                    val result = net.xinkong.furagent.shared.util.DownloadEngine
+                                        .download(
+                                            url = url,
+                                            target = target,
+                                            threads = 4
+                                        )
+                                    if (result.ok) {
+                                        notifyToast(context, "下载完成，点通知安装")
+                                        net.xinkong.furagent.system.NotificationHelper
+                                            .showFileReceivedNotification(context, target)
+                                    } else {
+                                        notifyToast(context, "下载失败：${result.message}")
+                                    }
                                 }
                             }
                         },

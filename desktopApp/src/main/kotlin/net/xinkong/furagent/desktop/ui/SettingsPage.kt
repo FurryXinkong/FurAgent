@@ -63,7 +63,9 @@ fun SettingsPage(
     /** 是否检测到新版本，用于在「关于我们」分组标题上点红点 */
     hasUpdate: Boolean = false,
     /** 手动检查更新（忽略缓存） */
-    onCheckUpdate: () -> Unit = {}
+    onCheckUpdate: () -> Unit = {},
+    /** 一键下载更新包（检测到更新时可用） */
+    onDownloadUpdate: () -> Unit = {}
 ) {
     var wfRefreshKey by remember { mutableIntStateOf(0) }
     var showWorkflowEditor by remember { mutableStateOf(false) }
@@ -930,12 +932,19 @@ fun SettingsPage(
                     Spacer(Modifier.height(12.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        // 检测到更新时，主按钮直接下安装包；否则是普通项目页入口
+                        if (hasUpdate) {
+                            PrimaryButton(
+                                text = "下载更新",
+                                onClick = onDownloadUpdate
+                            )
+                        }
                         SecondaryButton(
                             text = "QQ 群",
                             onClick = { openExternalUrl(UpdateChecker.QQ_GROUP_URL) }
                         )
                         SecondaryButton(
-                            text = if (hasUpdate) "检测到更新" else "GitHub",
+                            text = if (hasUpdate) "更新页面" else "GitHub",
                             onClick = {
                                 openExternalUrl(
                                     if (hasUpdate) UpdateChecker.RELEASES_URL
