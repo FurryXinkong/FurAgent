@@ -1,17 +1,12 @@
 package net.xinkong.furagent.tools
 
 import android.content.Context
+import kotlinx.coroutines.launch
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.ConfirmationBroker
 import net.xinkong.furagent.core.runAgentTurn
-import net.xinkong.furagent.data.AppSettings
-import net.xinkong.furagent.data.HistoryStore
-import net.xinkong.furagent.data.ChatMessage
-import net.xinkong.furagent.data.Session
-import net.xinkong.furagent.data.SessionStore
-import net.xinkong.furagent.data.currentProfile
+import net.xinkong.furagent.data.*
 import net.xinkong.furagent.shared.tools.*
-import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -115,14 +110,17 @@ object ToolRegistry {
     }
 
     // 【批次 18】O(1) 路由表，消灭层层 if-else 判断
-    private val PRIVATE_ROUTER: Map<String, (JSONObject, Context, AppSettings) -> String> by lazy {
-        val map = mutableMapOf<String, (JSONObject, Context, AppSettings) -> String>()
-        SystemTools.TOOLS.forEach { map[it.name] = { a, c, s -> SystemTools.execute(it.name, a, c, s) } }
-        FileTools.TOOLS.forEach { map[it.name] = { a, c, s -> FileTools.execute(it.name, a, c, s) } }
-        MediaTools.TOOLS.forEach { map[it.name] = { a, c, s -> MediaTools.execute(it.name, a, c, s) } }
-        RemoteTools.TOOLS.forEach { map[it.name] = { a, c, s -> RemoteTools.execute(it.name, a, c, s) } }
-        ScreenTools.TOOLS.forEach { map[it.name] = { a, c, s -> ScreenTools.execute(it.name, a, c, s) } }
-        ImageGenTools.TOOLS.forEach { map[it.name] = { a, c, s -> ImageGenTools.execute(it.name, a, c, s) } }
+    // 【修复】TOOLS 是 Set<String>，集合元素本身就是工具名（不是 ToolSpec）；
+    // 各 *Tools.execute 都是 suspend 函数，所以路由表必须是 suspend 函数类型，
+    // 否则在普通 lambda 里调用会报 "can only be called from a coroutine"。
+    private val PRIVATE_ROUTER: Map<String, suspend (JSONObject, Context, AppSettings) -> String> by lazy {
+        val map = mutableMapOf<String, suspend (JSONObject, Context, AppSettings) -> String>()
+        SystemTools.TOOLS.forEach { n -> map[n] = { a, c, s -> SystemTools.execute(n, a, c, s) } }
+        FileTools.TOOLS.forEach { n -> map[n] = { a, c, s -> FileTools.execute(n, a, c, s) } }
+        MediaTools.TOOLS.forEach { n -> map[n] = { a, c, s -> MediaTools.execute(n, a, c, s) } }
+        RemoteTools.TOOLS.forEach { n -> map[n] = { a, c, s -> RemoteTools.execute(n, a, c, s) } }
+        ScreenTools.TOOLS.forEach { n -> map[n] = { a, c, s -> ScreenTools.execute(n, a, c, s) } }
+        ImageGenTools.TOOLS.forEach { n -> map[n] = { a, c, s -> ImageGenTools.execute(n, a, c, s) } }
         map
     }
 
@@ -806,7 +804,7 @@ object ToolRegistry {
      */
     private suspend fun summarizeIfTruncated(
         history: List<ChatMessage>,
-        profile: net.xinkong.furagent.data.ModelProfile,
+        profile: ModelProfile,
         context: Context,
         settings: AppSettings,
     ): List<ChatMessage> {
@@ -889,7 +887,7 @@ object ToolRegistry {
     private val subSessionScope = kotlinx.coroutines.CoroutineScope(
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO +
                 kotlinx.coroutines.CoroutineName(
-                    net.xinkong.furagent.core.ConfirmationBroker.SUBSESSION_COROUTINE_NAME
+                    ConfirmationBroker.SUBSESSION_COROUTINE_NAME
                 )
     )
 
@@ -1050,7 +1048,7 @@ object ToolRegistry {
     }
 
     /** sub_session 工具：查询子会话运行状态 / 列表 / 结果（op=status|list|result） */
-    private suspend fun querySubSession(args: JSONObject, context: Context): String {
+    private fun querySubSession(args: JSONObject, context: Context): String {
         val op = args.optString("op", "status").trim().ifBlank { "status" }
         val id = args.optString("id", "").trim()
         return when (op) {
@@ -1113,8 +1111,7 @@ object ToolRegistry {
         if (name in VISION_TOOLS) {
             val profile = settings.currentProfile()
             if (profile != null && !profile.supportsVision) {
-                return "失败：当前模型 [${profile.name}] 不支持图片输入，" +
-                        "「${displayName(name)}」已禁用。请到设置里勾选该模型的「支持图片输入」，" +
+                return@withContext "失败：当前模型 [${profile.name}] 不支持图片输入，" +                        "「${displayName(name)}」已禁用。请到设置里勾选该模型的「支持图片输入」，" +
                         "或换一个支持多模态的模型。"
             }
         }
@@ -1125,26 +1122,21 @@ object ToolRegistry {
 
         if (name == "tool_search") {
             val query = a.str("query")
-            if (query.isBlank()) return "失败：tool_search 需要 query 参数"
+            if (query.isBlank()) return@withContext "失败：tool_search 需要 query 参数"
             val category = a.str("category")
             AgentLogger.log("TOOL", "tool_search query=$query category=$category")
-            return searchToolsForAgent(query, category, settings)
-        }
+            return@withContext searchToolsForAgent(query, category, settings)        }
         if (name == "tool_load") {
             val toolName = a.str("name")
-            if (toolName.isBlank()) return "失败：tool_load 需要 name 参数"
+            if (toolName.isBlank()) return@withContext "失败：tool_load 需要 name 参数"
             AgentLogger.log("TOOL", "tool_load name=$toolName")
-            return loadToolForAgent(toolName, settings)
-        }
+            return@withContext loadToolForAgent(toolName, settings)        }
         if (name == "run_sub_session") {
-            return runSubSession(args, context, settings)
-        }
+            return@withContext runSubSession(args, context, settings)        }
         if (name == "sub_session") {
-            return querySubSession(args, context)
-        }
+            return@withContext querySubSession(args, context)        }
         if (name == "history") {
-            return HistoryTools.execute(
-                args,
+            return@withContext HistoryTools.execute(                args,
                 context,
                 BackupHelper.backupDirFor(getHost(context, settings).trashDir())
             )
@@ -1165,7 +1157,7 @@ object ToolRegistry {
                 // 【临时执行 Python】与桌面端 python 工具对齐。
                 // 受 requireConfirmPython 控制（与 pytool run 同一个开关）。
                 val code = a.str("code")
-                if (code.isBlank()) return "失败：python 需要 code 参数"
+                if (code.isBlank()) return@withContext "失败：python 需要 code 参数"
                 val timeout = a.int("timeout", 60).coerceIn(1, 600)
                 val workDir = a.str("work_dir")
                 val stdinArgs = a.json("args") ?: JSONObject()
@@ -1178,7 +1170,7 @@ object ToolRegistry {
                                 "超时：$timeout 秒" +
                                 if (workDir.isNotBlank()) "\n工作目录：$workDir" else ""
                     )
-                    if (!approved) return "用户已拒绝执行 Python 代码"
+                    if (!approved) return@withContext "用户已拒绝执行 Python 代码"
                 }
 
                 val r = net.xinkong.furagent.shared.skill.SkillStore.execCode(
@@ -1201,7 +1193,7 @@ object ToolRegistry {
                             "AI 请求${action}脚本：$targetName\n\n" +
                                     "目录：${net.xinkong.furagent.shared.skill.SkillStore.scriptsDir().absolutePath}"
                         )
-                        if (!approved) return "用户已拒绝${action}脚本"
+                        if (!approved) return@withContext "用户已拒绝${action}脚本"
                     }
 
                     // 2) 执行脚本
@@ -1228,7 +1220,7 @@ object ToolRegistry {
                                         "参数：\n$argsPreview\n\n" +
                                         "超时：$timeout 秒"
                             )
-                            if (!approved) return "用户已拒绝运行脚本"
+                            if (!approved) return@withContext "用户已拒绝运行脚本"
                         }
                     }
                 }

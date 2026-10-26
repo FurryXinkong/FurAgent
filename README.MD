@@ -1,6 +1,6 @@
 # FurAgent
 
-> **️ 这是一个作者自用的个人项目。**
+> **这是一个作者自用的个人项目。**
 > FurAgent 不是商业产品，也不是面向大众的成熟软件。它的功能是按作者自己的使用习惯长出来的，代码里有一些临时方案和已知瑕疵，界面和接口也可能随时改动。开源出来是希望给同样想折腾本地 Agent 的人一个参考，欢迎在 Issue 里反馈问题，但请**不要按生产级软件的预期来要求它**。
 
 [![Platform](https://img.shields.io/badge/platform-Android%2011%2B%20%7C%20Windows%2010%2B-blue.svg)](#)
@@ -35,9 +35,9 @@ FurAgent 是一个基于 Kotlin Multiplatform (KMP) 开发的、跑在你自己�
 
 | 能力 | Android | Windows |
 |---|---|---|
-| 模型直连 (BYOK) | ✅ | ✅ |
-| 局域网互联 / 文件传输 | ✅ | ✅ |
-| Wake-on-LAN | ✅ | — |
+| 模型直连 (BYOK) | 支持 | 支持 |
+| 局域网互联 / 文件传输 | 支持 | 支持 |
+| Wake-on-LAN | 支持 | — |
 | 屏幕 UI 操作 | 无障碍服务 | UIA |
 | ADB 级权限 | Shizuku | — |
 | Python 脚本 | Chaquopy | 见构建说明 |
