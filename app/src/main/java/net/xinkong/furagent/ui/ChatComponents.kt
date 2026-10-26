@@ -125,7 +125,6 @@ fun SideDrawerContent(
     onOpenMemory: () -> Unit,
     onOpenAdvancedSettings: () -> Unit,
     onToggleFloating: () -> Unit,
-    onOpenAbout: () -> Unit,
     // 手机端排版 从顶栏挪进来的入口
     onOpenSubList: () -> Unit = {},
     onOpenHistory: () -> Unit = {},
@@ -240,7 +239,6 @@ fun SideDrawerContent(
             Spacer(Modifier.height(6.dp))
         }
 
-        DrawerItem(Icons.Default.Favorite, "关于我们", onOpenAbout)
         Spacer(Modifier.height(20.dp))
         Column(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 16.dp)

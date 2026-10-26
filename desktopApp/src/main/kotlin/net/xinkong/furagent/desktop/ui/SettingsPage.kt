@@ -27,6 +27,7 @@ import kotlinx.coroutines.launch
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.EnvDetector
 import net.xinkong.furagent.shared.tools.BackupHelper
+import net.xinkong.furagent.desktop.system.DesktopVersion
 import net.xinkong.furagent.shared.update.UpdateChecker
 import net.xinkong.furagent.desktop.system.openExternalUrl
 import net.xinkong.furagent.shared.tools.TrashHelper
@@ -914,14 +915,14 @@ fun SettingsPage(
                     badge = hasUpdate
                 ) {
                     Text(
-                        "FurAgent By Xinkong",
+                        "FurAgent v${DesktopVersion.current()}",
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Medium,
                         color = TextPrimary()
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        if (hasUpdate) "检测到新版本，点下方按钮查看" else "已是最新版本",
+                        if (hasUpdate) "检测到新版本，点下方按钮查看" else "已经是最新版本",
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
                         color = if (hasUpdate) AccentColor() else TextSecondary()

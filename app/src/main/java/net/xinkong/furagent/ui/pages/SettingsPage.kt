@@ -1,8 +1,4 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
-
 package net.xinkong.furagent.ui.pages
-import net.xinkong.furagent.ui.GradientSlider
-import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.content.Context
 import androidx.compose.animation.animateContentSize
@@ -11,7 +7,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -20,38 +15,29 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.net.toUri
 import kotlinx.coroutines.launch
+import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.testModelConnection
 import net.xinkong.furagent.data.AppSettings
 import net.xinkong.furagent.data.ModelProfile
 import net.xinkong.furagent.data.SettingsStore
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.update.UpdateChecker
 import net.xinkong.furagent.system.notifyToast
-import net.xinkong.furagent.ui.ApplyBackgroundBlur
-import net.xinkong.furagent.ui.EditModelDialog
-import net.xinkong.furagent.ui.GlassSheen
-import net.xinkong.furagent.ui.PocoCard
-import net.xinkong.furagent.ui.PocoDivider
-import net.xinkong.furagent.ui.PocoGroupTitle
-import net.xinkong.furagent.ui.PocoPageTopBar
-import net.xinkong.furagent.ui.PocoSwitchRow
-import net.xinkong.furagent.ui.PocoTextField
-import net.xinkong.furagent.ui.glassPageBg
+import net.xinkong.furagent.ui.*
+import net.xinkong.furagent.ui.theme.AppRadius
 import java.util.*
 
 /**
@@ -88,7 +74,7 @@ fun SettingsPage(
     onThemeModeChanged: (String) -> Unit,
     onSettingsChanged: (Int, AppSettings) -> Unit,
     onBack: () -> Unit,
-    /** 是否检测到新版本，用于在「关于」分组标题上点红点 */
+    /** 是否检测到新版本，用于在「关于我们」分组标题上点红点 */
     hasUpdate: Boolean = false,
     /** 手动检查更新（忽略缓存） */
     onCheckUpdate: () -> Unit = {},
@@ -96,6 +82,14 @@ fun SettingsPage(
     onDownloadUpdate: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    // 版本号：从 PackageManager 读，读不到就留空
+    val appVersion = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: ""
+        } catch (e: Exception) {
+            ""
+        }
+    }
     val prefs = remember { context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
     var turnsInput by remember { mutableStateOf(maxTurns.toString()) }
@@ -727,14 +721,16 @@ fun SettingsPage(
                 item { Spacer(Modifier.height(8.dp)) }
                 }  // isVisible("new_features")
 
-                // ============ 关于 ============
+                // ============ 关于我们 ============
+                // 与桌面端 SettingsPage 的「关于我们」分组结构对齐：
+                // 标题（有更新时点红点）→ 产品名 + 版本状态 → 分隔线 → 按钮行
                 item {
                     Row(
                         modifier = Modifier.padding(start = 8.dp, top = 12.dp, bottom = 2.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            "关于",
+                            "关于我们",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.SemiBold,
                             letterSpacing = 0.3.sp,
@@ -746,10 +742,7 @@ fun SettingsPage(
                             Box(
                                 modifier = Modifier
                                     .size(7.dp)
-                                    .background(
-                                        MaterialTheme.colorScheme.error,
-                                        CircleShape
-                                    )
+                                    .background(MaterialTheme.colorScheme.error, CircleShape)
                             )
                         }
                     }
@@ -758,35 +751,66 @@ fun SettingsPage(
                     PocoCard {
                         Column(modifier = Modifier.padding(16.dp)) {
                             Text(
-                                "FurAgent By Xinkong",
-                                style = MaterialTheme.typography.bodyLarge,
-                                fontWeight = FontWeight.Medium
+                                "FurAgent v$appVersion",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(Modifier.height(4.dp))
                             Text(
-                                if (hasUpdate) "检测到新版本，点下方按钮查看" else "已是最新版本",
-                                style = MaterialTheme.typography.bodySmall,
+                                if (hasUpdate) "检测到新版本，点下方按钮查看" else "已经是最新版本",
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp,
                                 color = if (hasUpdate) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(Modifier.height(12.dp))
-                            // 检测到更新时，主按钮直接下安装包
-                            if (hasUpdate) {
-                                Button(
-                                    onClick = onDownloadUpdate,
-                                    modifier = Modifier.fillMaxWidth(),
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                            Spacer(Modifier.height(12.dp))
+                            // 按钮行：有更新时主按钮直接下安装包
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (hasUpdate) {
+                                    Button(
+                                        onClick = onDownloadUpdate,
+                                        shape = RoundedCornerShape(AppRadius.SM)
+                                    ) {
+                                        Text("下载更新")
+                                    }
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        openUrlSafely(
+                                            context,
+                                            UpdateChecker.QQ_GROUP_URL,
+                                            "QQ 群"
+                                        )
+                                    },
                                     shape = RoundedCornerShape(AppRadius.SM)
                                 ) {
-                                    Text("下载更新")
+                                    Text("QQ 群")
                                 }
-                                Spacer(Modifier.height(8.dp))
-                            }
-                            OutlinedButton(
-                                onClick = onCheckUpdate,
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(AppRadius.SM)
-                            ) {
-                                Text("检查更新")
+                                OutlinedButton(
+                                    onClick = {
+                                        openUrlSafely(
+                                            context,
+                                            if (hasUpdate) UpdateChecker.RELEASES_URL
+                                            else UpdateChecker.PROJECT_URL,
+                                            if (hasUpdate) "更新页面" else "GitHub"
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(AppRadius.SM)
+                                ) {
+                                    Text(if (hasUpdate) "更新页面" else "GitHub")
+                                }
+                                OutlinedButton(
+                                    onClick = onCheckUpdate,
+                                    shape = RoundedCornerShape(AppRadius.SM)
+                                ) {
+                                    Text("检查更新")
+                                }
                             }
                         }
                     }
@@ -840,6 +864,28 @@ fun SettingsPage(
                 item { Spacer(Modifier.height(32.dp)) }
             }
         }
+    }
+}
+
+/**
+ * 安全打开外部链接。
+ *
+ * 设备上没有能处理该 scheme 的应用时 startActivity 会抛
+ * ActivityNotFoundException，这里统一兜住，避免点按钮直接崩。
+ */
+private fun openUrlSafely(context: Context, url: String, label: String) {
+    try {
+        context.startActivity(
+            android.content.Intent(
+                android.content.Intent.ACTION_VIEW,
+                url.toUri()
+            )
+        )
+    } catch (e: Exception) {
+        AgentLogger.log(
+            "ERR",
+            "打开 $label 失败：${e.javaClass.simpleName}: ${e.message}"
+        )
     }
 }
 

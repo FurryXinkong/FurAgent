@@ -501,7 +501,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     // 整屏 Page 导航
     // 短交互（更多功能面板、关于）保留 boolean。
     var currentPage by rememberSaveable { mutableStateOf<AppPage?>(null) }
-    var showAbout by rememberSaveable { mutableStateOf(false) }
     // 检查更新结果。 = 还没查完 / 查失败，此时不显示红点也不改按钮文案。
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var showMorePanel by rememberSaveable { mutableStateOf(false) }
@@ -1591,49 +1590,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         AndroidPyRunDialog(path = p, onDismiss = { filePyPath = null })
     }
 
-    if (showAbout) {
-        val hasUpdate = updateInfo?.hasUpdate == true
-        PocoAlertDialog(
-            onDismiss = { showAbout = false },
-            title = "关于我们",
-            text = {
-                Column {
-                    Text("FurAgent By Xinkong", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Spacer(Modifier.height(4.dp))
-                    Text("QQ: 226355502", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    updateInfo?.let { info ->
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            if (info.hasUpdate) {
-                                "当前版本 ${info.currentVersion} · 最新 ${info.latestVersion}"
-                            } else {
-                                "当前版本 ${info.currentVersion} · 已是最新"
-                            },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = if (info.hasUpdate) MaterialTheme.colorScheme.primary
-                            else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            },
-            // 有更新时主按钮变成「检测到更新」，跳 Release 页；否则是普通项目页
-            confirmText = if (hasUpdate) "检测到更新" else "GitHub",
-            onConfirm = {
-                openUrlSafely(
-                    context,
-                    if (hasUpdate) UpdateChecker.RELEASES_URL else UpdateChecker.PROJECT_URL,
-                    "GitHub"
-                )
-            },
-            extraDismissText = "QQ 群",
-            onExtraDismissClick = {
-                openUrlSafely(context, UpdateChecker.QQ_GROUP_URL, "QQ 群")
-            },
-            dismissText = "关闭",
-            onDismissClick = { showAbout = false }
-        )
-    }
-
     if (showMorePanel) {
         val morePanelSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
         ModalBottomSheet(
@@ -1870,13 +1826,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 }
                             }
                         },
-                        onOpenAbout = {
-                            scope.launch {
-                                drawerState.close()
-                                showAbout = true
-                            }
-                        },
-                        // 手机端排版 从顶栏挪进来的入口
+// 手机端排版 从顶栏挪进来的入口
                         onOpenSubList = {
                             scope.launch { drawerState.close() }
                             subListOpen = true
@@ -2747,36 +2697,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             }
                         },
                         onDownloadUpdate = {
-                            val info = updateInfo
-                            val url = info?.downloadUrl
-                            if (url.isNullOrBlank()) {
-                                // 没有 apk 附件，退回 Release 页面让用户自己选
-                                notifyToast(context, "没有找到安装包，已打开更新页面")
-                                openUrlSafely(context, UpdateChecker.RELEASES_URL, "更新页面")
-                            } else {
-                                scope.launch {
-                                    val name = url.substringAfterLast('/').ifBlank {
-                                        "FurAgent-${info.latestVersion}.apk"
-                                    }
-                                    val dir = java.io.File("/sdcard/FurAgent/downloads")
-                                    if (!dir.exists()) dir.mkdirs()
-                                    val target = java.io.File(dir, name)
-                                    notifyToast(context, "开始下载 $name")
-                                    val result = net.xinkong.furagent.shared.util.DownloadEngine
-                                        .download(
-                                            url = url,
-                                            target = target,
-                                            threads = 4
-                                        )
-                                    if (result.ok) {
-                                        notifyToast(context, "下载完成，点通知安装")
-                                        net.xinkong.furagent.system.NotificationHelper
-                                            .showFileReceivedNotification(context, target)
-                                    } else {
-                                        notifyToast(context, "下载失败：${result.message}")
-                                    }
-                                }
-                            }
+                            downloadUpdateApk(context, scope, updateInfo)
                         },
                         onThemeModeChanged = { newMode ->
                             themeMode = newMode
@@ -2907,6 +2828,47 @@ private fun openUrlSafely(context: android.content.Context, url: String, label: 
         context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
     } catch (e: Exception) {
         AgentLogger.log("ERR", "打开 $label 失败：${e.javaClass.simpleName}: ${e.message}")
+    }
+}
+
+/**
+ * 下载更新包并提示安装。
+ *
+ * 从「关于我们」弹窗的「下载更新」按钮调用。
+ * 存到 /sdcard/FurAgent/downloads/，下完发通知，点通知进系统安装器。
+ * 没有 apk 附件时退回 Release 页面。
+ */
+private fun downloadUpdateApk(
+    context: android.content.Context,
+    scope: kotlinx.coroutines.CoroutineScope,
+    info: net.xinkong.furagent.shared.update.UpdateInfo?
+) {
+    val url = info?.downloadUrl
+    if (url.isNullOrBlank()) {
+        notifyToast(context, "没有找到安装包，已打开更新页面")
+        openUrlSafely(context, net.xinkong.furagent.shared.update.UpdateChecker.RELEASES_URL, "更新页面")
+        return
+    }
+    scope.launch {
+        val name = url.substringAfterLast('/').ifBlank {
+            "FurAgent-${info.latestVersion}.apk"
+        }
+        val dir = java.io.File("/sdcard/FurAgent/downloads")
+        if (!dir.exists()) dir.mkdirs()
+        val target = java.io.File(dir, name)
+        notifyToast(context, "开始下载 $name")
+        val result = net.xinkong.furagent.shared.util.DownloadEngine.download(
+            url = url,
+            target = target,
+            threads = 4
+        )
+        if (result.ok) {
+            notifyToast(context, "下载完成，点通知安装")
+            net.xinkong.furagent.system.NotificationHelper
+                .showFileReceivedNotification(context, target)
+        } else {
+            notifyToast(context, "下载失败：${result.message}")
+        }
     }
 }
 
