@@ -319,10 +319,21 @@ object AndroidHttpFileServer {
                         "BRIDGE",
                         "upload 开始：$name len=$len chunked=${te.contains("chunked")} → ${target.absolutePath}"
                     )
-                    if (te.contains("chunked")) {
-                        writeBodyChunked(input, target)
-                    } else {
-                        writeBody(input, target, len)
+                    // 【F6 修复】writeBody 在字节数不符时会抛异常，这里捕获并 500，
+                    // 不能让它漏到最外层 catch（那样只有日志，客户端看不到响应，只能超时）。
+                    try {
+                        if (te.contains("chunked")) {
+                            writeBodyChunked(input, target)
+                        } else {
+                            writeBody(input, target, len)
+                        }
+                    } catch (e: Exception) {
+                        AgentLogger.log(
+                            "BRIDGE",
+                            "upload 失败：path=$remote 声明=$len ${e.javaClass.simpleName}: ${e.message}"
+                        )
+                        respondText(output, 500, "upload failed: ${e.message}")
+                        return
                     }
                     val written = target.length()
                     AgentLogger.log("BRIDGE", "upload 完成：${target.absolutePath}（$written 字节）")
@@ -425,6 +436,7 @@ object AndroidHttpFileServer {
     private fun writeBody(input: InputStream, target: File, len: Long) {
         target.parentFile?.mkdirs()
         val tmp = File(target.parentFile, target.name + ".part")
+        var written = 0L
         tmp.outputStream().use { out ->
             var remaining = len
             val buf = ByteArray(128 * 1024)
@@ -433,7 +445,14 @@ object AndroidHttpFileServer {
                 if (n <= 0) break
                 out.write(buf, 0, n)
                 remaining -= n
+                written += n
             }
+        }
+        // 【F6 修复】声明长度与实际写入不一致时拒绝 rename，避免半截文件被当成功接收。
+        // 抛异常给上层 upload 分支（会捕获并 500），不再假装 200 ok。
+        if (written != len) {
+            try { tmp.delete() } catch (_: Exception) { }
+            throw RuntimeException("上传不完整：声明 $len 字节，实际写入 $written 字节")
         }
         if (!tmp.renameTo(target)) {
             target.writeBytes(tmp.readBytes())

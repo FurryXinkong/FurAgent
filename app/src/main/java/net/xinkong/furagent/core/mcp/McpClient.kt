@@ -63,6 +63,15 @@ class McpClient(val config: McpServerConfig) {
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<JSONObject>>()
 
     private var sseJob: Job? = null
+    /**
+     * 【M3】SSE 断线自动重连。
+     *
+     * 只在 disconnect() / shutdown()（用户主动断开）时置 false。
+     * connect() 失败**不**关它——原实现 connect() 失败调 disconnect()，
+     * 等于任何一次失败都永久关自动重连，用户只能手动重连或重启 App。
+     */
+    @Volatile private var autoReconnect: Boolean = true
+    @Volatile private var reconnectJob: Job? = null
     @Volatile private var sessionId: String? = null
     @Volatile private var negotiatedVersion: String = PROTOCOL_VERSION
 
@@ -78,6 +87,8 @@ class McpClient(val config: McpServerConfig) {
 
     suspend fun connect() {
         if (_state.value == State.Ready || _state.value == State.Connecting) return
+        // 【M3】用户主动调 connect 意味着"允许自动重连"
+        autoReconnect = true
         _state.value = State.Connecting
         try {
             when (config.transport) {
@@ -94,25 +105,81 @@ class McpClient(val config: McpServerConfig) {
             )
         } catch (e: Exception) {
             AgentLogger.log("ERR", "MCP [${config.name}] 连接失败：${e.message}")
-            disconnect()
+            // 【M3 修复】原实现在这里调 disconnect()，会把 autoReconnect 关掉，
+            // 导致"一次失败永久不重连"，用户只能重启 App。改为只清理内部状态，
+            // 由 scheduleReconnect 负责重试；只有用户主动 disconnect() 才关开关。
+            cleanupInternal()
             _state.value = State.Error(e.message ?: "连接失败")
+            if (autoReconnect) scheduleReconnect()
         }
     }
 
     fun disconnect() {
+        // 【M3】用户主动断开：关掉自动重连，取消正在跑的重连 Job
+        autoReconnect = false
+        reconnectJob?.cancel()
+        reconnectJob = null
+        cleanupInternal()
+        _tools.value = emptyList()
+        _state.value = State.Disconnected
+    }
+
+    /** 内部清理：只清资源，不动 autoReconnect / reconnectJob（交给调用方）。 */
+    private fun cleanupInternal() {
         sseJob?.cancel()
         sseJob = null
         sessionId = null
         pending.values.forEach { it.completeExceptionally(RuntimeException("已断开")) }
         pending.clear()
-        _tools.value = emptyList()
-        _state.value = State.Disconnected
     }
 
     /** 释放全部资源（含协程作用域）。 */
     fun shutdown() {
         disconnect()
         scope.cancel()
+    }
+
+    /**
+     * 【M3】SSE 断线自动重连调度。
+     *
+     * 退避 2s → 4s → 8s → 16s → 30s（封顶）。
+     * 只在 _state 变 Ready 时退出循环；用户 disconnect() 时取消。
+     *
+     * 多个入口（connect 失败 / SSE 流中途断开）可能同时调这里，
+     * 用 reconnectJob?.isActive 保证只有一份循环在跑。
+     */
+    private fun scheduleReconnect() {
+        if (!autoReconnect) return
+        if (reconnectJob?.isActive == true) return
+        reconnectJob = scope.launch {
+            var delayMs = 2000L
+            var attempt = 0
+            while (autoReconnect && currentCoroutineContext().isActive) {
+                if (_state.value == State.Ready) {
+                    AgentLogger.log("MCP", "[${config.name}] 重连成功（第 $attempt 次尝试后）")
+                    break
+                }
+                attempt++
+                AgentLogger.log(
+                    "MCP",
+                    "[${config.name}] SSE 断线，${delayMs}ms 后进行第 $attempt 次重连"
+                )
+                delay(delayMs)
+                if (!autoReconnect) break
+                if (_state.value == State.Ready) break
+                try {
+                    // 重置状态以绕过 connect() 的早退检查（Connecting/Ready 才早退）
+                    if (_state.value is State.Error) {
+                        _state.value = State.Disconnected
+                    }
+                    connect()
+                } catch (e: Exception) {
+                    AgentLogger.log("MCP", "[${config.name}] 第 $attempt 次重连失败：${e.message}")
+                }
+                delayMs = (delayMs * 2).coerceAtMost(30_000L)
+            }
+            reconnectJob = null
+        }
     }
 
     // http（Streamable HTTP）
@@ -135,29 +202,52 @@ class McpClient(val config: McpServerConfig) {
 
         val latch = CompletableDeferred<Unit>()
         sseJob = scope.launch {
+            var resp: Response? = null
+            var cancelHandle: kotlinx.coroutines.DisposableHandle? = null
             try {
-                httpClient.newCall(req).execute().use { resp ->
-                    if (!resp.isSuccessful) {
-                        throw RuntimeException("SSE 连接失败：HTTP ${resp.code}")
-                    }
-                    val ct = resp.header("Content-Type") ?: ""
-                    if (!ct.contains("text/event-stream", ignoreCase = true)) {
-                        throw RuntimeException("SSE 响应 Content-Type 不是 text/event-stream：$ct")
-                    }
-                    latch.complete(Unit)
-                    readSseStream(resp) { json -> dispatchIncoming(json) }
+                // 【M1 修复】executeCancellable 让协程 cancel 时主动 call.cancel()
+                // 之前直接 execute() 是阻塞调用，cancel 后要等 TCP 超时才退出，
+                // 导致 reload() 场景下旧连接未死新连接又建，服务器看到多个客户端。
+                resp = executeCancellable(httpClient.newCall(req))
+                if (!resp.isSuccessful) {
+                    throw RuntimeException("SSE 连接失败：HTTP ${resp.code}")
                 }
+                val ct = resp.header("Content-Type") ?: ""
+                if (!ct.contains("text/event-stream", ignoreCase = true)) {
+                    throw RuntimeException("SSE 响应 Content-Type 不是 text/event-stream：$ct")
+                }
+                latch.complete(Unit)
+
+                // 【M2 修复】读之前注册取消回调：cancel 时主动 close response，
+                // 让 readSseStream 里阻塞的 readUtf8Line 立即抛异常退出。
+                val r = resp
+                val job = currentCoroutineContext()[Job]
+                cancelHandle = job?.invokeOnCompletion { cause ->
+                    if (cause is CancellationException) {
+                        try { r.close() } catch (_: Exception) { }
+                    }
+                }
+
+                readSseStream(resp) { json -> dispatchIncoming(json) }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 if (!latch.isCompleted) {
+                    // 建流阶段失败：交给 connect() 主协程的 catch 统一处理
                     latch.completeExceptionally(e)
                 } else {
                     AgentLogger.log("MCP", "[${config.name}] SSE 流中断：${e.message}")
                     if (_state.value == State.Ready) {
                         _state.value = State.Error("SSE 流已断开")
+                        // 【M3】已 Ready 后流断开：自动重连（原来只能手动重连或重启 App）
+                        if (autoReconnect) scheduleReconnect()
                     }
+                    // 若 _state 还是 Connecting，说明 connect() 主协程还在 initialize 阶段，
+                    // 交给它的 catch 统一处理，这里不重复触发
                 }
+            } finally {
+                cancelHandle?.dispose()
+                try { resp?.close() } catch (_: Exception) { }
             }
         }
 

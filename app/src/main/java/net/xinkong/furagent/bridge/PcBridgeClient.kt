@@ -353,7 +353,17 @@ object PcBridgeClient {
         return try {
             val request = Request.Builder().url(url).build()
             httpClient.newWebSocket(request, listener)
-            withTimeoutOrNull(BridgeConfig.HANDSHAKE_TIMEOUT_MS.milliseconds) { openedSignal.await() } ?: false
+            val result = withTimeoutOrNull(BridgeConfig.HANDSHAKE_TIMEOUT_MS.milliseconds) { openedSignal.await() }
+            if (result == null) {
+                // 【N2 修复】握手超时：可能 socket 已建立但 openedSignal 未在 8s 内完成。
+                // 主动关闭当前 webSocket，避免 connectLoop 重连时两个 socket 并存。
+                AgentLogger.log("BRIDGE", "握手超时（$url），主动关闭可能已建立的 socket")
+                try { webSocket?.close(1000, "handshake timeout") } catch (_: Exception) { }
+                onConnectionLost()
+                false
+            } else {
+                result
+            }
         } catch (e: Exception) {
             AgentLogger.log("BRIDGE", "建立连接异常：${e.message}")
             _lastError.value = e.message ?: "未知错误"
@@ -396,6 +406,10 @@ object PcBridgeClient {
                         pendingPings.incrementAndGet()
                     } else {
                         AgentLogger.log("BRIDGE", "发送心跳失败：socket 未就绪")
+                        // 【N3 修复】发送失败要通知连接丢失。
+                        // 之前只 break，heartbeatJob 结束但 _status 还是 CONNECTED，
+                        // 后续工具调用会失败但状态显示在线，要等 TCP FIN 才刷新。
+                        onConnectionLost()
                         break
                     }
                 } catch (e: Exception) {
@@ -403,6 +417,7 @@ object PcBridgeClient {
                         "BRIDGE",
                         "发送心跳失败：${e.javaClass.simpleName}: ${e.message}"
                     )
+                    onConnectionLost()
                     break
                 }
             }
@@ -640,7 +655,17 @@ object PcBridgeClient {
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         val hp = _httpPort.value
         val ht = _httpToken.value
-        if (hp <= 0 || ht.isBlank()) return@withContext false to "HTTP 通道未就绪"
+        if (hp <= 0 || ht.isBlank()) {
+            // 【诊断增强】把端口和 token 长度打出来：
+            // hp=0 表示电脑端没在 welcome/device_info 里给出 HTTP 端口，
+            // 通常是电脑 HttpFileServer 启动失败（端口被占用 fallback 到随机端口，
+            // 或防火墙/初始化顺序问题）。ht 为空表示握手没带 httpToken。
+            AgentLogger.log(
+                "BRIDGE",
+                "上传失败：HTTP 通道未就绪（httpPort=$hp tokenLength=${ht.length}）"
+            )
+            return@withContext false to "HTTP 通道未就绪（httpPort=$hp）"
+        }
         if (!localFile.exists() || !localFile.isFile) {
             return@withContext false to "文件不存在：${localFile.absolutePath}"
         }
@@ -660,13 +685,25 @@ object PcBridgeClient {
             val body = localFile.asRequestBody("application/octet-stream".toMediaType())
             val req = Request.Builder().url(url).post(body).build()
             httpClient.newCall(req).execute().use { resp ->
-                val text = resp.body.string()
+                // 【诊断增强】读取响应体可能失败，包一层，失败时至少能打出 HTTP 状态码
+                val text = try { resp.body.string() } catch (_: Exception) { "" }
                 if (resp.isSuccessful) {
-                    AgentLogger.log("BRIDGE", "上传成功：${localFile.name}")
+                    AgentLogger.log(
+                        "BRIDGE",
+                        "上传成功：${localFile.name}（HTTP ${resp.code}）"
+                    )
                     true to "已上传：${localFile.name}（${formatFileSize(localFile.length())}）"
                 } else {
-                    AgentLogger.log("BRIDGE", "上传失败 HTTP ${resp.code}：${text.take(200)}")
-                    false to "HTTP ${resp.code}：${text.take(100)}"
+                    // 失败时把服务端的错误响应完整截出来：
+                    // 常见响应：
+                    //   - 403 forbidden（token 不匹配）
+                    //   - 500 upload failed（目录不可写 / 磁盘满）
+                    //   - 404 not found（服务没在跑或被反向代理吞了）
+                    AgentLogger.log(
+                        "BRIDGE",
+                        "上传失败 HTTP ${resp.code}：响应=${text.take(500)}"
+                    )
+                    false to "HTTP ${resp.code}：${text.take(200)}"
                 }
             }
         } catch (e: Exception) {
@@ -675,6 +712,98 @@ object PcBridgeClient {
                 "上传异常：${e.javaClass.simpleName}: ${e.message}"
             )
             false to "上传失败：${e.message}"
+        }
+    }
+
+    /**
+     * 【批次 8】手机端从电脑下载文件 —— HTTP 流式下载。
+     *
+     * 【为什么新加这个方法】
+     * 原 PcBrowserTab.downloadFile 走的是 `read_file(mode="base64")` 通过 WebSocket 传文件，
+     * 结果被电脑端 CommonTools.maybeSpill 的 16KB 阈值截断（返回摘要而不是完整 base64），
+     * MB 级文件在手机端只能解出前 30 行的碎片，写入失败或得到损坏文件。
+     *
+     * HTTP /download 是电脑端 HttpFileServer 的完整流式下载端点，
+     * 无大小限制、无结果落盘、支持进度回调，是正确的文件传输通道。
+     *
+     * @return Pair(是否成功, 提示文本)
+     */
+    suspend fun downloadFileToLocal(
+        remotePath: String,
+        localFile: File,
+        onProgress: (downloaded: Long, total: Long) -> Unit = { _, _ -> }
+    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        val hp = _httpPort.value
+        val ht = _httpToken.value
+        if (hp <= 0 || ht.isBlank()) {
+            AgentLogger.log(
+                "BRIDGE",
+                "下载失败：HTTP 通道未就绪（httpPort=$hp tokenLength=${ht.length}）"
+            )
+            return@withContext false to "HTTP 通道未就绪（httpPort=$hp）"
+        }
+
+        val url = "http://$currentHost:$hp/download" +
+                "?token=${URLEncoder.encode(ht, "UTF-8")}" +
+                "&path=${URLEncoder.encode(remotePath, "UTF-8")}"
+
+        localFile.parentFile?.mkdirs()
+        val tmp = File(localFile.parentFile, localFile.name + ".part")
+
+        try {
+            AgentLogger.log(
+                "BRIDGE",
+                "下载开始：$url → ${localFile.absolutePath}"
+            )
+            val req = Request.Builder().url(url).get().build()
+            httpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    val body = try { resp.body.string() } catch (_: Exception) { "" }
+                    AgentLogger.log("BRIDGE", "下载失败 HTTP ${resp.code}：${body.take(200)}")
+                    return@withContext false to "HTTP ${resp.code}：${body.take(200)}"
+                }
+                val total = resp.body.contentLength()
+                var downloaded = 0L
+                resp.body.byteStream().use { input ->
+                    tmp.outputStream().use { out ->
+                        val buf = ByteArray(128 * 1024)
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val n = input.read(buf)
+                            if (n < 0) break
+                            if (n == 0) continue
+                            out.write(buf, 0, n)
+                            downloaded += n
+                            onProgress(downloaded, total)
+                        }
+                    }
+                }
+                // 完整性校验：声明长度和实际写入必须一致，否则丢弃 tmp 并报错
+                if (total > 0 && downloaded != total) {
+                    try { tmp.delete() } catch (_: Exception) { }
+                    AgentLogger.log(
+                        "BRIDGE",
+                        "下载不完整：声明 $total 实际 $downloaded"
+                    )
+                    return@withContext false to "下载不完整：声明 $total 字节，实际 $downloaded 字节"
+                }
+                if (!tmp.renameTo(localFile)) {
+                    localFile.writeBytes(tmp.readBytes())
+                    tmp.delete()
+                }
+                AgentLogger.log(
+                    "BRIDGE",
+                    "下载完成：${localFile.absolutePath}（$downloaded 字节）"
+                )
+                true to "已下载：${localFile.name}（${formatFileSize(downloaded)}）"
+            }
+        } catch (e: Exception) {
+            try { tmp.delete() } catch (_: Exception) { }
+            AgentLogger.log(
+                "BRIDGE",
+                "下载异常：${e.javaClass.simpleName}: ${e.message}"
+            )
+            false to "下载失败：${e.message}"
         }
     }
 
@@ -874,8 +1003,11 @@ object PcBridgeClient {
             if (rawPath.isBlank()) return argsJson
 
             // 【与桌面端 BridgeServer.rewriteIfWrite 对齐】纯文件名才改写到 receiveDir，
-            // 带路径（含 / 或盘符）的尊重原路径，避免 AI 指定绝对路径被静默改写。
+            // 带路径（含 / \ 或盘符）的尊重原路径，避免 AI 指定绝对路径被静默改写。
+            // 【N8 修复】之前只查 '/' 不查 '\\'，Windows 路径 foo\\bar.txt 会被误判为
+            // "无路径"而改写，与电脑端行为不一致。现在两端判断条件完全一致。
             val hasSeparator = rawPath.contains('/') ||
+                    rawPath.contains('\\') ||
                     Regex("^[A-Za-z]:").containsMatchIn(rawPath)
             if (hasSeparator) {
                 AgentLogger.log("BRIDGE", "write_file 带路径，按原路径写入：$rawPath")

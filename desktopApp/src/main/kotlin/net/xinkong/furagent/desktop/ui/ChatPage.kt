@@ -1,7 +1,5 @@
 @file:OptIn(
-    ExperimentalFoundationApi::class,
-    ExperimentalLayoutApi::class,
-    androidx.compose.ui.ExperimentalComposeUiApi::class
+    ExperimentalFoundationApi::class
 )
 
 package net.xinkong.furagent.desktop.ui
@@ -10,64 +8,36 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.scrollBy
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.selection.SelectionContainer
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.input.key.*
-import androidx.compose.ui.input.pointer.*
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.TextRange
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.DesktopMessage
-import net.xinkong.furagent.desktop.data.DesktopSessionStore
 import net.xinkong.furagent.desktop.system.DesktopSpeechHelper
-import net.xinkong.furagent.desktop.system.NativeFilePicker
-import net.xinkong.furagent.desktop.tools.DesktopTools.SubSessionProgress
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Shadow
-import net.xinkong.furagent.shared.tools.BackupHelper
 import net.xinkong.furagent.shared.ThinkingLevel
-import net.xinkong.furagent.shared.tools.TrashHelper
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.util.*
-import java.awt.KeyboardFocusManager
-import java.awt.event.InputEvent
-import java.awt.event.KeyEvent
-import java.io.File
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -108,7 +78,7 @@ private val RE_MULTI_NL = Regex("\\n{2,}")
 
 internal fun cleanForSpeech(text: String): String =
     // 【P1-抽 shared】完整 15 正则清洗已移入 shared/util/SpeechCleaner
-    net.xinkong.furagent.shared.util.SpeechCleaner.cleanForSpeech(text)
+    SpeechCleaner.cleanForSpeech(text)
 
 
 internal fun needsCollapse(content: String): Boolean =
@@ -561,9 +531,10 @@ private fun ChatMessageList(
                     sessionId = sessionId,
                     onOpenHistory = onOpenHistory
                 )
+                Box(Modifier.weight(1f).fillMaxWidth()) {
                 LazyColumn(
                     state = listState,
-                    modifier = Modifier.weight(1f).padding(end = 24.dp),
+                    modifier = Modifier.fillMaxSize().padding(end = 16.dp),
                     contentPadding = PaddingValues(
                         start = 32.dp,
                         end = 32.dp,
@@ -710,6 +681,26 @@ private fun ChatMessageList(
                     }
                 }
             }
+            
+            if (chatItems.size >= 15) {
+                VerticalScrollbar(
+                    adapter = rememberScrollbarAdapter(listState),
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .padding(end = 4.dp, top = 8.dp, bottom = 8.dp)
+                        .fillMaxHeight()
+                        .width(8.dp),
+                    style = LocalScrollbarStyle.current.copy(
+                        minimalHeight = 32.dp,
+                        thickness = 8.dp,
+                        shape = RoundedCornerShape(Radius.PILL),
+                        hoverDurationMillis = 200,
+                        unhoverColor = TextMuted().copy(alpha = 0.3f),
+                        hoverColor = AccentColor().copy(alpha = 0.8f)
+                    )
+                )
+            }
+            }
             }
 
             AnimatedVisibility(
@@ -748,176 +739,11 @@ private fun ChatMessageList(
                 )
             }
 
-            if (chatItems.size >= 15) {
-                MiniMap(
-                    listState = listState,
-                    chatItems = chatItems,
-                    modifier = Modifier
-                        .align(Alignment.CenterEnd)
-                        .fillMaxHeight()
-                        .padding(
-                            end = 6.dp,
-                            top = 24.dp,
-                            bottom = with(density) { (bottomReservedPx + 16).toDp() }
-                        )
-                )
-            }
         }
     }
 }
 
-// Minimap
-
-@Composable
-private fun MiniMap(
-    listState: androidx.compose.foundation.lazy.LazyListState,
-    chatItems: List<ChatListItem>,
-    modifier: Modifier = Modifier
-) {
-    val scope = rememberCoroutineScope()
-    var trackHeightPx by remember { mutableIntStateOf(1) }
-    var hovered by remember { mutableStateOf(false) }
-    var dragging by remember { mutableStateOf(false) }
-
-    val visibleRange by remember {
-        derivedStateOf {
-            val info = listState.layoutInfo
-            if (chatItems.isEmpty() || info.totalItemsCount == 0) return@derivedStateOf 0f to 1f
-            val first = info.visibleItemsInfo.firstOrNull()?.index ?: 0
-            val last = info.visibleItemsInfo.lastOrNull()?.index ?: 0
-            val total = chatItems.size.toFloat().coerceAtLeast(1f)
-            val top = (first.toFloat() / total).coerceIn(0f, 1f)
-            val bottom = ((last + 1).toFloat() / total).coerceIn(0f, 1f)
-            top to bottom
-        }
-    }
-
-    val targetTop = visibleRange.first * trackHeightPx
-    val targetHeight = ((visibleRange.second - visibleRange.first) * trackHeightPx)
-        .coerceAtLeast(16f)
-    val animatedTop by animateFloatAsState(
-        targetValue = targetTop,
-        animationSpec = tween(140, easing = FastOutSlowInEasing),
-        label = "minimapTop"
-    )
-    val animatedHeight by animateFloatAsState(
-        targetValue = targetHeight,
-        animationSpec = tween(140, easing = FastOutSlowInEasing),
-        label = "minimapHeight"
-    )
-
-    val barColor = AccentColor()
-    // 视觉宽度 16dp，热区宽度 28dp（左右各多 6dp）
-    val hitWidth = 28.dp
-
-    // 【性能优化】预计算色块数据，避免在 Canvas draw 内做 Compose 类型判断。
-    // 之前用 chatItems.forEachIndexed + Box 逐项绘制，每帧 recompose 都重建 N 个 Composable；
-    // 改为 derivedStateOf 只在 chatItems 变化时重算，Canvas 一次性绘制。
-    // 注意：AccentColor/CardStrongColor/ToolColor 是 @Composable，不能在 remember 内调用，
-    // 所以先在外面取值，再用 Color.toArgb()/Color(colorLong) 转为非 Compose 依赖。
-    val userColor = AccentColor().copy(alpha = 0.75f)
-    val assistantColor = CardStrongColor()
-    val toolColor = ToolColor().copy(alpha = 0.75f)
-    val blockColors by remember {
-        derivedStateOf {
-            val userArgb = userColor.toArgb()
-            val assistantArgb = assistantColor.toArgb()
-            val toolArgb = toolColor.toArgb()
-            chatItems.map { item ->
-                when (item) {
-                    is ChatListItem.Single -> if (item.msg.role == "user") userArgb else assistantArgb
-                    is ChatListItem.ToolsGroup -> toolArgb
-                    is ChatListItem.WorkProcess -> toolArgb
-                    is ChatListItem.DateSeparator -> 0 // transparent
-                }
-            }
-        }
-    }
-
-    Box(
-        modifier = modifier
-            .width(hitWidth)
-            .pointerInput(chatItems.size) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull() ?: continue
-                        when (event.type) {
-                            PointerEventType.Enter -> hovered = true
-                            PointerEventType.Exit -> { hovered = false; dragging = false }
-                            PointerEventType.Press -> {
-                                dragging = true
-                                val y = change.position.y
-                                val ratio = (y / trackHeightPx).coerceIn(0f, 1f)
-                                val targetIndex = (ratio * (chatItems.size - 1)).roundToInt()
-                                    .coerceIn(0, chatItems.size - 1)
-                                scope.launch {
-                                    try { listState.scrollToItem(targetIndex) } catch (_: Exception) { }
-                                }
-                                change.consume()
-                            }
-                            PointerEventType.Move -> {
-                                if (dragging) {
-                                    val y = change.position.y
-                                    val ratio = (y / trackHeightPx).coerceIn(0f, 1f)
-                                    val targetIndex = (ratio * (chatItems.size - 1)).roundToInt()
-                                        .coerceIn(0, chatItems.size - 1)
-                                    scope.launch {
-                                        try { listState.scrollToItem(targetIndex) } catch (_: Exception) { }
-                                    }
-                                    change.consume()
-                                }
-                            }
-                            PointerEventType.Release -> {
-                                dragging = false
-                                change.consume()
-                            }
-                        }
-                    }
-                }
-            },
-        contentAlignment = Alignment.Center
-    ) {
-        val borderColor = BorderColor().copy(alpha = if (hovered) 0.9f else 0.5f)
-        val bgColor = CardColor().copy(alpha = if (hovered) 0.85f else 0.5f)
-
-        Canvas(
-            modifier = Modifier
-                .width(16.dp)
-                .fillMaxHeight()
-                .clip(RoundedCornerShape(Radius.XS))
-                .background(bgColor)
-                .border(1.dp, borderColor, RoundedCornerShape(Radius.XS))
-                .onGloballyPositioned { coords ->
-                    trackHeightPx = coords.size.height.coerceAtLeast(1)
-                }
-        ) {
-            val total = chatItems.size.toFloat().coerceAtLeast(1f)
-            val w = size.width
-
-            // 一次性绘制所有色块（替代 N 个 Box Composable）
-            blockColors.forEachIndexed { idx, argb ->
-                if (argb == 0) return@forEachIndexed
-                val topY = (idx / total) * trackHeightPx
-                val h = ((1f / total) * trackHeightPx).coerceAtLeast(1.5f)
-                drawRect(color = Color(argb), topLeft = Offset(0f, topY), size = Size(w, h))
-            }
-
-            // 视口指示器
-            drawRect(
-                color = barColor.copy(alpha = 0.22f),
-                topLeft = Offset(0f, animatedTop),
-                size = Size(w, animatedHeight)
-            )
-            drawRect(
-                color = barColor.copy(alpha = 0.9f),
-                topLeft = Offset(0f, animatedTop),
-                size = Size(w, animatedHeight),
-                style = Stroke(width = 1.dp.toPx())
-            )
-        }
-    }
-}
+// MiniMap 已废弃，改用官方 VerticalScrollbar
 
 // 消息组折叠
 

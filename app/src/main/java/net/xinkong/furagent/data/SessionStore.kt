@@ -77,7 +77,14 @@ object SessionStore {
     @Volatile private var lastSessionWriteAt: Long = 0L
     private val pendingSessionSaves = java.util.concurrent.ConcurrentHashMap<String, Session>()
     private val sessionWritePending = AtomicBoolean(false)
-    private val sessionWriteHandler = Handler(Looper.getMainLooper())
+    // 【P1-13 修复】写盘从主线程挪到独立 HandlerThread。
+    // 长会话（几百条消息）每次序列化 + 原子写几百 KB JSON，主线程会明显卡顿，
+    // 尤其每一轮 onHistoryChanged 都调 save 时。
+    // HandlerThread 保证串行执行（不并发写同一个文件），且天然支持 postDelayed 节流。
+    private val sessionWriteThread = android.os.HandlerThread("FurAgent-SessionWriter").apply {
+        start()
+    }
+    private val sessionWriteHandler = Handler(sessionWriteThread.looper)
     private const val SESSION_WRITE_THROTTLE_MS = 500L
 
     private fun sessionsDir(context: Context): File {
@@ -278,6 +285,8 @@ object SessionStore {
                 parentId = o.optString("parentId", "").takeIf { it.isNotBlank() },
                 // 【P1-1】会话专用提示词：此前从未被反序列化，导致用户设置后重启丢失
                 systemPrompt = if (o.has("systemPrompt")) o.optString("systemPrompt", "") else null,
+                // 【P0-4】三态：null 表示磁盘上还没有此字段（旧数据）
+                titleLocked = if (o.has("titleLocked")) o.optBoolean("titleLocked", false) else null,
                 messages = msgs
             )
         } catch (e: Exception) {
@@ -318,10 +327,38 @@ object SessionStore {
         }
     }
 
-    /** 立即把待写会话落盘。用于进程退出前 / 关键切换点。 */
+    /**
+     * 立即把待写会话落盘。用于进程退出前 / 关键切换点。
+     *
+     * 【P1-13】写盘已移到后台 HandlerThread，这里投递任务后用 CountDownLatch 同步等完成，
+     * 最多等 3 秒（超时放弃，避免 ANR；onPause 场景下下次启动能读回旧数据，最多丢最后 500ms）。
+     */
     fun flushPending(context: Context) {
-        if (pendingSessionSaves.isNotEmpty()) {
-            doWriteSessionsNow(context)
+        if (pendingSessionSaves.isEmpty()) return
+        val latch = java.util.concurrent.CountDownLatch(1)
+        sessionWriteHandler.post {
+            try {
+                doWriteSessionsNow(context)
+            } catch (_: Throwable) {
+            } finally {
+                latch.countDown()
+            }
+        }
+        try {
+            latch.await(3, java.util.concurrent.TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+        }
+    }
+
+    /**
+     * 关闭后台写盘线程。MainActivity.onDestroy 调用。
+     *
+     * quitSafely 会等队列里已入队的消息执行完再退出，pending 的写盘不会丢。
+     */
+    fun shutdownWriter() {
+        try {
+            sessionWriteThread.quitSafely()
+        } catch (_: Throwable) {
         }
     }
 
@@ -362,12 +399,19 @@ object SessionStore {
                     if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optString("systemPrompt", "")
                     else ""
                 }.getOrDefault("")
+                // 【P0-4】titleLocked 三态兜底：null 保留磁盘原值
+                val titleLocked = session.titleLocked ?: runCatching {
+                    val f = sessionFile(appContext, session.id)
+                    if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optBoolean("titleLocked", false)
+                    else false
+                }.getOrDefault(false)
                 val o = JSONObject().apply {
                     put("id", session.id)
                     put("title", session.title)
                     put("createdAt", session.createdAt)
                     put("updatedAt", session.updatedAt)
                     if (parentId != null) put("parentId", parentId)
+                    put("titleLocked", titleLocked)
                     put("systemPrompt", systemPrompt)
                     put("messages", JSONArray().apply {
                         session.messages.forEach { m ->
@@ -448,7 +492,8 @@ object SessionStore {
 
     fun rename(context: Context, id: String, newTitle: String) {
         val s = load(context, id) ?: return
-        save(context, s.copy(title = newTitle, updatedAt = System.currentTimeMillis()))
+        // 【P0-4】手动重命名置 titleLocked = true，persist 不再用 generateTitle 覆盖
+        save(context, s.copy(title = newTitle, titleLocked = true, updatedAt = System.currentTimeMillis()))
     }
 
     /**

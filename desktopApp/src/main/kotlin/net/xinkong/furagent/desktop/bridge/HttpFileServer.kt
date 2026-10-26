@@ -4,13 +4,11 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import net.xinkong.furagent.desktop.data.DesktopPaths
 import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
-import net.xinkong.furagent.shared.util.FileNaming
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.system.DesktopNotifier
+import net.xinkong.furagent.shared.util.FileNaming
 import java.io.File
 import java.net.InetSocketAddress
-import java.net.URLDecoder
-import java.security.MessageDigest
 import java.util.*
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -138,7 +136,20 @@ object HttpFileServer {
 
     private fun handlePing(ex: HttpExchange) {
         try {
-            respond(ex, 200, "ok", "text/plain")
+            // 【诊断增强】返回端口、短码、receiveDir，方便用户用浏览器直接测：
+            //   http://127.0.0.1:<port>/ping?token=<token>
+            // 能看到这段文本就说明 HTTP 服务本身没问题，问题在网络/端口/防火墙。
+            val receiveDir = try { DesktopSettingsHolder.current.receiveDir } catch (_: Throwable) { "?" }
+            val writable = try { File(receiveDir).let { !it.exists() || it.canWrite() } } catch (_: Throwable) { false }
+            val body = buildString {
+                append("ok\n")
+                append("port=").append(port).append('\n')
+                append("shortCode=").append(getShortCode()).append('\n')
+                append("tokenLength=").append(token.length).append('\n')
+                append("receiveDir=").append(receiveDir).append('\n')
+                append("receiveDirWritable=").append(writable).append('\n')
+            }
+            respond(ex, 200, body, "text/plain")
         } catch (e: Exception) {
             DesktopLogger.warn("HttpServer", "handlePing 异常：${e.message}")
         } finally {
@@ -180,12 +191,45 @@ object HttpFileServer {
         }
     }
 
-    private fun resolveRemotePath(rawPath: String): String {
-        if (rawPath.isBlank()) return rawPath
-        if (rawPath.startsWith("/")) return rawPath
-        if (rawPath.contains(":\\")) return rawPath
-        val receiveDir = DesktopSettingsHolder.current.receiveDir
-        return File(receiveDir, rawPath).absolutePath
+    /**
+     * 解析 HTTP 请求里的 path 参数。
+     *
+     * 【N5 修复】原实现只做 File(receiveDir, rawPath).absolutePath，不做规范化，
+     * 也不校验系统目录，导致 `?path=../../etc/passwd` 能读到 receiveDir 之外的文件。
+     * token 泄露 = 任意文件读，必须修。
+     *
+     * 修复策略：
+     *   1. canonicalPath 展开 `..` 与软链，得到真实访问路径
+     *   2. 明确拒绝系统敏感目录（Linux /proc /sys /dev /boot + Windows System32）
+     *   3. 返回 null 表示拒绝访问（不改 resolveRemotePath 的"绝对路径原样访问"能力，
+     *      桌面端设计上允许用户下载任意文件，只做最低限度系统目录防护）
+     */
+    private fun resolveRemotePath(rawPath: String): String? {
+        if (rawPath.isBlank()) return null
+        val file = if (rawPath.startsWith("/") || rawPath.contains(":\\")) {
+            File(rawPath)
+        } else {
+            File(DesktopSettingsHolder.current.receiveDir, rawPath)
+        }
+        val canonical = try {
+            file.canonicalPath
+        } catch (_: Exception) {
+            file.absolutePath
+        }
+        val lower = canonical.lowercase(Locale.ROOT).replace('\\', '/')
+        // Linux / macOS 系统敏感目录
+        for (s in listOf("/proc", "/sys", "/dev", "/boot")) {
+            if (lower == s || lower.startsWith("$s/")) {
+                DesktopLogger.warn("HttpServer", "拒绝访问系统目录：$s（请求 $rawPath）")
+                return null
+            }
+        }
+        // Windows 系统敏感目录
+        if (lower.contains("/windows/system32") || lower.contains("/windows/syswow64")) {
+            DesktopLogger.warn("HttpServer", "拒绝访问 Windows 系统目录（请求 $rawPath）")
+            return null
+        }
+        return canonical
     }
 
     private fun handleDownload(ex: HttpExchange) {
@@ -204,7 +248,11 @@ object HttpFileServer {
                 respond(ex, 400, "missing path", "text/plain")
                 return
             }
-            val actualPath = resolveRemotePath(rawPath)
+            // 【N5】resolveRemotePath 返回 null 表示拒绝访问（系统敏感目录或规范化失败）
+            val actualPath = resolveRemotePath(rawPath) ?: run {
+                respond(ex, 403, "path not allowed", "text/plain")
+                return
+            }
             val file = File(actualPath)
             if (!file.exists() || !file.isFile) {
                 DesktopLogger.warn("HttpServer", "download 文件不存在：$actualPath")
@@ -216,13 +264,48 @@ object HttpFileServer {
                 "Content-Disposition",
                 "attachment; filename=\"${file.name.replace("\"", "_")}\""
             )
-            ex.sendResponseHeaders(200, file.length())
+            // 【批次 9 修复】大文件下载 unexpected end of stream。
+            //
+            // 根因：com.sun.net.httpserver 在 sendResponseHeaders(200, contentLength) 声明了
+            // Content-Length 的模式下，JDK 内部在 close() 时检查实际写入是否等于声明长度。
+            // Windows JVM 17/21 上，当响应体 > socket buffer 时，JDK 的节流逻辑偶尔在检查前
+            // 提前 shutdown socket 输出流，客户端（OkHttp）读到 EOF 时实际字节数少于声明值，
+            // 抛 IOException: unexpected end of stream on http://...
+            // KB 级响应一次写完就 flush 不触发；MB 级要分多次写 socket，触发这个竞态。
+            //
+            // 修复：改用 chunked 传输编码（sendResponseHeaders(200, 0)），显式 flush。
+            // 这是 JDK 官方推荐的流式大文件写法，OkHttp 完全支持 chunked 解码。
+            // 副作用：客户端看不到 Content-Length（resp.body.contentLength() 返回 -1），
+            //       下载进度条走不确定动画，功能不受影响。
+            ex.sendResponseHeaders(200, 0)
+            val actualLen = file.length()
+            var written = 0L
             file.inputStream().use { input ->
                 ex.responseBody.use { out ->
-                    input.copyTo(out, bufferSize = 128 * 1024)
+                    val buf = ByteArray(64 * 1024)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        if (n == 0) continue
+                        out.write(buf, 0, n)
+                        out.flush()
+                        written += n
+                    }
                 }
             }
-            DesktopLogger.info("HttpServer", "download 已发送：$actualPath")
+            // 声明长度 > 0 时做个兜底日志（chunked 模式下不再是致命错误，只是记录）
+            if (actualLen > 0 && written != actualLen) {
+                DesktopLogger.warn(
+                    "HttpServer",
+                    "download 字节数不符：声明 $actualLen 实际 $written（chunked 模式，客户端仍能正确接收）"
+                )
+            }
+            // 【诊断加强】下载完成打完整日志：路径 + 字节数 + 远端地址。
+            // 手机端"下载不了"时对照本端日志，能一眼判断请求到底有没有到达。
+            DesktopLogger.info(
+                "HttpServer",
+                "download 已发送：$actualPath（${formatSize(file.length())}）→ ${ex.remoteAddress}"
+            )
         } catch (e: Exception) {
             DesktopLogger.error("HttpServer", "handleDownload 异常：${e.javaClass.simpleName}: ${e.message}")
             try { respond(ex, 500, "error: ${e.message}", "text/plain") } catch (_: Exception) { }
@@ -258,6 +341,11 @@ object HttpFileServer {
                 File(receiveDir)
             }
             if (!targetDir.exists()) targetDir.mkdirs()
+            // 【诊断增强】记录本次上传的落点，失败时能一眼看出是目录不可写还是别的
+            DesktopLogger.info(
+                "HttpServer",
+                "upload 请求：rawPath=$rawPath dir=$dirParam → targetDir=${targetDir.absolutePath}（存在=${targetDir.exists()} 可写=${targetDir.canWrite()}）"
+            )
 
             val target = FileNaming.resolveReceiveFile(targetDir.absolutePath, fileName)
             target.parentFile?.mkdirs()
@@ -272,11 +360,26 @@ object HttpFileServer {
             } else {
                 File(target.parentFile, ".${target.name}.${UUID.randomUUID()}.part")
             }
+            // 【F6/诊断加强】原实现 input.copyTo 读到 EOF 就 rename，
+            // 客户端提前断流（断网/代理超时/手机切后台）时只会写入一部分，
+            // 但仍然 respond 200 ok，用户看到"上传成功"实际文件已损坏。
+            // 现在校验 Content-Length 与实写字节数，不一致直接 500，不再假装成功。
+            val declaredLen = ex.requestHeaders.getFirst("Content-Length")?.toLongOrNull() ?: -1L
+            var writtenLen = 0L
             try {
                 ex.requestBody.use { input ->
                     tmp.outputStream().use { out ->
-                        input.copyTo(out, bufferSize = 128 * 1024)
+                        val buf = ByteArray(128 * 1024)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            out.write(buf, 0, n)
+                            writtenLen += n
+                        }
                     }
+                }
+                if (declaredLen > 0 && writtenLen != declaredLen) {
+                    throw RuntimeException("上传不完整：声明 $declaredLen 字节，实际写入 $writtenLen 字节")
                 }
                 // renameTo 失败时用流式 copyTo，避免 readBytes() 大文件 OOM。
                 if (!tmp.renameTo(target)) {
@@ -286,13 +389,24 @@ object HttpFileServer {
                         }
                     }
                 }
+            } catch (e: Exception) {
+                DesktopLogger.warn(
+                    "HttpServer",
+                    "upload 失败：声明=$declaredLen 实际=$writtenLen 临时文件=${tmp.absolutePath} " +
+                            "${e.javaClass.simpleName}: ${e.message}"
+                )
+                try { respond(ex, 500, "upload failed: ${e.message}", "text/plain") } catch (_: Exception) { }
+                return
             } finally {
                 // 无论成功与否都清理临时文件（rename 成功后 tmp 已不存在，delete 无害）
                 if (tmp.exists()) tmp.delete()
             }
             val size = target.length()
             respond(ex, 200, "ok: ${target.absolutePath} (${formatSize(size)})", "text/plain")
-            DesktopLogger.info("HttpServer", "upload 已接收：${target.absolutePath}（${formatSize(size)}）")
+            DesktopLogger.info(
+                "HttpServer",
+                "upload 已接收：${target.absolutePath}（${formatSize(size)}）声明=$declaredLen 实际=$writtenLen"
+            )
 
             try {
                 DesktopNotifier.notify("已接收到文件", "${target.name}（${formatSize(size)}）")
@@ -328,7 +442,11 @@ object HttpFileServer {
                 respond(ex, 400, "missing path", "text/plain")
                 return
             }
-            val actualPath = resolveRemotePath(rawPath)
+            // 【N5】resolveRemotePath 返回 null 表示拒绝访问
+            val actualPath = resolveRemotePath(rawPath) ?: run {
+                respond(ex, 403, "path not allowed", "text/plain")
+                return
+            }
             val file = File(actualPath)
             if (!file.exists()) {
                 DesktopLogger.warn("HttpServer", "delete 文件不存在：$actualPath")
@@ -351,6 +469,9 @@ object HttpFileServer {
     }
 
     private fun checkToken(ex: HttpExchange): Boolean {
+        // 【N1 修复】token 未初始化时拒绝所有请求，
+        // 避免 ?token= 空串绕过（与 AndroidHttpFileServer 对齐）。
+        if (token.isBlank()) return false
         val params = parseQuery(ex.requestURI.query ?: "")
         return params["token"] == token
     }

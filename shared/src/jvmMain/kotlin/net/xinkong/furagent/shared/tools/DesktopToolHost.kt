@@ -187,6 +187,7 @@ class DesktopToolHost : ToolHost {
             if (!rootFile.exists() || !rootFile.isDirectory) return@withContext emptyList()
             var visited = 0
             rootFile.walkTopDown()
+                .maxDepth(15)
                 .onEnter {
                     visited++
                     visited < 50000 && it.canRead()
@@ -237,9 +238,10 @@ class DesktopToolHost : ToolHost {
         nameGlob: String,
         maxResults: Int,
         maxFileSize: Long,
-        contextLines: Int
+        contextLines: Int,
+        maxDepth: Int
     ): List<ContentMatch> = ToolCodeNav.searchInFiles(
-        root, keyword, regex, nameGlob, maxResults, maxFileSize, contextLines
+        root, keyword, regex, nameGlob, maxResults, maxFileSize, contextLines, maxDepth
     ) { msg -> ToolLogger.log("ToolHost", msg) }
 
     // KV 存储（全部经 envFileLock 串行化）

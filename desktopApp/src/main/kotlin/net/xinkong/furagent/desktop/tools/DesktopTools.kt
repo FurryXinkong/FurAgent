@@ -3,14 +3,11 @@ package net.xinkong.furagent.desktop.tools
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import net.xinkong.furagent.desktop.core.DesktopAgent
 import net.xinkong.furagent.desktop.core.DesktopConfirmation
 import net.xinkong.furagent.desktop.core.TaskRuntime
-import net.xinkong.furagent.desktop.core.DesktopAgent
-import net.xinkong.furagent.desktop.data.DesktopMessage
-import net.xinkong.furagent.desktop.data.DesktopSession
-import net.xinkong.furagent.desktop.data.DesktopSessionStore
-import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
-import net.xinkong.furagent.desktop.data.HistoryStore
+import net.xinkong.furagent.desktop.core.currentSessionId
+import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.system.OutputCompressor
 import net.xinkong.furagent.shared.tools.*
@@ -202,11 +199,31 @@ object DesktopTools {
     /**
      * 构建 tool_search 的 spec（description 内嵌目录）。
      */
+    // 【批次 11 性能】buildToolSearchSpec 缓存。
+    // getToolListWithLoaded 每轮 Agent 循环都调，每次都走 getCatalogTools + 拼字符串。
+    // 一轮用 5 次工具 = 重建 5 次。缓存后 5 秒内只重建 1 次。
+    @Volatile private var cachedSearchSpec: DesktopTool? = null
+    @Volatile private var cachedSearchSpecKey: String = ""
+    @Volatile private var cachedSearchSpecAt: Long = 0L
+    private const val SEARCH_SPEC_CACHE_MS = 5000L
+
     private fun buildToolSearchSpec(): DesktopTool {
-        val catalog = getCatalogTools()
-        val profile = DesktopSettingsHolder.current.currentProfile()
+        val settings = DesktopSettingsHolder.current
+        val profile = settings.currentProfile()
         val visionEnabled = profile?.supportsVision ?: true
-        val disabled = DesktopSettingsHolder.current.disabledTools
+        val disabled = settings.disabledTools
+
+        // 缓存键 = disabled hash + visionEnabled；MCP/skill 变化靠 5 秒窗口兜底
+        val cacheKey = "${disabled.hashCode()}_$visionEnabled"
+        val now = System.currentTimeMillis()
+        val cached = cachedSearchSpec
+        if (cached != null && cachedSearchSpecKey == cacheKey &&
+            now - cachedSearchSpecAt < SEARCH_SPEC_CACHE_MS
+        ) {
+            return cached
+        }
+
+        val catalog = getCatalogTools()
 
         val catalogText = ToolCatalog.buildCatalogText(
             tools = catalog,
@@ -239,7 +256,12 @@ object DesktopTools {
             put("required", JSONArray().apply { put("query") })
         }.toString()
 
-        return DesktopTool("tool_search", "工具搜索", desc, schema)
+        val spec = DesktopTool("tool_search", "工具搜索", desc, schema)
+        // 【批次 11】写入缓存
+        cachedSearchSpec = spec
+        cachedSearchSpecKey = cacheKey
+        cachedSearchSpecAt = now
+        return spec
     }
 
     private fun buildToolLoadSpec(): DesktopTool {
@@ -334,14 +356,30 @@ object DesktopTools {
 
     private val host: ToolHost = DesktopToolHost()
 
-    suspend fun execute(name: String, argsJson: String): ToolResult {
+    /**
+     * 执行工具。
+     *
+     * 【P0-2 收尾】sessionId 走 nullable 参数（默认 null）：
+     *   - null = 读当前协程上下文里的会话 id（SessionIdElement），主对话默认行为
+     *   - "" = 明确不归属任何会话（定时任务、系统级后台执行）
+     *   - 非空 = 显式指定
+     *
+     * 【为什么不是 String = currentSessionId()】Kotlin 不允许在默认参数值里
+     * 调 suspend 函数（编译报 "Suspend function call in default parameter value is unsupported"）。
+     */
+    suspend fun execute(
+        name: String,
+        argsJson: String,
+        sessionId: String? = null
+    ): ToolResult {
+        val sid = sessionId ?: currentSessionId()
         val subtitle: String = when (name) {
             "execute_command" -> try {
                 if (argsJson.isBlank()) "" else JSONObject(argsJson).optString("command", "")
             } catch (_: Exception) { "" }
             else -> ""
         }
-        return TaskRuntime.withTask(name, displayName(name), subtitle) {
+        return TaskRuntime.withTask(name, displayName(name), subtitle, sid) {
             doExecute(name, argsJson)
         }
     }
@@ -433,7 +471,17 @@ object DesktopTools {
         }
     }
 
-    // 当前主任务会话 id：子会话完成后回流通知的目标（Main.kt 启动任务时写入）
+    // 【P0-2】原 object CurrentTaskSession 的语义已拆成两部分：
+    //   - 工具归属 → 协程级 SessionIdElement（见 SessionContext.kt），随协程结束自动清空
+    //   - UI 显示 → 下面的过渡 shim（Main.kt 的 UI 层单向写入，Agent 主逻辑不再读写）
+    /**
+     * 【P0-2 过渡 shim】UI 层「当前显示中的会话 id」。
+     *
+     * 只代表"用户此刻在看哪个会话"，由 Main.kt 的 UI 层在 currentSessionId 变化时写入。
+     * Agent 主逻辑已改用协程上下文（SessionIdElement），不再读写此字段。
+     * 目前供 HistoryPage 等 UI 页面按会话过滤用。
+     * 下批会把 currentSessionId 作为参数传到各 UI 页面，届时可删除本 object。
+     */
     object CurrentTaskSession {
         @Volatile var id: String = ""
     }
@@ -464,7 +512,7 @@ object DesktopTools {
      */
     private suspend fun summarizeIfTruncated(
         history: List<DesktopMessage>,
-        settings: net.xinkong.furagent.desktop.data.DesktopSettings,
+        settings: DesktopSettings,
     ): List<DesktopMessage> {
         val lastText = history.lastOrNull { it.type == "text" && it.role == "assistant" }
             ?.content?.trim().orEmpty()
@@ -533,10 +581,10 @@ object DesktopTools {
 
     // 子会话后台执行作用域（独立于主任务，互不阻塞、互不误杀）
     private val subSessionScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO +
+        kotlinx.coroutines.SupervisorJob() + Dispatchers.IO +
                 // 打上子会话标记：确认弹窗在该协程里会被自动拒绝，避免卡 300 秒
                 kotlinx.coroutines.CoroutineName(
-                    net.xinkong.furagent.desktop.core.DesktopConfirmation.SUBSESSION_COROUTINE_NAME
+                    DesktopConfirmation.SUBSESSION_COROUTINE_NAME
                 )
     )
 
@@ -576,17 +624,16 @@ object DesktopTools {
 
             SubSessionProgress.start(reuseId, title)
             subSessionScope.launch {
-                // 【并行安全】不再改写全局 CurrentTaskSession.id。
-                // 原来这里把它临时改成 reuseId，多个子会话并行时互相覆盖，
-                // 退出后还原的值可能是另一个子会话的 id，导致后续子代理
-                // 的 parentId 挂错、完成通知也注入到错误的会话里（看起来
-                // 就是“覆盖了原会话”）。复用场景的归属就是 existing.parentId，
-                // 直接用它做回流目标即可，不需要碰全局。
+                // 【P0-2 收尾】sessionId 通过协程上下文传递（见 SessionContext.kt），
+                // 已删除全局 CurrentTaskSession 变量。runTurn 内部
+                // withContext(SessionIdElement(reuseId))，所有工具执行、
+                // 历史归属都归属到 reuseId，不再与并行子会话/主会话互相覆盖。
                 var subHistory: List<DesktopMessage> = initial
                 try {
                     val finalHistory = DesktopAgent.runTurn(
                         settings = DesktopSettingsHolder.current,
                         history = initial,
+                        sessionId = reuseId,
                         onUpdate = { h ->
                             subHistory = h
                             SubSessionProgress.update(
@@ -656,8 +703,9 @@ object DesktopTools {
         )
         val subId = "sub_${System.currentTimeMillis()}_$rndHex"
         val now = System.currentTimeMillis()
-        // 母会话快照：归属 + 完成通知回流目标（全局值可能在执行期被其他任务改写，入口即快照）
-        val parentSessionId = CurrentTaskSession.id.ifBlank { null }
+        // 【P0-2 收尾】母会话快照：从协程上下文读，不再读全局 var
+        // （runSubSession 是被主 Agent 调用的，主协程上下文里 SessionIdElement 就是母会话 id）
+        val parentSessionId = currentSessionId().ifBlank { null }
         // 全新上下文：只有这条 task，不带父会话历史
         val initial = listOf(
             DesktopMessage(role = "user", content = task, timestamp = now)
@@ -683,11 +731,10 @@ object DesktopTools {
         // 后台异步执行：主对话立即返回、互不阻塞；完成后覆盖保存全量过程
         SubSessionProgress.start(subId, title)
         val job = subSessionScope.launch {
-            // 【会话隔离】子会话执行期间把 CurrentTaskSession 指向自己的 subId，
-            // 这样它改的文件在修改历史里归属子会话，而不是污染主会话。
-            // 结束后恢复原值（并行子会话各自持有自己的协程，互不影响）。
-            val prevSessionId = CurrentTaskSession.id
-            CurrentTaskSession.id = subId
+            // 【P0-2 收尾】sessionId 通过协程上下文传递：
+            // runTurn 内部 withContext(SessionIdElement(subId))，
+            // 子会话的每个工具、每次历史写入都归属 subId，
+            // 不再需要临时改写全局，也不会与并行子会话/主会话互相覆盖。
             var subHistory: List<DesktopMessage> = initial
             // 【可见性】持续累积流式内容，让用户能看到它在写什么
             val streamBuf = StringBuilder()
@@ -698,6 +745,7 @@ object DesktopTools {
                     settings = DesktopSettingsHolder.current,
                     history = initial,
                     maxLoopsOverride = subLoops,
+                    sessionId = subId,
                     onUpdate = { h ->
                         subHistory = h
                         SubSessionProgress.update(
@@ -734,7 +782,7 @@ object DesktopTools {
                 // 同样要求它把现有结果总结完再存盘。
                 // NonCancellable：父任务已经被 cancel，不加这个请求会立刻被打断。
                 try {
-                    subHistory = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                    subHistory = withContext(kotlinx.coroutines.NonCancellable) {
                         summarizeIfTruncated(subHistory, DesktopSettingsHolder.current)
                     }
                 } catch (_: Throwable) { }
@@ -751,7 +799,7 @@ object DesktopTools {
                         )
                     )
                 } catch (_: Exception) { }
-                CurrentTaskSession.id = prevSessionId
+                // 【P0-2 收尾】不再恢复全局：协程上下文自动随协程结束
                 SubSessionProgress.finish(subId)
                 subSessionActive.decrementAndGet()
                 subSessionJobs.remove(subId)
@@ -764,7 +812,7 @@ object DesktopTools {
                         msgCount = subHistory.size,
                         summary = buildSubSummary(
                             subHistory,
-                            hitLimit = subHistory.size > 0 &&
+                            hitLimit = subHistory.isNotEmpty() &&
                                     subHistory.lastOrNull { it.type == "text" }?.content
                                         ?.contains("已达到最大工具调用轮数") == true
                         )
@@ -784,7 +832,7 @@ object DesktopTools {
     }
 
     /** sub_session 工具：查询子会话运行状态 / 列表 / 结果（op=status|list|result） */
-    private suspend fun querySubSession(args: JSONObject): ToolResult {
+    private fun querySubSession(args: JSONObject): ToolResult {
         val op = args.optString("op", "status").trim().ifBlank { "status" }
         val id = args.optString("id", "").trim()
         return when (op) {
@@ -896,7 +944,8 @@ object DesktopTools {
             }
 
             if (name == "schedule") {
-                ScheduleTools.execute(name, args)?.let { return it }
+                // 【P0-2 收尾】传当前协程上下文的会话 id（schedule 创建 run_agent 时会绑定它）
+                ScheduleTools.execute(name, args, currentSessionId())?.let { return it }
             }
             if (name == "system") {
                 SystemIntegrationTools.execute(name, args)?.let { return it }
@@ -999,7 +1048,7 @@ object DesktopTools {
                 HistoryStore.recordEdit(
                     dir, resolved, if (append) "append" else "write",
                     oldBytes, newBytes, "write_file",
-                    sessionId = CurrentTaskSession.id
+                    sessionId = currentSessionId()
                 )
             }
         }
@@ -1059,7 +1108,7 @@ object DesktopTools {
                     } catch (_: Exception) { null }
                     HistoryStore.recordEdit(
                         dir, resolved, "code_edit", old, newBytes, "code_edit",
-                        sessionId = CurrentTaskSession.id
+                        sessionId = currentSessionId()
                     )
                 }
             }
@@ -1129,10 +1178,9 @@ object DesktopTools {
         val command = args.optString("command", "").trim()
         if (command.isBlank()) return ToolResult.fail("未提供 command")
         val timeout = args.optInt("timeout", 30).coerceIn(1, 300)
+        val grepFilter = args.optString("grep_filter", "").trim()
+        val filterRegex = if (grepFilter.isNotBlank()) Regex(grepFilter, RegexOption.IGNORE_CASE) else null
 
-        // 拦截命令行里的删除操作。
-        // AI 不得以任何方式直接删除文件，包括通过 shell 绕过 delete_file。
-        // 命中则拒绝，并引导改用 delete_file（会移入回收站）。
         detectDestructiveCommand(command)?.let { return ToolResult.fail(it) }
 
         val settings = DesktopSettingsHolder.current
@@ -1199,8 +1247,10 @@ object DesktopTools {
                 val stdoutThread = Thread {
                     try {
                         readLinesSmart(p.inputStream) { line ->
-                            if (stdoutSb.length < 100_000_000) stdoutSb.append(line).append("\n")
                             TaskRuntime.appendOutput(taskId, line)
+                            if (filterRegex == null || filterRegex.containsMatchIn(line)) {
+                                if (stdoutSb.length < 100_000_000) stdoutSb.append(line).append("\n")
+                            }
                         }
                     } catch (e: Exception) {
                         DesktopLogger.warn("DesktopTools", "读命令 stdout 失败：${e.message}")
@@ -1209,8 +1259,10 @@ object DesktopTools {
                 val stderrThread = Thread {
                     try {
                         readLinesSmart(p.errorStream) { line ->
-                            if (stderrSb.length < 100_000_000) stderrSb.append(line).append("\n")
                             TaskRuntime.appendOutput(taskId, "[err] $line")
+                            if (filterRegex == null || filterRegex.containsMatchIn(line)) {
+                                if (stderrSb.length < 100_000_000) stderrSb.append(line).append("\n")
+                            }
                         }
                     } catch (e: Exception) {
                         DesktopLogger.warn("DesktopTools", "读命令 stderr 失败：${e.message}")
@@ -1253,9 +1305,6 @@ object DesktopTools {
                     TaskRuntime.finishWithCode(taskId, exitCode, timedOut = false)
                 }
 
-                // 【输出裁剪】几百行日志会进入历史，每轮对话都要重发一遍。
-                // 压缩到"关键行 + 上下文 + 尾部"，等量级缩减 80%+。
-                // 完整输出仍可通过 read_file 读取落盘日志。
                 val compressedStdout = OutputCompressor.compress(stdoutSb.toString())
                 val compressedStderr = OutputCompressor.compress(stderrSb.toString())
 
@@ -1267,7 +1316,7 @@ object DesktopTools {
                 if (compressedStderr.isNotEmpty()) {
                     fullSb.append("\nstderr：\n").append(compressedStderr)
                 }
-                if (compressedStdout.isEmpty() && compressedStderr.isEmpty()) fullSb.append("(无输出)")
+                if (compressedStdout.isEmpty() && compressedStderr.isEmpty()) fullSb.append("(无输出或已被过滤)")
 
                 if (wasCancelled) {
                     ToolResult.fail("用户已取消命令执行\n\n已收到的输出：\n" + fullSb.toString().take(2000))

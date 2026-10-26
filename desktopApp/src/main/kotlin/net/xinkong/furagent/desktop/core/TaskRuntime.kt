@@ -31,7 +31,12 @@ object TaskRuntime {
         val exitCode: Int? = null,
         val finishedAt: Long = 0L,
         val timedOut: Boolean = false,
-        val cancelled: Boolean = false
+        val cancelled: Boolean = false,
+        /**
+         * 【P0-2】归属会话 id。用于 stopSession 精确取消，不再误杀其他并发会话。
+         * 空串 = 不属于任何会话（如定时任务），不会被任何 cancelBySession 命中。
+         */
+        val sessionId: String = ""
     ) {
         val elapsedMs: Long
             get() = if (running) System.currentTimeMillis() - startedAt
@@ -54,14 +59,20 @@ object TaskRuntime {
     suspend fun currentId(): String? =
         currentCoroutineContext()[TaskIdElement]?.id
 
-    fun start(toolName: String, displayName: String, subtitle: String = ""): String {
+    fun start(
+        toolName: String,
+        displayName: String,
+        subtitle: String = "",
+        sessionId: String = ""
+    ): String {
         val id = UUID.randomUUID().toString().take(8)
         map[id] = RunningTask(
             id = id,
             toolName = toolName,
             displayName = displayName,
             startedAt = System.currentTimeMillis(),
-            subtitle = subtitle.take(500)
+            subtitle = subtitle.take(500),
+            sessionId = sessionId
         )
         refresh()
         return id
@@ -81,9 +92,10 @@ object TaskRuntime {
         toolName: String,
         displayName: String,
         subtitle: String = "",
+        sessionId: String = "",
         block: suspend (taskId: String) -> T
     ): T {
-        val id = start(toolName, displayName, subtitle)
+        val id = start(toolName, displayName, subtitle, sessionId)
         return try {
             withContext(TaskIdElement(id)) {
                 block(id)
@@ -116,6 +128,20 @@ object TaskRuntime {
         )
         cancelCallbacks.remove(id)
         refresh()
+    }
+
+    /**
+     * 【P0-2】按会话精确取消：只杀属于该会话的正在运行工具，不影响其他并发会话。
+     *
+     * sessionId 为空的降级：
+     *   - 桌面端 stopSession 传具体 sessionId
+     *   - 定时任务的工具显式传 ""（不属于任何会话，不会被这里命中）
+     *   - 空串调用只匹配 sessionId == "" 的 task，不跨会话误杀
+     */
+    fun cancelBySession(sessionId: String) {
+        map.values
+            .filter { it.running && it.sessionId == sessionId }
+            .forEach { cancel(it.id) }
     }
 
     fun updateProgress(id: String, progress: Float?, detail: String) {

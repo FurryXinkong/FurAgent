@@ -313,6 +313,15 @@ class MainActivity : ComponentActivity() {
             )
         }
         try {
+            // 【P1-13】关闭后台写盘线程（quitSafely 会先处理完队列里 pending 的写盘）
+            SessionStore.shutdownWriter()
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "SYS",
+                "关闭会话写盘线程失败：${e.javaClass.simpleName}: ${e.message}"
+            )
+        }
+        try {
             rikka.shizuku.Shizuku.removeBinderReceivedListener(shizukuReceivedListener)
             rikka.shizuku.Shizuku.removeBinderDeadListener(shizukuDeadListener)
         } catch (e: Exception) {
@@ -616,21 +625,37 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 timestamp = System.currentTimeMillis()
             )
             if (currentSessionId == target) {
-                chatHistory = chatHistory + notice
-                val title = sessionList.find { it.id == target }?.title ?: "对话"
-                val targetSession = withContext(Dispatchers.IO) { SessionStore.load(context, target) }
-                withContext(Dispatchers.IO) {
-                    SessionStore.save(
-                        context,
-                        Session(
-                            id = target,
-                            title = title,
-                            createdAt = currentSessionCreatedAt,
-                            updatedAt = System.currentTimeMillis(),
-                            messages = chatHistory,
-                            parentId = targetSession?.parentId
+                // 【批次 19】子会话完成通知合并。
+                // 如果主任务此刻正在跑（流式输出），不要直接改 chatHistory，
+                // 避免和 AgentRunner 的 onHistoryChanged 发生覆盖冲突。
+                if (isLoading) {
+                    withContext(Dispatchers.IO) {
+                        val s = SessionStore.load(context, target) ?: return@withContext
+                        SessionStore.save(
+                            context,
+                            s.copy(
+                                messages = s.messages + notice,
+                                updatedAt = System.currentTimeMillis()
+                            )
                         )
-                    )
+                    }
+                } else {
+                    chatHistory = chatHistory + notice
+                    val title = sessionList.find { it.id == target }?.title ?: "对话"
+                    val targetSession = withContext(Dispatchers.IO) { SessionStore.load(context, target) }
+                    withContext(Dispatchers.IO) {
+                        SessionStore.save(
+                            context,
+                            Session(
+                                id = target,
+                                title = title,
+                                createdAt = currentSessionCreatedAt,
+                                updatedAt = System.currentTimeMillis(),
+                                messages = chatHistory,
+                                parentId = targetSession?.parentId
+                            )
+                        )
+                    }
                 }
             } else {
                 withContext(Dispatchers.IO) {
@@ -680,6 +705,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     LaunchedEffect(currentSessionId) {
         if (currentSessionId != null) {
             prefs.edit { putString("current_session_id", currentSessionId) }
+            // 【批次 19】同步给 UI 层，供 History 页面过滤
+            net.xinkong.furagent.tools.ToolRegistry.CurrentTaskSession.id = currentSessionId!!
         }
     }
 
@@ -698,11 +725,12 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         // 以前这里无条件 generateTitle，一 persist 就把前缀抹掉，
         // 子会话于是混进主会话列表、又不在子代理列表里
         //（看起来就像“子代理把原会话覆盖了”，而且找不到回去的入口）。
-        val isSub = id.startsWith("sub_")
-        val existing = if (isSub) SessionStore.load(context, id) else null
+        // 【P0-4 修复】load 不限于子会话：主会话也可能被用户手动重命名过
+        val existing = SessionStore.load(context, id)
         val title = when {
+            existing?.titleLocked == true -> existing.title       // 用户手动重命名，保留
             existing?.title?.startsWith("↳") == true -> existing.title
-            isSub -> "↳ " + SessionStore.generateTitle(chatHistory)
+            id.startsWith("sub_") -> "↳ " + SessionStore.generateTitle(chatHistory)
             else -> SessionStore.generateTitle(chatHistory)
         }
         val now = System.currentTimeMillis()
@@ -713,7 +741,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 createdAt = currentSessionCreatedAt,
                 updatedAt = now,
                 messages = chatHistory,
-                parentId = existing?.parentId
+                parentId = existing?.parentId,
+                titleLocked = existing?.titleLocked
             )
         )
         // 增量更新：避免每次 persist 都读磁盘重建列表
@@ -724,7 +753,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             }
         } else {
             // 新会话首次保存，fallback 到完整读取
-            SessionStore.list(context)
+            // 【P0-5 修复】过滤子会话，避免子代理混入主列表
+            SessionStore.list(context).filter { it.parentId == null }
         }
     }
 
@@ -1179,12 +1209,15 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         val list = SessionStore.list(context)
         // 【子会话识别】改按 parentId 判定，不再靠标题前缀：
         // 以前标题被 persist 重算后子会话就混进主列表。
-        sessionList = list.filter { it.parentId == null }
+        val mainList = list.filter { it.parentId == null }
+        sessionList = mainList
 
         val target = when {
+            // 运行中的会话/用户上次停留的会话若还在（含子会话），保持原状
             runningSessionId != null && list.any { it.id == runningSessionId } -> runningSessionId
             currentSessionId != null && list.any { it.id == currentSessionId } -> currentSessionId!!
-            list.isNotEmpty() -> list.first().id
+            // 【P0-6 修复】兜底只从主会话列表选，避免启动时直接进子会话
+            mainList.isNotEmpty() -> mainList.first().id
             else -> null
         }
 
@@ -1272,13 +1305,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
     }
     var userScrolledUp by remember { mutableStateOf(false) }
-    // 程序滚动标志：scrollToItem 期间置 true，避免把“自动滚到底”
-    // 误判成“用户上滑”。
-    var programmaticScroll by remember { mutableStateOf(false) }
+    // 【P1-12 修复】删掉无效的 programmaticScroll：scrollToItem 是 suspend 且同步完成，
+    // 而 snapshotFlow 的 collect 是异步的，等到 collect 执行时标志早已复位，拦不住任何东西。
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }
             .collect { (scrolling, canForward) ->
-                if (programmaticScroll) return@collect
                 if (scrolling && canForward) {
                     // 正在滚动且还能往下滚 → 用户主动上滑，锁定不自动滚
                     userScrolledUp = true
@@ -1304,15 +1335,15 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             val shouldFollow = !userScrolledUp || last?.role == "user"
             if (shouldFollow) {
                 try {
-                    programmaticScroll = true
-                    listState.scrollToItem(totalItems - 1)
+                    // 【P1-11 修复】LazyColumn 里除 chatItems 还有 status bar / modified files 等
+                    // 额外 item，用 totalItems-1 滚不到真正的底部，差 1~3 个 item。
+                    // scrollToItem(Int.MAX_VALUE) 由 LazyList 自己 clamp 到最后一个 item。
+                    listState.scrollToItem(Int.MAX_VALUE)
                 } catch (e: Exception) {
                     AgentLogger.log(
                         "SYS",
                         "滚动到底部失败：${e.javaClass.simpleName}: ${e.message}"
                     )
-                } finally {
-                    programmaticScroll = false
                 }
             }
         }
@@ -1936,14 +1967,17 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         )
                         if (showSearch) {
                             // 复用项目表单标准组件 OutlinedTextField（Dialogs / 编辑对话框同款），
-                            val matchCount = if (searchQuery.isNotBlank()) chatItems.count { item ->
-                                when (item) {
-                                    is ChatListItem.Single -> item.msg.content.contains(searchQuery, ignoreCase = true)
-                                    is ChatListItem.ToolsGroup -> item.items.any { it.content.contains(searchQuery, ignoreCase = true) }
-                                    is ChatListItem.WorkProcess -> item.items.any { it.content.contains(searchQuery, ignoreCase = true) }
-                                    is ChatListItem.DateSeparator -> item.displayText.contains(searchQuery, ignoreCase = true)
-                                }
-                            } else 0
+                            // 【P2-17 修复】加 remember，避免每次重组都全量遍历长会话
+                            val matchCount = remember(searchQuery, chatItems) {
+                                if (searchQuery.isNotBlank()) chatItems.count { item ->
+                                    when (item) {
+                                        is ChatListItem.Single -> item.msg.content.contains(searchQuery, ignoreCase = true)
+                                        is ChatListItem.ToolsGroup -> item.items.any { it.content.contains(searchQuery, ignoreCase = true) }
+                                        is ChatListItem.WorkProcess -> item.items.any { it.content.contains(searchQuery, ignoreCase = true) }
+                                        is ChatListItem.DateSeparator -> item.displayText.contains(searchQuery, ignoreCase = true)
+                                    }
+                                } else 0
+                            }
                             OutlinedTextField(
                                 value = searchQuery,
                                 onValueChange = { searchQuery = it },
@@ -2154,28 +2188,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     }
                     }
 
-                    // 【P1-14】MiniMap（长会话时显示右侧色块导航，点击跳转）
-                    if (chatItems.size >= 15) {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.CenterEnd
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxHeight()
-                                    .padding(
-                                        end = 4.dp,
-                                        top = 24.dp,
-                                        bottom = dynamicBottomPadding + 16.dp
-                                    )
-                            ) {
-                                MiniMap(
-                                    listState = listState,
-                                    chatItems = chatItems
-                                )
-                            }
-                        }
-                    }
+                    // 【批次 13】删除手机端 MiniMap：手机上空间宝贵，不需要这种全局导航条
 
                     if (!isAtBottom && chatItems.isNotEmpty()) {
                         ExtendedFloatingActionButton(

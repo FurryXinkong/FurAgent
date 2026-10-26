@@ -213,7 +213,8 @@ object TaskScheduler {
                     log("toolArgs 解析失败：${e.message}")
                     return
                 }
-                val result = DesktopTools.execute(task.toolName, args.toString())
+                // 【P0-2】定时任务不属于任何会话，显式传空，防止用户点"停止"时误杀
+                val result = DesktopTools.execute(task.toolName, args.toString(), sessionId = "")
                 log("工具 ${task.toolName} 结果：${result.output.take(200)}")
                 if (!result.success) {
                     DesktopNotifier.notify(
@@ -234,7 +235,8 @@ object TaskScheduler {
                     put("op", "run")
                     put("name", task.workflowName)
                 }
-                val result = DesktopTools.execute("workflow", args.toString())
+                // 【P0-2】定时任务不属于任何会话，显式传空
+                val result = DesktopTools.execute("workflow", args.toString(), sessionId = "")
                 log("工作流 ${task.workflowName} 结果：${result.output.take(200)}")
                 if (!result.success) {
                     DesktopNotifier.notify(
@@ -255,7 +257,8 @@ object TaskScheduler {
                     put("op", "open")
                     put("path", task.appPath)
                 }
-                val result = DesktopTools.execute("apps", args.toString())
+                // 【P0-2】定时任务不属于任何会话，显式传空
+                val result = DesktopTools.execute("apps", args.toString(), sessionId = "")
                 log("打开应用结果：${result.output.take(200)}")
                 if (!result.success) {
                     DesktopNotifier.notify(
@@ -274,7 +277,8 @@ object TaskScheduler {
                     put("command", task.command)
                     put("timeout", 60)
                 }
-                val result = DesktopTools.execute("execute_command", args.toString())
+                // 【P0-2】定时任务不属于任何会话，显式传空
+                val result = DesktopTools.execute("execute_command", args.toString(), sessionId = "")
                 log("命令结果：${result.output.take(200)}")
             }
 

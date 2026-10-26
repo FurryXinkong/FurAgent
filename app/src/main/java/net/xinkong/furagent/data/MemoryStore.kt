@@ -25,6 +25,12 @@ object MemoryStore {
 
     private fun file(context: Context) = File(context.filesDir, FILE_NAME)
 
+    // 【批次 21 性能优化】内存缓存。
+    // 每轮对话组装 prompt 都会调 toPromptString -> list()，如果每次都读盘解析 JSON，
+    // 记忆条目多了会严重拖慢 Agent 响应速度。
+    @Volatile private var cachedMemories: List<Memory>? = null
+    @Volatile private var cachedFileMtime: Long = -1L
+
     private fun atomicWrite(target: File, content: String) {
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
@@ -41,7 +47,18 @@ object MemoryStore {
     fun list(context: Context): List<Memory> {
         return try {
             val f = file(context)
-            if (!f.exists()) return emptyList()
+            if (!f.exists()) {
+                cachedMemories = emptyList()
+                cachedFileMtime = 0L
+                return emptyList()
+            }
+            
+            // 检查缓存
+            val currentMtime = f.lastModified()
+            if (cachedMemories != null && cachedFileMtime == currentMtime) {
+                return cachedMemories!!
+            }
+
             val arr = JSONArray(f.readText(Charsets.UTF_8))
             val list = mutableListOf<Memory>()
             var skipped = 0
@@ -77,7 +94,10 @@ object MemoryStore {
             if (skipped > 0) {
                 AgentLogger.log("Memory", "已跳过 $skipped 条异常记忆，保留 ${list.size} 条")
             }
-            list.sortedBy { it.createdAt }
+            val result = list.sortedBy { it.createdAt }
+            cachedMemories = result
+            cachedFileMtime = currentMtime
+            result
         } catch (e: Exception) {
             AgentLogger.log(
                 "Memory",
@@ -166,6 +186,8 @@ object MemoryStore {
     fun clear(context: Context) {
         try {
             file(context).delete()
+            cachedMemories = emptyList()
+            cachedFileMtime = 0L
         } catch (e: Exception) {
             AgentLogger.log(
                 "ERR",
@@ -187,6 +209,9 @@ object MemoryStore {
                 })
             }
             atomicWrite(file(context), arr.toString())
+            // 写入后刷新缓存
+            cachedMemories = list
+            cachedFileMtime = file(context).lastModified()
         } catch (e: Exception) {
             AgentLogger.log(
                 "ERR",

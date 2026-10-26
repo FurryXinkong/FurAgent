@@ -10,6 +10,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -655,7 +657,10 @@ fun WindowTitleBar(
     window: java.awt.Window,
     onMinimize: () -> Unit,
     onMaximize: () -> Unit,
-    onClose: () -> Unit
+    onClose: () -> Unit,
+    // 【P1-10 修复】最大化状态下拖拽，先还原再拖，避免无边框窗口乱跳
+    isMaximized: Boolean = false,
+    onRestoreIfMaximized: (() -> Unit)? = null
 ) {
     var dragStartMouse: Point? = null
     var dragStartWin: Point? = null
@@ -665,9 +670,10 @@ fun WindowTitleBar(
             .fillMaxWidth()
             .height(38.dp)
             .background(SidebarBg())
-            .pointerInput(window) {
+            .pointerInput(window, isMaximized) {
                 detectDragGestures(
                     onDragStart = {
+                        if (isMaximized) onRestoreIfMaximized?.invoke()
                         dragStartMouse = java.awt.MouseInfo.getPointerInfo()?.location
                         dragStartWin = window.location
                     },
@@ -763,7 +769,17 @@ fun GlassDialog(
             }
         },
         text = {
-            Box(Modifier.width(width).then(enter)) {
+            // 【P2-19 修复】长内容可滚动，防超长内容超出屏幕。
+            // 【批次 2 修复】桌面端 Compose 没有 LocalConfiguration（那是 Android 专属 API），
+            // 用固定 600dp 上限：1080p / 1440p 都能容纳，不会溢出；
+            // AlertDialog 自身还有平台最大宽度限制，双保险。
+            Box(
+                Modifier
+                    .width(width)
+                    .heightIn(max = 600.dp)
+                    .verticalScroll(rememberScrollState())
+                    .then(enter)
+            ) {
                 Column(content = content)
             }
         },

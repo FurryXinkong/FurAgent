@@ -2,6 +2,9 @@ package net.xinkong.furagent.shared.tools
 
 import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -38,45 +41,20 @@ object CommonTools {
     private const val MAX_TEXT_FILE_SIZE = 1L * 1024 * 1024
     private const val MAX_SLEEP_MS = 300_000L
 
-    /**
-     * 【大结果落盘】超过该字节数的工具结果会被写入临时文件，
-     * 上下文里只留摘要 + 文件路径，避免大结果常驻上下文、每轮重发。
-     * 16KB 约等于 400 行代码，正常“看一眼”的结果不会触发。
-     *
-     * 【为什么从 8KB 提到 16KB】8KB 太容易触发，导致模型频繁“读文件→落盘→
-     * 再读落盘文件→又落盘”的套娃，反而更费 token。16KB 能覆盖绝大多数
-     * “看一眼”的场景，真正的大结果才落盘。
-     */
     private const val SPILL_THRESHOLD_BYTES = 16 * 1024
-
-    /** 落盘后摘要里保留的行数。 */
     private const val SPILL_PREVIEW_LINES = 30
 
-    /**
-     * 【大结果工具白名单】这些工具的输出动辄几万行，必须落盘，否则会常驻上下文、
-     * 之后每轮请求都重发一遍，token 成本成倍增加。
-     *
-     * 【为什么从 3 个扩到这么多】原先只有 grep / list_files / read_file，
-     * 结果 execute_command（Gradle 输出、git diff）、web（搜索结果）、ui dump（整棵
-     * 元素树）、sub_session（子会话全量结果）、MCP 工具（PS 的 JSX 返回）全部原样
-     * 进上下文，实测单日 token 消耗冲到 100M+。凡是可能返回大块文本的工具都要落盘。
-     */
     private val SPILL_TOOLS = setOf(
         "grep", "list_files", "read_file",
         "execute_command", "web", "pytool_ds_web",
         "ui", "sub_session", "run_sub_session",
         "view_image", "screenshot", "document",
-        "history", "apps", "system"
+        "history", "apps", "system", "http_request"
     )
 
-    /** MCP 扩展工具（mcp__ 前缀）输出不可控，一律走落盘。 */
     private fun isSpillTool(name: String): Boolean =
         name in SPILL_TOOLS || name.startsWith("mcp__") || name.startsWith("pytool_")
 
-    /**
-     * 落盘文件路径特征：位于 temp 目录且文件名以 tool_ 开头。
-     * 命中该特征的 read_file 结果不再二次落盘，根治“读落盘文件又落盘”的套娃。
-     */
     private val SPILL_FILE_MARKER = Regex("[/\\\\]temp[/\\\\]tool_[^/\\\\]+\\.txt$")
 
     private val httpClient: OkHttpClient by lazy {
@@ -102,7 +80,7 @@ object CommonTools {
             "calculate" -> doCalculate(args)
             "convert" -> doConvert(args)
             "statistics" -> doStatistics(args)
-            "text" -> doText(args)
+            "text" -> doText(args, host)
             "json" -> doJson(args)
             "hash" -> doHash(args, host)
             "list_files" -> doListFiles(args, host)
@@ -112,30 +90,14 @@ object CommonTools {
             "http_request" -> doHttpRequest(args)
             "env_store" -> doEnvStore(args, host)
             "sleep" -> doSleep(args)
-            // run_sub_session / sub_session 由端侧（ToolRegistry / DesktopTools）拦截实现，这里兜底拒绝
-            "run_sub_session" -> ToolResult.fail(
-                "run_sub_session 需要端侧上下文支持，当前执行环境未接入子会话能力"
-            )
-            "sub_session" -> ToolResult.fail(
-                "sub_session 需要端侧上下文支持，当前执行环境未接入子会话能力"
-            )
+            "run_sub_session" -> ToolResult.fail("run_sub_session 需要端侧上下文支持，当前执行环境未接入子会话能力")
+            "sub_session" -> ToolResult.fail("sub_session 需要端侧上下文支持，当前执行环境未接入子会话能力")
             else -> null
         } ?: return null
 
-        // 【大结果落盘】大结果工具 + MCP/pytool 前缀；失败静默降级（返回原文）。
         return if (isSpillTool(name)) maybeSpill(name, args, result, host) else result
     }
 
-    /**
-     * 结果过大时写入临时文件，上下文里只留摘要 + 路径。
-     *
-     * 【为什么】大结果一旦进上下文就会常驻，之后每轮都要重发一遍，
-     * token 成本成倍增加。落盘后模型只看到摘要，需要全文时再用
-     * read_file 读那个路径，按需付费。
-     *
-     * 【降级】任何一步失败（路径不允许、写盘失败）都直接返回原文，
-     * 绝不因为落盘失败而让工具报错。
-     */
     private suspend fun maybeSpill(
         toolName: String,
         args: JSONObject,
@@ -144,16 +106,19 @@ object CommonTools {
     ): ToolResult {
         if (!result.success) return result
 
-        // 【防套娃】如果这次读的本来就是落盘文件（temp/tool_*.txt），
-        // 说明模型正在按摘要指引读全文，此时绝不能再落盘，否则会
-        // “读落盘文件→又落盘→再读→再落盘”无限套娃，token 反而暴涨。
         if (toolName == "read_file") {
             val rawPath = args.optString("path", "")
             if (SPILL_FILE_MARKER.containsMatchIn(rawPath)) return result
         }
 
         val text = result.output
-        if (text.toByteArray(Charsets.UTF_8).size <= SPILL_THRESHOLD_BYTES) return result
+        if (text.length > SPILL_THRESHOLD_BYTES) {
+            // 直接落盘
+        } else if (text.length * 4 <= SPILL_THRESHOLD_BYTES) {
+            return result
+        } else {
+            if (text.toByteArray(Charsets.UTF_8).size <= SPILL_THRESHOLD_BYTES) return result
+        }
 
         return try {
             val dir = host.resolvePath("~/.furagent/temp") ?: return result
@@ -162,10 +127,9 @@ object CommonTools {
             if (!host.ensureParentDir(filePath)) return result
             if (!host.writeTextFile(filePath, text)) return result
 
-            val lines = text.lines()
-            val preview = lines.take(SPILL_PREVIEW_LINES).joinToString("\n")
-            val totalLines = lines.size
-            val totalKb = text.toByteArray(Charsets.UTF_8).size / 1024
+            val preview = text.lineSequence().take(SPILL_PREVIEW_LINES).joinToString("\n")
+            val totalLines = text.count { it == '\n' } + if (text.endsWith("\n")) 0 else 1
+            val totalKb = text.length / 1024
 
             val summary = buildString {
                 append("【结果过大，已落盘】共 $totalLines 行 / ${totalKb}KB，")
@@ -180,8 +144,6 @@ object CommonTools {
             result
         }
     }
-
-    // 1. time
 
     private fun doTime(args: JSONObject, host: ToolHost): ToolResult {
         return when (val op = args.optString("op", "now").lowercase(Locale.ROOT)) {
@@ -272,8 +234,6 @@ object CommonTools {
             else -> ToolResult.fail("不支持的操作：$op")
         }
     }
-
-    // 2. calculate
 
     private fun doCalculate(args: JSONObject): ToolResult {
         val type = args.optString("type", "expr").lowercase(Locale.ROOT)
@@ -415,8 +375,6 @@ object CommonTools {
                 ws()
                 if (i < s.length && s[i] == '^') {
                     i++
-                    // 【右结合】递归调用 parsePow 而非 parseUnary，
-                    // 使 2^3^2 = 2^(3^2) = 512，而非 (2^3)^2 = 64。
                     val exp = parsePow()
                     val expInt = try { exp.intValueExact() } catch (_: Exception) { null }
                     return if (expInt != null && expInt in 0..10000) base.pow(expInt)
@@ -547,8 +505,6 @@ object CommonTools {
         val s = String.format(Locale.US, "%.10f", v).trimEnd('0').trimEnd('.')
         return s.ifEmpty { "0" }
     }
-
-    // 3. convert
 
     private fun doConvert(args: JSONObject): ToolResult {
         val type = args.optString("type", "").lowercase(Locale.ROOT)
@@ -742,15 +698,36 @@ object CommonTools {
         return Triple(h, s, l)
     }
 
-    // 4. statistics
-
     private fun doStatistics(args: JSONObject): ToolResult {
         val raw = args.optString("numbers", "").trim()
-        if (raw.isBlank()) return ToolResult.fail("未提供 numbers")
-        val parts = raw.split(',', ' ', '\n', '\t', ';').map { it.trim() }.filter { it.isNotBlank() }
-        val nums = parts.mapNotNull { try { it.toDouble() } catch (_: Exception) { null } }
+        val jsonArrayStr = args.optString("json_array", "").trim()
+        val field = args.optString("field", "").trim()
+
+        val nums = mutableListOf<Double>()
+
+        if (jsonArrayStr.isNotBlank() && field.isNotBlank()) {
+            try {
+                val arr = JSONArray(jsonArrayStr)
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i)
+                    if (obj != null) {
+                        val v = obj.optDouble(field, Double.NaN)
+                        if (!v.isNaN()) nums.add(v)
+                    }
+                }
+            } catch (e: Exception) {
+                return ToolResult.fail("JSON 解析失败：${e.message}")
+            }
+        } else if (raw.isNotBlank()) {
+            val parts = raw.split(',', ' ', '\n', '\t', ';').map { it.trim() }.filter { it.isNotBlank() }
+            val parsed = parts.mapNotNull { try { it.toDouble() } catch (_: Exception) { null } }
+            if (parsed.size != parts.size) return ToolResult.fail("部分项不是数字（${parts.size - parsed.size} 项无效）")
+            nums.addAll(parsed)
+        } else {
+            return ToolResult.fail("需要提供 numbers 或 json_array+field")
+        }
+
         if (nums.isEmpty()) return ToolResult.fail("没有有效数字")
-        if (nums.size != parts.size) return ToolResult.fail("部分项不是数字（${parts.size - nums.size} 项无效）")
 
         val count = nums.size
         val sum = nums.sum()
@@ -779,17 +756,59 @@ object CommonTools {
         )
     }
 
-    // 5. text
-
-    private fun doText(args: JSONObject): ToolResult {
+    private suspend fun doText(args: JSONObject, host: ToolHost): ToolResult {
         val op = args.optString("op", "").lowercase(Locale.ROOT)
         return when (op) {
             "regex" -> doTextRegex(args)
             "diff" -> doTextDiff(args)
             "url_encode" -> doUrlCodec(args, encode = true)
             "url_decode" -> doUrlCodec(args, encode = false)
-            else -> ToolResult.fail("op 只能是 regex / diff / url_encode / url_decode")
+            "batch_replace" -> doBatchReplace(args, host)
+            else -> ToolResult.fail("op 只能是 regex / diff / url_encode / url_decode / batch_replace")
         }
+    }
+
+    private suspend fun doBatchReplace(args: JSONObject, host: ToolHost): ToolResult {
+        val dirRaw = args.optString("dir", "").trim()
+        if (dirRaw.isBlank()) return ToolResult.fail("未提供 dir")
+        val dir = host.resolvePath(dirRaw) ?: return ToolResult.fail("路径不允许访问：$dirRaw")
+        val pattern = args.optString("pattern", "").trim()
+        if (pattern.isBlank()) return ToolResult.fail("未提供 pattern")
+        val replacement = args.optString("replacement", "")
+        val glob = args.optString("glob", "*").trim()
+
+        val regex = try { Regex(pattern) } catch (e: Exception) {
+            return ToolResult.fail("正则语法错误：${e.message}")
+        }
+
+        var filesChanged = 0
+        var totalReplacements = 0
+        val details = StringBuilder()
+
+        try {
+            java.io.File(dir).walkTopDown().maxDepth(15).forEach { f ->
+                if (f.isFile && (glob == "*" || f.name.contains(glob.replace("*", ""), ignoreCase = true))) {
+                    try {
+                        val text = f.readText(Charsets.UTF_8)
+                        val matchCount = regex.findAll(text).count()
+                        if (matchCount > 0) {
+                            val newText = regex.replace(text, replacement)
+                            f.writeText(newText, Charsets.UTF_8)
+                            filesChanged++
+                            totalReplacements += matchCount
+                            details.append("- ${f.name}: 替换 $matchCount 处\n")
+                        }
+                    } catch (_: Exception) { }
+                }
+            }
+        } catch (e: Exception) {
+            return ToolResult.fail("批量替换失败：${e.message}")
+        }
+
+        if (filesChanged == 0) {
+            return ToolResult.ok("未找到匹配的文件内容。")
+        }
+        return ToolResult.ok("批量替换完成：修改了 $filesChanged 个文件，共替换 $totalReplacements 处。\n\n$details")
     }
 
     private fun doTextRegex(args: JSONObject): ToolResult {
@@ -797,7 +816,6 @@ object CommonTools {
         val pattern = args.optString("pattern", "")
         val mode = args.optString("mode", "find").lowercase(Locale.ROOT)
         val replacement = args.optString("replacement", "")
-        // limit 默认 0 = 不限。用户可显式传正整数限制
         val limit = args.optInt("limit", 0).coerceAtLeast(0)
         if (pattern.isBlank()) return ToolResult.fail("未提供 pattern")
 
@@ -860,8 +878,6 @@ object CommonTools {
         val m = linesA.size
         val n = linesB.size
 
-        // 【防 OOM】LCS 的 dp 数组是 O(m×n)，两个 10000 行文件 ≈ 400MB。
-        // 超过限制时提示用户缩小范围。
         val MAX_DIFF_LINES = 5000
         if (m > MAX_DIFF_LINES || n > MAX_DIFF_LINES) {
             return ToolResult.fail(
@@ -924,8 +940,6 @@ object CommonTools {
             ToolResult.fail("${e.message}")
         }
     }
-
-    // 6. json
 
     private fun doJson(args: JSONObject): ToolResult {
         val op = args.optString("op", "").lowercase(Locale.ROOT)
@@ -1032,8 +1046,6 @@ object CommonTools {
         }
     }
 
-    // 7. hash
-
     private suspend fun doHash(args: JSONObject, host: ToolHost): ToolResult {
         val text = args.optString("text", "")
         val pathRaw = args.optString("path", "").trim()
@@ -1076,16 +1088,6 @@ object CommonTools {
         }
     }
 
-    /**
-     * 【错误自愈】路径类错误时，给出最相近的候选，让模型一次纠对。
-     *
-     * 【为什么】“文件不存在：xxx”这种错误，模型只能瞎猜重试，
-     * 往往要 2-3 轮才找对。直接给出“你是不是想找：yyy”，一轮就能纠对。
-     *
-     * @param target 用户给的（不存在的）路径
-     * @param wantDir true=想要目录，false=想要文件
-     * @return 提示文本（可能为空字符串，表示没找到候选）
-     */
     private suspend fun pathHint(target: String, wantDir: Boolean, host: ToolHost): String {
         return try {
             val f = File(target)
@@ -1104,7 +1106,6 @@ object CommonTools {
                 .map { it.first.name }
 
             if (candidates.isEmpty()) {
-                // 没有相近的，至少把父目录里的东西列出来
                 val all = entries.take(10).joinToString("、") { it.name }
                 return "\n父目录 $parent 下有：$all"
             }
@@ -1114,36 +1115,23 @@ object CommonTools {
         }
     }
 
-    /** 简单的名字相似度（0~1）：前缀匹配 + 长度接近度。 */
     private fun similarity(a: String, b: String): Double {
         if (a == b) return 1.0
         if (a.isEmpty() || b.isEmpty()) return 0.0
-        // 公共前缀长度
         var common = 0
         val n = minOf(a.length, b.length)
         while (common < n && a[common] == b[common]) common++
         val prefixScore = common.toDouble() / maxOf(a.length, b.length)
-        // 包含关系加分
         val containScore = if (a.contains(b) || b.contains(a)) 0.5 else 0.0
-        // 长度接近度
         val lenScore = 1.0 - kotlin.math.abs(a.length - b.length).toDouble() / maxOf(a.length, b.length)
         return maxOf(prefixScore, containScore) * 0.7 + lenScore * 0.3
     }
-
-    // 8. list_files
 
     private suspend fun doListFiles(args: JSONObject, host: ToolHost): ToolResult {
         val raw = args.optString("path", "").trim()
         val keyword = args.optString("keyword", "").trim()
         val maxResults = args.optInt("max_results", 100).coerceIn(1, 2000)
 
-        // 【mode 推断】
-        // 显式传了 mode 就听用户的；没传时：
-        //   - 传了 keyword → 按 content 搜正文（传 keyword 的意图几乎总是搜内容，
-        //     而不是搜文件名；搜文件名应该用 mode=name 且 keyword 是文件名片段）
-        //   - 没传 keyword → 列目录
-        // 之前默认 name，导致 list_files(path=某文件, keyword=xxx) 被当成搜文件名，
-        // 白跑一轮。
         val mode = if (args.has("mode")) {
             args.optString("mode", "name").trim().lowercase(Locale.ROOT)
         } else if (keyword.isNotBlank()) {
@@ -1159,7 +1147,6 @@ object CommonTools {
             host.resolvePath(raw) ?: return ToolResult.fail("路径不允许访问：$raw")
         }
 
-        // mode=content：搜文件正文，返回文件路径 + 行号 + 内容
         if (mode == "content" || mode == "grep") {
             return doContentSearch(args, host, path, keyword, maxResults)
         }
@@ -1187,29 +1174,34 @@ object CommonTools {
         val files = host.listDirectory(path) ?: return ToolResult.fail("无法读取目录内容")
         if (files.isEmpty()) return ToolResult.ok("目录为空：$path")
 
+        val sortBy = args.optString("sort_by", "name").lowercase(Locale.ROOT)
+        val descending = args.optBoolean("descending", false)
+
         val sb = StringBuilder()
         sb.append("目录：$path\n共 ${files.size} 项\n\n")
-        val sorted = files.sortedWith(
-            compareByDescending<FileEntry> { it.isDirectory }
-                .thenBy { it.name.lowercase(Locale.ROOT) }
-        )
-        // 【不截断】全部列出
+
+        var sorted = files.sortedWith(compareBy<FileEntry> { it.isDirectory }.reversed())
+        val comparator: Comparator<FileEntry> = when (sortBy) {
+            "time" -> compareBy { java.io.File(it.absolutePath).lastModified() }
+            "size" -> compareBy { it.size }
+            else -> compareBy { it.name.lowercase(Locale.ROOT) }
+        }
+        sorted = if (descending) {
+            sorted.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.then(comparator.reversed()))
+        } else {
+            sorted.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.then(comparator))
+        }
+
         for ((name, isDirectory, size1) in sorted) {
             val type = if (isDirectory) "[目录]" else "[文件]"
             val size = if (isDirectory) "" else " (${host.formatSize(size1)})"
-            sb.append("$type $name$size\n")
+            val time = java.text.SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
+                .format(java.util.Date(java.io.File(name).lastModified()))
+            sb.append("$type $name$size  [$time]\n")
         }
         return ToolResult.ok(sb.toString().trim())
     }
 
-    // 8b. 搜文件正文（grep）
-
-    /**
-     * 在目录里递归搜正文。
-     *
-     * 输出格式刻意做成“文件路径 + 缩进行号: 内容”，
-     * AI 拿到后可以直接 read_file(offset=行号) 跳读，一次定位。
-     */
     private suspend fun doContentSearch(
         args: JSONObject,
         host: ToolHost,
@@ -1224,10 +1216,8 @@ object CommonTools {
         val nameGlob = args.optString("glob", "").trim()
         val maxFileSizeKb = args.optInt("max_file_size_kb", 2048).coerceIn(1, 102400)
         val contextLines = args.optInt("context", 0).coerceIn(0, 10)
+        val maxDepth = args.optInt("max_depth", 15).coerceIn(1, 50)
 
-        // 【单文件特判】root 指向一个文件时，取 parent 当目录、name 当 glob，只搜这个文件。
-        // 之前这个特判只在 doGrep 里，导致 list_files(mode=content, path=某文件) 搜不到。
-        // 下沉到这里，两条入口共用。
         val (searchRoot, searchGlob) = if (!host.isDirectory(root)) {
             val f = File(root)
             (f.parent ?: root) to f.name
@@ -1242,22 +1232,12 @@ object CommonTools {
             nameGlob = searchGlob,
             maxResults = maxResults,
             maxFileSize = maxFileSizeKb.toLong() * 1024,
-            contextLines = contextLines
+            contextLines = contextLines,
+            maxDepth = maxDepth
         )
         return ToolResult.ok(renderContentHits(hits, root, keyword, searchGlob, maxResults, regex))
     }
 
-    /**
-     * 决定这次搜索走不走正则。
-     *
-     * 【为什么】我（AI）写 grep 时第一反应就是写 `a|b` 这种正则，
-     * 但默认 regex=false 会当成纯文本，结果“未找到”，白跑一轮。
-     *
-     * 策略：
-     *   - 显式传了 regex 就听用户的
-     *   - 没传时，keyword 里出现正则特征字符（| \\ ( ) [ ] { } ^ $ * + ?）就自动按正则
-     *   - 自动识别后正则编译失败，自动回退纯文本（不报错）
-     */
     private fun resolveRegexFlag(args: JSONObject, keyword: String): Boolean {
         if (args.has("regex")) return args.optBoolean("regex", false)
         val looksRegex = keyword.any { it in "|\\()[]{}^$*+?" }
@@ -1270,7 +1250,6 @@ object CommonTools {
         }
     }
 
-    /** 统一的命中渲染：按文件分组，带行号；有上下文时一并展示。 */
     private fun renderContentHits(
         hits: List<ContentMatch>,
         root: String,
@@ -1282,12 +1261,8 @@ object CommonTools {
         if (hits.isEmpty()) {
             val hasMeta = keyword.any { it in "|\\()[]{}^$*+?" }
             val hint = when {
-                // 含正则特征字符但走了纯文本：提醒可以按正则搜
-                !regex && hasMeta ->
-                    "\n提示：keyword 里含正则特征字符，已按纯文本搜。要按正则搜请传 regex=true。"
-                // 走了正则但没命中：提醒检查正则
-                regex ->
-                    "\n提示：已按正则搜（忽略大小写）。没命中可能是正则写法问题，可先传 regex=false 按纯文本试。"
+                !regex && hasMeta -> "\n提示：keyword 里含正则特征字符，已按纯文本搜。要按正则搜请传 regex=true。"
+                regex -> "\n提示：已按正则搜（忽略大小写）。没命中可能是正则写法问题。"
                 else -> ""
             }
             return "未找到包含 \"$keyword\" 的文件" +
@@ -1305,7 +1280,6 @@ object CommonTools {
         byFile.forEach { (file, list) ->
             sb.append("$file\n")
             list.forEach { h ->
-                // 上下文行用行号 + 空格前缀，命中行用行号 + 冒号，一眼能区分
                 h.before.forEachIndexed { i, t ->
                     val ln = h.line - h.before.size + i
                     sb.append("  $ln- $t\n")
@@ -1318,18 +1292,11 @@ object CommonTools {
             sb.append("\n")
         }
         if (hits.size >= maxResults) {
-            sb.append("（已达 max_results=$maxResults 上限，可能还有更多。可提高 max_results，或缩小 path / 加 glob）")
+            sb.append("（已达 max_results=$maxResults 上限，可能还有更多。）")
         }
         return sb.toString().trim()
     }
 
-    /**
-     * 独立工具 grep：与 read_file 同级的代码导航入口。
-     *
-     * 为什么除了 list_files(mode=content) 还要一个独立工具：
-     *   搜正文是高频动作，工具名直接叫 grep 时，AI 不用先想“该用哪个 op/mode”。
-     *   两者实现共用，不增加维护成本。
-     */
     private suspend fun doGrep(args: JSONObject, host: ToolHost): ToolResult {
         val raw = args.optString("path", "").trim()
         val keyword = args.optString("keyword", "").trim()
@@ -1343,16 +1310,10 @@ object CommonTools {
         }
         if (!host.exists(root)) return ToolResult.fail("路径不存在：$root" + pathHint(root, false, host))
 
-        // 单文件特判已下沉到 doContentSearch，这里直接交给它
         return doContentSearch(args, host, root, keyword, maxResults)
     }
 
-    // 9. read_file
-
     private suspend fun doReadFile(args: JSONObject, host: ToolHost): ToolResult {
-        // 【批量读】paths:[...] 一次读多个文件。
-        // 一次调用代替多条 tool_call：省掉每条的包装开销，
-        // 也不会因结果顺序错开而在历史里错配。
         val pathsArr = args.optJSONArray("paths")
         if (pathsArr != null && pathsArr.length() > 0) {
             val sb = StringBuilder()
@@ -1395,9 +1356,6 @@ object CommonTools {
                 val offset = args.optInt("offset", 1)
                 val limit = args.optInt("limit", 0)
 
-                // 【新增】带 offset/limit 时走行区间读取：
-                //   - 大文件不再被 1MB 硬拦，想看 200 行就给 200 行
-                //   - 返回带行号，方便后续 code_edit / grep 定位
                 if (offset > 1 || limit > 0) {
                     return readFileRange(host, path, offset, limit)
                 }
@@ -1412,8 +1370,9 @@ object CommonTools {
                     )
                 }
                 val content = host.readTextFile(path) ?: return ToolResult.fail("读取失败")
-                // 【不截断】完整返回；顺带报总行数，方便判断要不要分页
-                val total = host.textLineCount(path)
+                val total = if (content.isEmpty()) 0
+                else content.count { it == '\n' } +
+                        if (content.endsWith("\n")) 0 else 1
                 val lineInfo = if (total > 0) "\n行数：$total" else ""
                 ToolResult.ok("文件：$path\n大小：${host.formatSize(size)}$lineInfo\n内容：\n$content")
             }
@@ -1425,6 +1384,21 @@ object CommonTools {
                 val bytes = host.readBytes(path) ?: return ToolResult.fail("读取失败")
                 val b64 = Base64.getEncoder().encodeToString(bytes)
                 ToolResult.ok(b64)
+            }
+            "tail" -> {
+                val total = host.textLineCount(path)
+                if (total <= 0) return ToolResult.fail("文件为空或读取失败")
+                val tailLines = args.optInt("tail_lines", 100).coerceIn(1, 2000)
+                val start = (total - tailLines).coerceAtLeast(1)
+                val lines = host.readTextLines(path, start, tailLines) ?: return ToolResult.fail("读取失败")
+                val sb = StringBuilder()
+                sb.append("文件：$path\n")
+                sb.append("读取最后 $tailLines 行（原文件共 $total 行）\n\n")
+                val width = lines.lastOrNull()?.number?.toString()?.length ?: 4
+                lines.forEach { l ->
+                    sb.append(l.number.toString().padStart(width)).append("| ").append(l.text).append("\n")
+                }
+                return ToolResult.ok(sb.toString().trimEnd())
             }
             "hex" -> {
                 val bytes = host.readBytes(path) ?: return ToolResult.fail("读取失败")
@@ -1447,16 +1421,10 @@ object CommonTools {
                 }
                 ToolResult.ok(sb.toString())
             }
-            else -> ToolResult.fail("mode 只能是 text / base64 / hex")
+            else -> ToolResult.fail("mode 只能是 text / base64 / hex / tail")
         }
     }
 
-    /**
-     * 按行区间读文本文件，返回带行号的正文。
-     *
-     * 行号前缀是 `123| `，宽度对齐到最后一行。
-     * AI 能直接把行号回喂给 offset，也能在 grep 结果里对照位置。
-     */
     private suspend fun readFileRange(
         host: ToolHost,
         path: String,
@@ -1499,8 +1467,38 @@ object CommonTools {
         return ToolResult.ok(sb.toString().trimEnd())
     }
 
-    // 10. write_file
     private suspend fun doWriteFile(args: JSONObject, host: ToolHost): ToolResult {
+        val filesArr = args.optJSONArray("files")
+        if (filesArr != null && filesArr.length() > 0) {
+            val sb = StringBuilder()
+            var okCount = 0
+            for (i in 0 until filesArr.length()) {
+                val fObj = filesArr.optJSONObject(i) ?: continue
+                val p = fObj.optString("path", "").trim()
+                if (p.isBlank()) continue
+                val c = fObj.optString("content", "")
+                val app = fObj.optBoolean("append", false)
+                val pRes = host.resolvePath(p)
+                if (pRes == null) {
+                    sb.append("[失败] 路径不允许访问：$p\n")
+                    continue
+                }
+                val success = if (app) {
+                    val existing = host.readTextFile(pRes) ?: ""
+                    host.writeTextFile(pRes, existing + c)
+                } else {
+                    host.writeTextFile(pRes, c)
+                }
+                if (success) {
+                    okCount++
+                    sb.append("[成功] 已写入 $p (${c.length} 字符)\n")
+                } else {
+                    sb.append("[失败] 写入失败：$p\n")
+                }
+            }
+            return ToolResult.ok("批量写入完成：成功 $okCount 个文件。\n\n$sb")
+        }
+
         val raw = args.optString("path", "").trim()
         val mode = args.optString("mode", "text").lowercase(Locale.ROOT)
         if (raw.isBlank()) return ToolResult.fail("未提供 path")
@@ -1519,8 +1517,6 @@ object CommonTools {
                         ToolResult.fail("写入失败")
                     }
                 } else {
-                    // 【体验优化 B5】写前先判存在，返回结果里标注"覆盖"或"新建"，
-                    // 让 AI 和用户都能看到实际动作，不至于误以为是无害的新建。
                     val existed = host.exists(path)
                     if (host.writeTextFile(path, content)) {
                         val tag = if (existed) "（覆盖已有文件）" else "（新建）"
@@ -1552,15 +1548,41 @@ object CommonTools {
         }
     }
 
-    // 11. http_request
-
     private suspend fun doHttpRequest(args: JSONObject): ToolResult = withContext(Dispatchers.IO) {
         val url = args.optString("url", "").trim()
-        if (url.isBlank()) return@withContext ToolResult.fail("未提供 url")
-        val method = args.optString("method", "GET").uppercase(Locale.ROOT)
-        val headers = args.optJSONObject("headers")
-        val body = args.optString("body", "")
+        val urlsArr = args.optJSONArray("urls")
         val timeout = args.optInt("timeout", 30).coerceIn(1, 120)
+        val headers = args.optJSONObject("headers")
+        val client = getHttpClientForTimeout(timeout)
+
+        if (url.isBlank() && urlsArr != null && urlsArr.length() > 0) {
+            val urlsList = (0 until urlsArr.length()).mapNotNull { urlsArr.optString(it, "").takeIf { u -> u.isNotBlank() } }
+            if (urlsList.isEmpty()) return@withContext ToolResult.fail("urls 数组为空")
+
+            val results = coroutineScope {
+                urlsList.map { u ->
+                    async {
+                        val builder = Request.Builder().url(u)
+                        headers?.keys()?.forEach { k ->
+                            try { builder.header(k, headers.optString(k, "")) } catch (_: Exception) {}
+                        }
+                        try {
+                            client.newCall(builder.build()).execute().use { resp ->
+                                val body = resp.body.string()
+                                "[$u] HTTP ${resp.code}\n$body"
+                            }
+                        } catch (e: Exception) {
+                            "[$u] 请求失败：${e.message}"
+                        }
+                    }
+                }.awaitAll()
+            }
+            return@withContext ToolResult.ok(results.joinToString("\n\n---\n\n"))
+        }
+
+        if (url.isBlank()) return@withContext ToolResult.fail("未提供 url 或 urls")
+        val method = args.optString("method", "GET").uppercase(Locale.ROOT)
+        val body = args.optString("body", "")
 
         val builder = Request.Builder().url(url)
         headers?.keys()?.forEach { k ->
@@ -1586,7 +1608,6 @@ object CommonTools {
         }
 
         return@withContext try {
-            val client = getHttpClientForTimeout(timeout)
             val resp = client.newCall(builder.build()).execute()
 
             val code = resp.code
@@ -1599,7 +1620,6 @@ object CommonTools {
                 buildString {
                     append("HTTP $code\n")
                     if (headersStr.isNotBlank()) append("响应头：\n$headersStr\n\n")
-                    // 【不截断】完整返回
                     append("响应体：\n")
                     append(bodyStr)
                 }
@@ -1608,8 +1628,6 @@ object CommonTools {
             ToolResult.fail("请求失败：${e.message}")
         }
     }
-
-    // 12. env_store
 
     private suspend fun doEnvStore(args: JSONObject, host: ToolHost): ToolResult {
         val op = args.optString("operation", "get").lowercase(Locale.ROOT)
@@ -1623,7 +1641,6 @@ object CommonTools {
                     ToolResult.ok(
                         buildString {
                             append("共 ${all.size} 个变量：\n")
-                            // 【不截断】完整列出
                             all.forEach { (k, v) ->
                                 append("$k = $v\n")
                             }
@@ -1652,8 +1669,6 @@ object CommonTools {
             else -> ToolResult.fail("operation 只能是 get / set / delete / clear")
         }
     }
-
-    // 13. sleep
 
     private suspend fun doSleep(args: JSONObject): ToolResult {
         val seconds = args.optDouble("seconds", -1.0)

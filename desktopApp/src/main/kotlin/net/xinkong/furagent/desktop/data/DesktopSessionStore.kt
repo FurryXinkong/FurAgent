@@ -183,6 +183,8 @@ object DesktopSessionStore {
                 updatedAt = o.optLong("updatedAt"),
                 parentId = o.optString("parentId", "").takeIf { it.isNotBlank() },
                 systemPrompt = if (o.has("systemPrompt")) o.getString("systemPrompt") else null,
+                // 【P0-4】三态：null 表示磁盘上还没有此字段（旧数据）
+                titleLocked = if (o.has("titleLocked")) o.optBoolean("titleLocked", false) else null,
                 messages = msgs
             )
         } catch (e: Exception) {
@@ -207,12 +209,19 @@ object DesktopSessionStore {
                 val f = sessionFile(session.id)
                 if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optString("systemPrompt", "") else ""
             }.getOrDefault("")
+            // 【P0-4】titleLocked 三态兜底：null 保留磁盘原值（同 systemPrompt 语义）
+            val titleLocked = session.titleLocked ?: runCatching {
+                val f = sessionFile(session.id)
+                if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optBoolean("titleLocked", false)
+                else false
+            }.getOrDefault(false)
             val o = JSONObject().apply {
                 put("id", session.id)
                 put("title", session.title)
                 put("createdAt", session.createdAt)
                 put("updatedAt", session.updatedAt)
                 if (parentId != null) put("parentId", parentId)
+                put("titleLocked", titleLocked)
                 put("systemPrompt", systemPrompt)
                 put("messages", JSONArray().apply {
                     session.messages.forEach { m ->

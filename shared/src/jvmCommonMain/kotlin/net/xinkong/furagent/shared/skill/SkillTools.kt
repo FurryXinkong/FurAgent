@@ -37,6 +37,7 @@ object SkillTools {
                     "op=list 列出所有脚本；op=info 查看详情（name）；op=run 执行（name + args）；" +
                     "op=create 创建新脚本（name + description + params + code）；op=delete 删除（name）；" +
                     "op=config 读写脚本配置（name + config / values / enabled / timeout）。" +
+                    "\n\n【环境限制】手机端内置了 numpy, pillow, beautifulsoup4, pyyaml（不支持 requests，网络请用标准库 urllib.request 或内置工具），不支持在运行时 pip install 其他库。桌面端环境取决于系统 Python，可随意安装。" +
                     "\n\n【重要】每个脚本也会单独注册成一个工具（名字形如 pytool_<脚本名>），" +
                     "你可以直接调用那个工具，不用先 list 再 run。" +
                     "\n\n【创建脚本】用户要求「做个脚本 / 加个功能 / 以后都用这个流程」时用 op=create。" +

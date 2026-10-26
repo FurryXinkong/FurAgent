@@ -436,6 +436,9 @@ private fun PcBrowserTab(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var downloadingPath by remember { mutableStateOf<String?>(null) }
+    // 【批次 8】HTTP 流式下载的进度状态（0~1），total 未知时为 0（不确定进度）
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadSizeText by remember { mutableStateOf("") }
 
     fun load(path: String) {
         if (!connected) return
@@ -462,29 +465,33 @@ private fun PcBrowserTab(
             return
         }
         downloadingPath = remotePath
-        scope.launch(Dispatchers.IO) {
-            val args = JSONObject().apply {
-                put("path", remotePath)
-                put("mode", "base64")
-            }
-            val result = PcBridgeClient.callRemoteTool("read_file", args, 180)
+        downloadProgress = 0f
+        downloadSizeText = ""
+        // 【批次 8 修复】改走 HTTP 流式下载（PcBridgeClient.downloadFileToLocal）。
+        // 原实现 read_file(mode="base64") 会经过电脑端 CommonTools.maybeSpill 的 16KB 阈值，
+        // MB 级文件返回的只是摘要文本（前 30 行 base64 + 中文头），
+        // 手机端 Base64.decode 后只解出几 KB 碎片 → 写入失败或损坏。
+        // 改走 HTTP /download 端点后无大小限制，也支持进度回调。
+        scope.launch {
+            val prefs = context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE)
+            val settings = SettingsStore.load(prefs)
+            val target = FileNaming.resolveReceiveFile(settings.pcReceiveDir, fileName)
+            val (ok, msg) = PcBridgeClient.downloadFileToLocal(
+                remotePath = remotePath,
+                localFile = target,
+                onProgress = { downloaded, total ->
+                    downloadProgress = if (total > 0) downloaded.toFloat() / total else 0f
+                    downloadSizeText = if (total > 0) {
+                        "${formatFileSize(downloaded)} / ${formatFileSize(total)}"
+                    } else {
+                        formatFileSize(downloaded)
+                    }
+                }
+            )
             downloadingPath = null
-            if (result.startsWith("失败")) {
-                onInfo(result.removePrefix("失败：").take(200))
-                return@launch
-            }
-            try {
-                val bytes = android.util.Base64.decode(result.trim(), android.util.Base64.DEFAULT)
-                val prefs = context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE)
-                val settings = SettingsStore.load(prefs)
-                val target = FileNaming.resolveReceiveFile(
-                    settings.pcReceiveDir, fileName
-                )
-                target.writeBytes(bytes)
-                onInfo("已下载：${target.name}（${formatFileSize(bytes.size.toLong())}）")
-            } catch (e: Exception) {
-                onInfo("写入失败：${e.message}")
-            }
+            downloadProgress = 0f
+            downloadSizeText = ""
+            onInfo(msg)
         }
     }
 
@@ -525,6 +532,58 @@ private fun PcBrowserTab(
         )
 
         Spacer(Modifier.height(8.dp))
+
+        // 【批次 8】下载进度条（下载进行中时显示在文件列表上方）
+        if (downloadingPath != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                shape = RoundedCornerShape(AppRadius.SM),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            "正在下载：${downloadingPath!!.substringAfterLast('/').substringAfterLast('\\')}",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f)
+                        )
+                        if (downloadSizeText.isNotBlank()) {
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                downloadSizeText,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    if (downloadProgress > 0f) {
+                        LinearProgressIndicator(
+                            progress = { downloadProgress },
+                            modifier = Modifier.fillMaxWidth().height(4.dp)
+                        )
+                    } else {
+                        // 服务端没给 Content-Length 时走不确定进度
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth().height(4.dp)
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
 
         Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.TopCenter) {
             when {

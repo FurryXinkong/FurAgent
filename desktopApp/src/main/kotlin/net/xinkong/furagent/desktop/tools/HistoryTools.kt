@@ -54,7 +54,8 @@ object HistoryTools {
         val limit = args.optInt("limit", 30).coerceIn(1, 200)
         // 【会话隔离】scope=session 只看当前会话（含子代理），scope=all 看全部
         val scope = args.optString("scope", "session").trim().ifBlank { "session" }
-        val currentSession = DesktopTools.CurrentTaskSession.id
+        // 【P0-2 收尾】从协程上下文读 sessionId，不再读已删除的全局 var
+        val currentSession = net.xinkong.furagent.desktop.core.currentSessionId()
 
         val all = HistoryStore.listHistory(backupDir, 500)
         val scoped = if (scope == "all" || currentSession.isBlank()) all
@@ -142,7 +143,7 @@ object HistoryTools {
                     HistoryStore.recordEdit(
                         backupDir, entry.path, "restore",
                         currentBytes, bytes, "history",
-                        sessionId = DesktopTools.CurrentTaskSession.id
+                        sessionId = net.xinkong.furagent.desktop.core.currentSessionId()
                     )
                     ToolResult.ok(
                         "已回档：${entry.path}\n" +

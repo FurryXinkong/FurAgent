@@ -338,16 +338,28 @@ fun DrawerItem(
 fun deleteMessagePair(history: List<ChatMessage>, index: Int): List<ChatMessage> {
     val msg = history.getOrNull(index) ?: return history
     val newList = history.toMutableList()
-    if (msg.role == "user" && msg.type == "text") {
-        var end = index + 1
-        while (end < newList.size) {
-            val m = newList[end]
-            if (m.role == "user" && m.type == "text") break
-            end++
+    when {
+        msg.role == "user" && msg.type == "text" -> {
+            var end = index + 1
+            while (end < newList.size) {
+                val m = newList[end]
+                if (m.role == "user" && m.type == "text") break
+                end++
+            }
+            for (i in (end - 1) downTo index) newList.removeAt(i)
         }
-        for (i in (end - 1) downTo index) newList.removeAt(i)
-    } else {
-        newList.removeAt(index)
+        msg.role == "assistant" && msg.type == "text" -> {
+            // 【P1-14 修复】删 assistant 时连带其后的 tool_call / tool_result / reasoning，
+            // 直到下一条 user 或 assistant text，避免留下孤儿结果（看起来像“返回没有调用”）
+            newList.removeAt(index)
+            while (index < newList.size) {
+                val m = newList[index]
+                if (m.role == "user") break
+                if (m.role == "assistant" && m.type == "text") break
+                newList.removeAt(index)
+            }
+        }
+        else -> newList.removeAt(index)
     }
     return newList
 }

@@ -32,16 +32,16 @@ object CommonToolSchemas {
         ToolSpec(
             name = "statistics",
             displayName = "统计",
-            description = "计算一组数字的统计指标：个数、总和、均值、中位数、最小、最大、极差、样本方差、样本标准差。",
-            paramsSchema = """{"type":"object","properties":{"numbers":{"type":"string"}},"required":["numbers"]}"""
+            description = "计算一组数字的统计指标：个数、总和、均值、中位数、最小、最大、极差、样本方差、样本标准差。可以直接传 json_array（如从 CSV 导出的数据）和 field 字段名，直接对复杂 JSON 数组中的某个数值字段进行统计分析。",
+            paramsSchema = """{"type":"object","properties":{"numbers":{"type":"string","description":"逗号分隔的数字"},"json_array":{"type":"string","description":"JSON 数组字符串"},"field":{"type":"string","description":"从 JSON 数组中提取的数值字段名"}},"required":[]}"""
         ),
 
-        // 5. 文本
+        // 5. 文本处理
         ToolSpec(
             name = "text",
             displayName = "文本处理",
-            description = "文本处理。op=regex 正则匹配（mode=find/match_all/replace/split）；op=diff 比较两段文本行级差异；op=url_encode 编码 URL；op=url_decode 解码 URL。",
-            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["regex","diff","url_encode","url_decode"]},"text":{"type":"string"},"pattern":{"type":"string"},"mode":{"type":"string"},"replacement":{"type":"string"},"limit":{"type":"integer"},"text1":{"type":"string"},"text2":{"type":"string"},"component":{"type":"boolean"}},"required":["op"]}"""
+            description = "文本处理。op=regex 正则匹配（mode=find/match_all/replace/split）；op=diff 比较两段文本行级差异；op=url_encode 编码 URL；op=url_decode 解码 URL。使用 op=batch_replace，传入 dir 目录、glob 文件匹配（如 *.kt）、pattern 正则、replacement 替换内容，直接在文件系统上批量修改代码或文本。",
+            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["regex","diff","url_encode","url_decode","batch_replace"]},"text":{"type":"string"},"pattern":{"type":"string"},"mode":{"type":"string"},"replacement":{"type":"string"},"limit":{"type":"integer"},"text1":{"type":"string"},"text2":{"type":"string"},"component":{"type":"boolean"},"dir":{"type":"string"},"glob":{"type":"string"}},"required":["op"]}"""
         ),
 
         // 6. JSON
@@ -64,41 +64,32 @@ object CommonToolSchemas {
         ToolSpec(
             name = "list_files",
             displayName = "浏览/搜索文件",
-            description = "列出目录内容、按文件名搜、或搜文件正文。mode=name（默认）列举目录；给了 keyword 就按文件名递归搜索；mode=content 时把 keyword 当内容搜（返回 路径/行号/内容，可用于找符号定义、配置项、日志文本）。【搜正文】建议配合 glob 限定文件名（如 *.kt）以提速；keyword 含正则特征字符（| \\ ( ) [ ] { } ^ $ * + ?）时自动按正则处理，也可显式传 regex；会自动跳过 .git/build/node_modules 与二进制文件；拿到行号后可直接用 read_file(offset=行号, limit=N) 跳读上下文。支持路径别名：sdcard、桌面、下载、图片、文档、音乐。默认只返回前 100 条（max_results 默认 100），需要更多请显式传 max_results。需要同时看多个目录/多个关键词时，尽量合并成一次调用，不要拆成多轮。结果超过 16KB 时会自动落盘到 ~/.furagent/temp/，上下文只留前 30 行预览 + 文件路径，要看全文用 read_file 读该路径。",
-            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"keyword":{"type":"string"},"mode":{"type":"string","enum":["name","content"],"description":"name=按文件名搜（默认）；content=搜文件正文。不传时：传了 keyword 自动按 content，否则列目录"},"glob":{"type":"string","description":"mode=content 时的文件名过滤，如 *.kt 或 *.kt,*.kts"},"regex":{"type":"boolean","description":"mode=content 时把 keyword 当正则（不传时含正则特征字符会自动按正则）"},"context":{"type":"integer","description":"mode=content 时每条命中带前后各 N 行上下文（0-10）"},"max_file_size_kb":{"type":"integer","description":"搜正文时超过该大小的文件先嗅头部判断是否文本，默认 2048"},"max_results":{"type":"integer"}},"required":["path"]}"""
+            description = "列出目录内容、按文件名搜、或搜文件正文。mode=name（默认）列举目录；给了 keyword 就按文件名递归搜索；mode=content 时把 keyword 当内容搜。要找最新文件，直接传 sort_by=\"time\" 和 descending=true。拿到行号后可直接用 read_file(offset=行号) 跳读。默认只返回前 100 条（max_results）。",
+            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"keyword":{"type":"string"},"mode":{"type":"string","enum":["name","content"],"description":"name=按文件名搜（默认）；content=搜文件正文。不传 keyword 时列目录"},"glob":{"type":"string","description":"mode=content 时的文件名过滤，如 *.kt"},"regex":{"type":"boolean","description":"mode=content 时把 keyword 当正则"},"context":{"type":"integer","description":"mode=content 时每条命中带前后各 N 行上下文（0-10）"},"max_file_size_kb":{"type":"integer"},"max_depth":{"type":"integer","description":"递归最大深度，默认 15。"},"sort_by":{"type":"string","enum":["name","time","size"],"description":"列目录时的排序依据，默认 name"},"descending":{"type":"boolean","description":"是否降序，默认 false"},"max_results":{"type":"integer"}},"required":["path"]}"""
         ),
-
-        // 7b. grep 已并入 list_files（mode=content），不再单独暴露。
-        // execute() 仍保留 "grep" 入口做向后兼容。
 
         // 9. 读取文件
         ToolSpec(
             name = "read_file",
             displayName = "读取文件",
-            description = "读取文件内容。mode=text（默认）返回文本；传 offset/limit 时按行区间读并带行号（大文件必须用这种方式分页读，否则超过 1MB 会被拒）。" +
-                    "【批量读】要看多个互不依赖的文件时，用 paths:[\"a.kt\",\"b.kt\"] 一次读完，返回每份文件的首尾标记；" +
-                    "比拆成多次调用省很多 token（每次调用都要重发一遍完整上下文）。paths 与 path 二选一，offset/limit 对每个文件同时生效。" +
-                    "mode=base64 返回 base64（跨端传输，限 10MB）；mode=hex 返回十六进制 + ASCII 视图（length 默认 512 字节）。" +
-                    "读大文件请显式给 limit（如 limit=100），不要一次拉全文。结果超过 16KB 时会自动落盘到 ~/.furagent/temp/，上下文只留前 30 行预览 + 文件路径，要看全文用 read_file 读该路径（读落盘文件不会再落盘）。",
-            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"},"description":"批量读多个文件。与 path 二选一"},"mode":{"type":"string","enum":["text","base64","hex"]},"offset":{"type":"integer","description":"起始行号，1 起。传了它或 limit 就按行区间读并带行号"},"limit":{"type":"integer","description":"最多读多少行"},"length":{"type":"integer","description":"mode=hex 时显示的字节数"}},"required":[]}"""
+            description = "读取文件内容。mode=text（默认）返回文本；传 offset/limit 按行区间读并带行号。要看日志最后几行，直接用：read_file(path=\"xxx.log\", mode=\"tail\", tail_lines=100)，无需计算 offset。要看多个文件，用 paths=[\"a.txt\", \"b.txt\"]。mode=base64 返回 base64；mode=hex 返回十六进制。",
+            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"},"description":"批量读多个文件。与 path 二选一"},"mode":{"type":"string","enum":["text","base64","hex","tail"]},"offset":{"type":"integer","description":"起始行号，1 起"},"limit":{"type":"integer","description":"最多读多少行"},"tail_lines":{"type":"integer","description":"mode=tail 时的行数，默认 100"},"length":{"type":"integer","description":"mode=hex 时显示的字节数"}},"required":[]}"""
         ),
 
         // 10. 写入文件
         ToolSpec(
             name = "write_file",
             displayName = "写入文件",
-            description = "写入文件。mode=text（默认）把 content 写入（可选 append=true 追加到末尾）；mode=base64 把 data 解码后写入（用于跨端接收文件）。" +
-                    "\n\n【注意】如果用户要求「做个脚本 / 加个功能 / 以后都用这个流程」，且目标是桌面端的自定义脚本（~/.furagent/scripts/），不要直接用 write_file 往 scripts/ 根目录扔裸 .py。" +
-                    "自定义脚本有固定规范（一个 .py 一个脚本，元数据写在文件头部的 NAME/DESCRIPTION/PARAMS/TIMEOUT 模块级变量里），必须先用 tool_search(\"自定义脚本\") 或 tool_load(\"skill\") 拿到 skill 工具的完整规范再创建。",
-            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"mode":{"type":"string","enum":["text","base64"]},"content":{"type":"string"},"data":{"type":"string"},"append":{"type":"boolean"}},"required":["path"]}"""
+            description = "写入文件。mode=text（默认）把 content 写入（可选 append=true 追加到末尾）。如果要拆分或生成多个文件，必须用 files 数组一次性写入，不要分多次调用！示例：write_file(files=[{\"path\":\"A.kt\", \"content\":\"...\"}, {\"path\":\"B.kt\", \"content\":\"...\"}])。",
+            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"files":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"},"append":{"type":"boolean"}}},"description":"批量写入的文件列表"},"mode":{"type":"string","enum":["text","base64"]},"content":{"type":"string"},"data":{"type":"string"},"append":{"type":"boolean"}},"required":[]}"""
         ),
 
-        // 11. HTTP 请求
+        // 11. HTTP 请求（增强版）
         ToolSpec(
             name = "http_request",
             displayName = "HTTP 请求",
-            description = "发送任意 HTTP 请求。支持 GET/POST/PUT/DELETE/PATCH/HEAD，自定义 headers 和 body。用于调用 REST API、调试接口、抓取 JSON 数据等。响应体完整返回，不截断。",
-            paramsSchema = """{"type":"object","properties":{"url":{"type":"string"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"timeout":{"type":"integer"}},"required":["url"]}"""
+            description = "发送任意 HTTP 请求。支持 GET/POST/PUT/DELETE/PATCH/HEAD，自定义 headers 和 body。用于调用 REST API、调试接口、抓取 JSON 数据等。如果传了 urls（字符串数组），会并发请求这多个地址，合并结果返回，极大地节省时间。响应体完整返回，不截断。",
+            paramsSchema = """{"type":"object","properties":{"url":{"type":"string"},"urls":{"type":"array","items":{"type":"string"},"description":"批量并发请求的 URL 列表。与 url 二选一"},"method":{"type":"string"},"headers":{"type":"object"},"body":{"type":"string"},"timeout":{"type":"integer"}},"required":[]}"""
         ),
 
         // 12. 环境变量
@@ -113,35 +104,24 @@ object CommonToolSchemas {
         ToolSpec(
             name = "sleep",
             displayName = "等待",
-            description = "让 Agent 等待指定时长。用于：轮询状态（比如等 App 加载完成再截图）、限速（避免频繁调用接口被风控）、等待异步任务完成。参数：seconds（秒，可带小数）或 ms（毫秒，整数），二选一。最大 300 秒。可选 reason 说明等待目的（会写进返回文本）。等待期间用户仍可取消任务，取消时立即中断。",
+            description = "让 Agent 等待指定时长。用于：轮询状态（比如等 App 加载完成再截图）、限速（避免频繁调用接口被风控）、等待异步任务完成。参数：seconds（秒，可带小数）或 ms（毫秒，整数），二选一。最大 300 秒。",
             paramsSchema = """{"type":"object","properties":{"seconds":{"type":"number"},"ms":{"type":"integer"},"reason":{"type":"string"}}}"""
         ),
 
-        // 14. 运行子会话（子代理，智能体自发起）
+        // 14. 运行子会话
         ToolSpec(
             name = "run_sub_session",
             displayName = "运行子会话",
-            description = "派生一个全新的独立子会话（子代理）执行子任务：子会话不携带当前对话历史，" +
-                    "以全新上下文独立运行；调用立即返回、不阻塞主对话（可并行最多 4 个）。" +
-                    "调用时机：子任务与当前历史无关、或需要隔离上下文独立完成的整块工作。" +
-                    "参数 task 为子任务完整描述（子会话只能看到你写的这段描述，务必自包含），title 可选为子会话标题。" +
-                    "【可复用】传 session_id 可复用已有子会话（带上它之前的历史继续跑），用于追问同一个子代理；" +
-                    "不传则新建。子会话完成后系统会自动在主对话注入「子代理完成」通知，无需轮询或 sleep 等待；" +
-                    "执行中也可用 sub_session 工具查询进度或取结果。不支持嵌套（子会话内不能再次调用本工具）。",
-            paramsSchema = """{"type":"object","properties":{"task":{"type":"string","description":"子任务完整描述，需自包含全部上下文"},"title":{"type":"string","description":"可选：子会话标题"},"session_id":{"type":"string","description":"可选：复用已有子会话 id（形如 sub_1712345678901_3f2a），带上它的历史继续跑；不传则新建"}},"required":["task"]}"""
+            description = "派生一个全新的独立子会话（子代理）执行子任务：子会话不携带当前对话历史，以全新上下文独立运行；调用立即返回、不阻塞主对话（可并行最多 4 个）。调用时机：子任务与当前历史无关、或需要隔离上下文独立完成的整块工作。",
+            paramsSchema = """{"type":"object","properties":{"task":{"type":"string","description":"子任务完整描述，需自包含全部上下文"},"title":{"type":"string","description":"可选：子会话标题"},"session_id":{"type":"string","description":"可选：复用已有子会话 id"}},"required":["task"]}"""
         ),
 
-        // 15. 查询子会话（子代理状态 / 结果回收）
+        // 15. 查询子会话
         ToolSpec(
             name = "sub_session",
             displayName = "查询子会话",
-            description = "查询或控制子代理（子会话）。参数 op：" +
-                    "status=列出正在执行的子会话及进度（默认）；list=列出全部子会话记录；" +
-                    "result=取指定子会话的最终结果（需配套 id，形如 sub_1712345678901_3f2a）；" +
-                    "stop=终止正在执行的子会话（需配套 id）。" +
-                    "调用时机：run_sub_session 后台执行中想了解进度、回收结果，" +
-                    "或发现子代理跑偏/反复报错时主动终止它。",
-            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["status","list","result","stop"],"description":"默认 status"},"id":{"type":"string","description":"op=result / op=stop 时必填，子会话 id"}}}"""
+            description = "查询或控制子代理（子会话）。参数 op：status=列出正在执行的子会话及进度（默认）；list=列出全部子会话记录；result=取指定子会话的最终结果（需配套 id）；stop=终止正在执行的子会话（需配套 id）。",
+            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["status","list","result","stop"],"description":"默认 status"},"id":{"type":"string","description":"op=result / op=stop 时必填"}}}"""
         )
     )
 

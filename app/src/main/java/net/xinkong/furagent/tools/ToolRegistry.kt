@@ -61,7 +61,7 @@ private const val RAW_PRIVATE_TOOLS_JSON = """
   {"type":"function","function":{"name":"schedule","description":"定时任务（秒级轮询 / cron / 条件触发）。op=create 创建任务（action 支持 open_app / run_command / notify / run_workflow / run_tool / run_agent，可带 repeat_mode / interval_seconds / cron_expression / conditions；run_agent 让 AI 定时主动说话，需要 prompt，可带 session_id 写回会话；run_tool 需要 tool_name）；op=list 列出所有任务；op=cancel 按 task_id 或 keyword 取消。所有时间/周期/条件触发需求优先使用。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["create","list","cancel"]},"action":{"type":"string"},"description":{"type":"string"},"package_name":{"type":"string"},"app_name":{"type":"string"},"command":{"type":"string"},"tool_name":{"type":"string"},"tool_args":{"type":"string"},"prompt":{"type":"string"},"session_id":{"type":"string"},"notification_title":{"type":"string"},"notification_content":{"type":"string"},"workflow_name":{"type":"string"},"trigger_time":{"type":"string"},"delay_seconds":{"type":"integer"},"repeat_mode":{"type":"string"},"interval_seconds":{"type":"integer"},"cron_expression":{"type":"string"},"repeat_days":{"type":"string"},"conditions":{"type":"array","items":{"type":"object","properties":{"type":{"type":"string"},"operator":{"type":"string"},"value":{"type":"string"},"value2":{"type":"string"}}}},"condition_mode":{"type":"string"},"skip_if_not_met":{"type":"boolean"},"task_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"workflow","description":"工作流管理。op=create 创建或更新工作流（需要 name 和 steps_json）；op=delete 按名称删除；op=list 列出所有工作流；op=run 执行指定工作流（需要 name，可选 params）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["create","delete","list","run"]},"name":{"type":"string"},"description":{"type":"string"},"params":{"type":"object"},"steps_json":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"memory","description":"长期记忆管理。op=save 保存一条记忆（需要 content）；op=recall 按 query 检索（query 为空则列出全部）；op=list 列出所有记忆（带 ID）；op=delete 按 memory_id 或 keyword 删除。当用户透露姓名、职业、偏好、习惯、忌讳或明确纠正你的事实时主动保存，不要等用户说「记住」。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["save","recall","list","delete"]},"content":{"type":"string"},"query":{"type":"string"},"memory_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}}},
-  {"type":"function","function":{"name":"web","description":"联网工具。op=search 搜索（最多 8 条结果，可 page 翻页；可选 engine=bing/baidu/360 指定搜索源，不填按 360→百度→必应 顺序自动回退）；op=fetch 抓取指定 URL 的网页正文（可 max_length 控制长度，默认 8000）。用户提供 URL 且要求总结或查看内容时，直接用 fetch 抓正文，不要只依赖搜索摘要。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"page":{"type":"integer"},"engine":{"type":"string"},"url":{"type":"string"},"max_length":{"type":"integer"}},"required":["op"]}}},
+  {"type":"function","function":{"name":"web","description":"联网工具。op=search 搜索（最多 8 条结果，可 page 翻页；可选 engine=bing/baidu/360 指定搜索源，不填按 360→百度→必应 顺序自动回退）；op=fetch 抓取指定 URL 的网页正文（可 max_length 控制长度，默认 8000，支持传 selector 用 CSS 选择器精准提取网页节点）。用户提供 URL 且要求总结或查看内容时，直接用 fetch 抓正文，不要只依赖搜索摘要。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"page":{"type":"integer"},"engine":{"type":"string"},"url":{"type":"string"},"max_length":{"type":"integer"},"selector":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"file_op","description":"文件操作（写操作，需确认）。op=create 创建新文件（path + content）；op=delete 删除文件（path）；op=rename 重命名或移动（old_path + new_path）；op=copy 复制（source + dest）；op=edit 覆盖已存在文件（path + content）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["create","delete","rename","copy","edit"]},"path":{"type":"string"},"content":{"type":"string"},"old_path":{"type":"string"},"new_path":{"type":"string"},"source":{"type":"string"},"dest":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"zip","description":"压缩与解压。op=zip 把目录压缩为 zip（source_dir + output_zip）；op=unzip 解压 zip（zip_path + target_dir）。需确认。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["zip","unzip"]},"source_dir":{"type":"string"},"output_zip":{"type":"string"},"zip_path":{"type":"string"},"target_dir":{"type":"string"}},"required":["op"]}}},
   {"type":"function","function":{"name":"base64","description":"Base64 编解码。op=decode 把 base64 字符串解码为文件（content + save_path）；op=encode 把本地文件编码为 base64（path，可选 max_size_kb 默认 512）。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["decode","encode"]},"content":{"type":"string"},"save_path":{"type":"string"},"path":{"type":"string"},"max_size_kb":{"type":"integer"}},"required":["op"]}}},
@@ -96,6 +96,15 @@ object ToolRegistry {
     @Volatile private var cachedMcpAt: Long = 0L
     private const val MCP_DISPLAY_CACHE_MS = 2000L
 
+    // 【批次 11 性能】buildToolSearchSpec 缓存。
+    // 每轮 Agent 循环都调，每次都走 getCatalogTools + 拼字符串（N 个 CatalogTool 构造 + 几百字符拼接）。
+    // 一轮用 5 次工具 = 重建 5 次。缓存后 5 秒内只重建 1 次。
+    // 键 = disabled hash + visionEnabled；MCP/skill 工具变化靠 5 秒窗口兜底。
+    @Volatile private var cachedSearchSpec: JSONObject? = null
+    @Volatile private var cachedSearchSpecKey: String = ""
+    @Volatile private var cachedSearchSpecAt: Long = 0L
+    private const val SEARCH_SPEC_CACHE_MS = 5000L
+
     private fun refreshMcpCacheIfNeeded() {
         val now = System.currentTimeMillis()
         if (now - cachedMcpAt < MCP_DISPLAY_CACHE_MS) return
@@ -103,6 +112,18 @@ object ToolRegistry {
         cachedMcpForward = list.associate { it.name to it.displayName }
         cachedMcpReverse = list.associate { it.displayName to it.name }
         cachedMcpAt = now
+    }
+
+    // 【批次 18】O(1) 路由表，消灭层层 if-else 判断
+    private val PRIVATE_ROUTER: Map<String, (JSONObject, Context, AppSettings) -> String> by lazy {
+        val map = mutableMapOf<String, (JSONObject, Context, AppSettings) -> String>()
+        SystemTools.TOOLS.forEach { map[it.name] = { a, c, s -> SystemTools.execute(it.name, a, c, s) } }
+        FileTools.TOOLS.forEach { map[it.name] = { a, c, s -> FileTools.execute(it.name, a, c, s) } }
+        MediaTools.TOOLS.forEach { map[it.name] = { a, c, s -> MediaTools.execute(it.name, a, c, s) } }
+        RemoteTools.TOOLS.forEach { map[it.name] = { a, c, s -> RemoteTools.execute(it.name, a, c, s) } }
+        ScreenTools.TOOLS.forEach { map[it.name] = { a, c, s -> ScreenTools.execute(it.name, a, c, s) } }
+        ImageGenTools.TOOLS.forEach { map[it.name] = { a, c, s -> ImageGenTools.execute(it.name, a, c, s) } }
+        map
     }
 
     private fun getHost(context: Context, settings: AppSettings): AndroidToolHost {
@@ -234,9 +255,19 @@ object ToolRegistry {
      * 不用额外请求。
      */
     private fun buildToolSearchSpec(settings: AppSettings): JSONObject {
-        val catalog = getCatalogTools()
         val profile = settings.currentProfile()
         val visionEnabled = profile?.supportsVision ?: true
+        // 【批次 11】5 秒缓存：每轮 Agent 循环都调，重建成本 O(N 工具数)。
+        val cacheKey = "${settings.disabledTools.hashCode()}_$visionEnabled"
+        val now = System.currentTimeMillis()
+        val cached = cachedSearchSpec
+        if (cached != null && cachedSearchSpecKey == cacheKey &&
+            now - cachedSearchSpecAt < SEARCH_SPEC_CACHE_MS
+        ) {
+            return cached
+        }
+
+        val catalog = getCatalogTools()
 
         val catalogText = ToolCatalog.buildCatalogText(
             tools = catalog,
@@ -254,7 +285,7 @@ object ToolRegistry {
             append(catalogText)
         }
 
-        return JSONObject().apply {
+        val spec = JSONObject().apply {
             put("type", "function")
             put("function", JSONObject().apply {
                 put("name", "tool_search")
@@ -275,6 +306,11 @@ object ToolRegistry {
                 })
             })
         }
+        // 【批次 11】写入缓存
+        cachedSearchSpec = spec
+        cachedSearchSpecKey = cacheKey
+        cachedSearchSpecAt = now
+        return spec
     }
 
     private fun buildToolLoadSpec(): JSONObject {
@@ -382,8 +418,11 @@ object ToolRegistry {
                                 "python 直接跑你传入的代码字符串，不会在磁盘上留文件。" +
                                 "\n\n【输出】用 print() 输出结果，会原样返回给用户。" +
                                 "若最后一行是 JSON {\"ok\":true,\"result\":\"...\"}，会优先取 result 字段。" +
-                                "\n\n【环境】Chaquopy 内嵌 CPython 3.12，只有标准库，无第三方包。" +
-                                "\n\n【注意】不要写死循环；不要用 input() 交互。"
+                                "\n\n【环境】Chaquopy 内嵌 CPython 3.12。" +
+                                "【预置库】除了标准库，还内置了：numpy(计算), pillow(图像), beautifulsoup4(HTML解析), pyyaml(YAML解析)。" +
+                                "【网络请求】不要用 requests（已被移除），如果需要写复杂的 Python 网络脚本，请用标准库 urllib.request，或者直接使用内置的 http_request 工具。" +
+                                "\n\n【注意】1. 不要写死循环；2. 不要用 input() 交互；" +
+                                "3. 【绝对不要】在代码里尝试 os.system('pip install xxx') 或 subprocess 安装其他库，手机端无法动态安装。"
                     )
                     put(
                         "parameters",
@@ -527,24 +566,47 @@ object ToolRegistry {
     // 日志参数清理
 
     private fun sanitizeArgsForLog(name: String, args: JSONObject): String {
+        // 【批次 11 性能】原实现每次都 `JSONObject(args.toString())`：
+        //   - args.toString() 分配一份完整 JSON 字符串（大参数是 MB 级）
+        //   - JSONObject(...) 再解析一遍
+        // 一次工具调用两次大字符串分配。改为按 key 逐字段复制：
+        //   - 不需要截断的字段直接沿用原引用（零拷贝）
+        //   - 需要截断的字段只复制截断后的短字符串
         return try {
-            val copy = JSONObject(args.toString())
-            when (name) {
-                "base64" -> {
-                    val c = copy.optString("content", "")
-                    if (c.length > 40) copy.put("content", c.take(40) + "...(len=${c.length})")
-                }
-                "execute_shell" -> {
-                    val c = copy.optString("command", "")
-                    if (c.length > 200) copy.put("command", c.take(200) + "...")
-                }
-                "schedule" -> {
-                    val c = copy.optString("command", "")
-                    if (c.length > 200) copy.put("command", c.take(200) + "...")
-                }
-                "ui" -> {
-                    val t = copy.optString("text", "")
-                    if (t.length > 200) copy.put("text", t.take(200) + "...")
+            val truncMap: Map<String, Int> = when (name) {
+                "base64" -> mapOf("content" to 40)
+                "execute_shell", "schedule" -> mapOf("command" to 200)
+                "ui" -> mapOf("text" to 200)
+                else -> emptyMap()
+            }
+
+            if (truncMap.isEmpty()) {
+                return args.toString(2)
+            }
+
+            // 判断是否有字段真的超限，全都没超就零拷贝直接返回
+            var needsTruncate = false
+            for ((field, limit) in truncMap) {
+                val v = args.optString(field, "")
+                if (v.length > limit) { needsTruncate = true; break }
+            }
+            if (!needsTruncate) {
+                return args.toString(2)
+            }
+
+            // 有超限：逐字段重建，只对超限字段截断，其余字段复用引用
+            val copy = JSONObject()
+            args.keys().forEach { k ->
+                val limit = truncMap[k]
+                if (limit != null) {
+                    val s = args.optString(k, "")
+                    if (s.length > limit) {
+                        copy.put(k, s.take(limit) + "...(len=${s.length})")
+                    } else {
+                        copy.put(k, s)
+                    }
+                } else {
+                    copy.put(k, args.opt(k))
                 }
             }
             copy.toString(2)
@@ -553,7 +615,12 @@ object ToolRegistry {
                 "TOOL",
                 "参数日志清理失败（$name）：${e.javaClass.simpleName}: ${e.message}"
             )
-            args.toString(2)
+            try {
+                val raw = args.toString(2)
+                if (raw.length > 5000) raw.take(5000) + "...(已截断)" else raw
+            } catch (_: Exception) {
+                "(无法序列化)"
+            }
         }
     }
 
@@ -576,7 +643,10 @@ object ToolRegistry {
         val data = args.optString("data", "")
         val append = args.optBoolean("append", false)
 
-        if (settings.requireConfirmWrite) {
+        // 【批次 19】子会话不需要确认写入（通过 CoroutineName 识别）
+        val isSubSession = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.CoroutineName]?.name == ConfirmationBroker.SUBSESSION_COROUTINE_NAME
+        
+        if (settings.requireConfirmWrite && !isSubSession) {
             val preview = when (mode) {
                 "base64" -> "（base64 数据 ${data.length} 字符）"
                 else -> if (content.length > 200) content.take(200) + "..." else content
@@ -601,7 +671,7 @@ object ToolRegistry {
                         HistoryStore.getInstance(context).recordEdit(
                             backupDir, resolved, if (append) "append" else "write",
                             oldBytes, null, if (append) "append" else "write",
-                            sessionId = CurrentTaskSession.id
+                            sessionId = currentSessionId()
                         )
                     }
                 }
@@ -698,7 +768,17 @@ object ToolRegistry {
         }
     }
 
-    // 当前主任务会话 id：子会话完成后回流通知的目标（AgentRunner 启动任务时写入）
+    // 【批次 19 隔离修复】
+    // 废弃全局 CurrentTaskSession.id，改用协程上下文传递。
+    // 全局静态变量在并发的子会话中会互相覆盖，导致写文件等历史归属错乱。
+    class SessionIdElement(val id: String) : kotlin.coroutines.AbstractCoroutineContextElement(SessionIdElement) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<SessionIdElement>
+    }
+
+    suspend fun currentSessionId(): String =
+        kotlinx.coroutines.currentCoroutineContext()[SessionIdElement]?.id ?: ""
+
+    // 仅供 UI 层查询当前显示会话，Agent 逻辑不再读写此字段
     object CurrentTaskSession {
         @Volatile var id: String = ""
     }
@@ -839,8 +919,8 @@ object ToolRegistry {
         )
         val subId = "sub_${System.currentTimeMillis()}_$rndHex"
         val now = System.currentTimeMillis()
-        // 母会话快照：归属 + 完成通知回流目标（全局值可能在执行期被其他任务改写，入口即快照）
-        val parentSessionId = CurrentTaskSession.id.ifBlank { null }
+        // 【批次 19】从协程上下文读取母会话 ID
+        val parentSessionId = currentSessionId().ifBlank { null }
         // 全新上下文：只有这条 task，不带父会话历史
         val initial = listOf(
             ChatMessage(role = "user", content = task, type = "text", timestamp = now)
@@ -866,94 +946,97 @@ object ToolRegistry {
         // 后台异步执行：主对话立即返回、互不阻塞；完成后覆盖保存全量过程
         SubSessionProgress.start(subId, title)
         val job = subSessionScope.launch {
-            var subHistory: List<ChatMessage> = initial
-            // 【硬上限】不继承用户的高轮数设置
-            val subLoops = minOf(settings.maxToolCallLoops, SUB_MAX_LOOPS)
-            val streamBuf = StringBuilder()
-            try {
-                runAgentTurn(
-                    profile = profile,
-                    history = initial,
-                    maxTurns = subLoops,
-                    context = context,
-                    settings = settings,
-                    onHistoryChanged = { h ->
-                        subHistory = h
-                        SubSessionProgress.update(
-                            subId,
-                            h.count { m -> m.type == "tool_call" },
-                            h.lastOrNull { m -> m.type == "tool_call" }
-                                ?.content?.lineSequence()?.firstOrNull() ?: ""
-                        )
-                    },
-                    onThinking = { t ->
-                        SubSessionProgress.updatePhase(subId, "思考中", t.take(120))
-                    },
-                    onReasoning = { r ->
-                        val line = r.takeLast(400).replace("\n", " ").trim()
-                        if (line.isNotBlank()) {
-                            SubSessionProgress.updatePhase(subId, "推理中", line.takeLast(120))
-                        }
-                    },
-                    onStreamChunk = { c ->
-                        streamBuf.append(c)
-                        SubSessionProgress.updatePhase(
-                            subId, "生成中",
-                            streamBuf.toString().takeLast(400).replace("\n", " ").trim().takeLast(120)
-                        )
-                    },
-                    onStreamCommit = { streamBuf.setLength(0) },
-                    onFinish = {}
-                )
-                // 回调经 mainHandler.post 派发，排空主线程队列确保 subHistory 已最新
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {}
-                // 【截断补总结】跑到轮数上限也得给个交代，
-                // 不能只剩一句「已达到最大工具调用轮数」
-                subHistory = summarizeIfTruncated(subHistory, profile, context, settings)
-            } catch (e: Exception) {
-                AgentLogger.log("ERR", "子会话执行异常：${e.message}")
-                // 异常 / 被主 AI 主动中断（CancellationException）：
-                // 同样要求它把现有结果总结完再存盘。
-                // NonCancellable：父任务可能已经被 cancel，不加这个请求会立刻被打断。
+            // 【批次 19 隔离修复】用协程上下文标记子会话 ID，防止并发串台
+            kotlinx.coroutines.withContext(SessionIdElement(subId)) {
+                var subHistory: List<ChatMessage> = initial
+                // 【硬上限】不继承用户的高轮数设置
+                val subLoops = minOf(settings.maxToolCallLoops, SUB_MAX_LOOPS)
+                val streamBuf = StringBuilder()
                 try {
-                    subHistory = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
-                        summarizeIfTruncated(subHistory, profile, context, settings)
-                    }
-                } catch (_: Throwable) { }
-            } finally {
-                try {
-                    SessionStore.save(
-                        context,
-                        Session(
-                            id = subId,
-                            title = "↳ $title",
-                            createdAt = now,
-                            updatedAt = System.currentTimeMillis(),
-                            parentId = parentSessionId,
-                            messages = subHistory
-                        )
+                    runAgentTurn(
+                        profile = profile,
+                        history = initial,
+                        maxTurns = subLoops,
+                        context = context,
+                        settings = settings,
+                        onHistoryChanged = { h ->
+                            subHistory = h
+                            SubSessionProgress.update(
+                                subId,
+                                h.count { m -> m.type == "tool_call" },
+                                h.lastOrNull { m -> m.type == "tool_call" }
+                                    ?.content?.lineSequence()?.firstOrNull() ?: ""
+                            )
+                        },
+                        onThinking = { t ->
+                            SubSessionProgress.updatePhase(subId, "思考中", t.take(120))
+                        },
+                        onReasoning = { r ->
+                            val line = r.takeLast(400).replace("\n", " ").trim()
+                            if (line.isNotBlank()) {
+                                SubSessionProgress.updatePhase(subId, "推理中", line.takeLast(120))
+                            }
+                        },
+                        onStreamChunk = { c ->
+                            streamBuf.append(c)
+                            SubSessionProgress.updatePhase(
+                                subId, "生成中",
+                                streamBuf.toString().takeLast(400).replace("\n", " ").trim().takeLast(120)
+                            )
+                        },
+                        onStreamCommit = { streamBuf.setLength(0) },
+                        onFinish = {}
                     )
+                    // 回调经 mainHandler.post 派发，排空主线程队列确保 subHistory 已最新
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {}
+                    // 【截断补总结】跑到轮数上限也得给个交代，
+                    // 不能只剩一句「已达到最大工具调用轮数」
+                    subHistory = summarizeIfTruncated(subHistory, profile, context, settings)
                 } catch (e: Exception) {
-                    AgentLogger.log("ERR", "子会话完成存盘失败：${e.message}")
-                }
-                SubSessionProgress.finish(subId)
-                subSessionActive.decrementAndGet()
-                subSessionJobs.remove(subId)
-                // 完成事件回流：主对话收到「子代理完成」通知
-                SubSessionProgress.emitCompleted(
-                    SubSessionProgress.Completed(
-                        originId = parentSessionId ?: "",
-                        subId = subId,
-                        title = title,
-                        msgCount = subHistory.size,
-                        summary = buildSubSummary(
-                            subHistory,
-                            hitLimit = subHistory.lastOrNull { it.type == "text" }
-                                ?.content?.contains("已达到最大工具调用轮数") == true
+                    AgentLogger.log("ERR", "子会话执行异常：${e.message}")
+                    // 异常 / 被主 AI 主动中断（CancellationException）：
+                    // 同样要求它把现有结果总结完再存盘。
+                    // NonCancellable：父任务可能已经被 cancel，不加这个请求会立刻被打断。
+                    try {
+                        subHistory = kotlinx.coroutines.withContext(kotlinx.coroutines.NonCancellable) {
+                            summarizeIfTruncated(subHistory, profile, context, settings)
+                        }
+                    } catch (_: Throwable) { }
+                } finally {
+                    try {
+                        SessionStore.save(
+                            context,
+                            Session(
+                                id = subId,
+                                title = "↳ $title",
+                                createdAt = now,
+                                updatedAt = System.currentTimeMillis(),
+                                parentId = parentSessionId,
+                                messages = subHistory
+                            )
+                        )
+                    } catch (e: Exception) {
+                        AgentLogger.log("ERR", "子会话完成存盘失败：${e.message}")
+                    }
+                    SubSessionProgress.finish(subId)
+                    subSessionActive.decrementAndGet()
+                    subSessionJobs.remove(subId)
+                    // 完成事件回流：主对话收到「子代理完成」通知
+                    SubSessionProgress.emitCompleted(
+                        SubSessionProgress.Completed(
+                            originId = parentSessionId ?: "",
+                            subId = subId,
+                            title = title,
+                            msgCount = subHistory.size,
+                            summary = buildSubSummary(
+                                subHistory,
+                                hitLimit = subHistory.lastOrNull { it.type == "text" }
+                                    ?.content?.contains("已达到最大工具调用轮数") == true
+                            )
                         )
                     )
-                )
-                AgentLogger.log("TOOL", "子会话完成 subId=$subId msgs=${subHistory.size}")
+                    AgentLogger.log("TOOL", "子会话完成 subId=$subId msgs=${subHistory.size}")
+                }
             }
         }
         subSessionJobs[subId] = job
@@ -983,7 +1066,8 @@ object ToolRegistry {
                 }
             }
             "list" -> {
-                val list = SessionStore.list(context).filter { it.title.startsWith("↳") }
+                // 【批次 19】改为按 parentId 判定，不再依赖 title 前缀
+                val list = SessionStore.list(context).filter { it.parentId != null }
                 if (list.isEmpty()) {
                     "暂无子会话记录。"
                 } else {
@@ -1019,9 +1103,11 @@ object ToolRegistry {
 
     suspend fun execute(
         name: String, args: JSONObject, context: Context, settings: AppSettings
-    ): String {
+    ): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        // 【批次 20 修复】强制全部工具在 IO 线程执行。
+        // 防止个别工具内部（如联网搜索解析、写文件）未切线程导致 Agent 主循环和 UI 卡顿。
         if (name in settings.disabledTools) {
-            return "工具 $name 已被用户在设置中关闭"
+            return@withContext "工具 $name 已被用户在设置中关闭"
         }
 
         if (name in VISION_TOOLS) {
@@ -1034,15 +1120,18 @@ object ToolRegistry {
         }
 
         // 元工具拦截（必须在其他分发之前）
+        // 【批次 18】使用 JsonArgs 语法糖
+        val a = JsonArgs(args)
+
         if (name == "tool_search") {
-            val query = args.optString("query", "").trim()
+            val query = a.str("query")
             if (query.isBlank()) return "失败：tool_search 需要 query 参数"
-            val category = args.optString("category", "").trim()
+            val category = a.str("category")
             AgentLogger.log("TOOL", "tool_search query=$query category=$category")
             return searchToolsForAgent(query, category, settings)
         }
         if (name == "tool_load") {
-            val toolName = args.optString("name", "").trim()
+            val toolName = a.str("name")
             if (toolName.isBlank()) return "失败：tool_load 需要 name 参数"
             AgentLogger.log("TOOL", "tool_load name=$toolName")
             return loadToolForAgent(toolName, settings)
@@ -1075,11 +1164,11 @@ object ToolRegistry {
             } else if (name == "python") {
                 // 【临时执行 Python】与桌面端 python 工具对齐。
                 // 受 requireConfirmPython 控制（与 pytool run 同一个开关）。
-                val code = args.optString("code", "")
+                val code = a.str("code")
                 if (code.isBlank()) return "失败：python 需要 code 参数"
-                val timeout = args.optInt("timeout", 60).coerceIn(1, 600)
-                val workDir = args.optString("work_dir", "").trim()
-                val stdinArgs = args.optJSONObject("args") ?: JSONObject()
+                val timeout = a.int("timeout", 60).coerceIn(1, 600)
+                val workDir = a.str("work_dir")
+                val stdinArgs = a.json("args") ?: JSONObject()
 
                 if (settings.requireConfirmPython) {
                     val preview = if (code.length > 800) code.take(800) + "\n...(已截断)" else code
@@ -1163,15 +1252,8 @@ object ToolRegistry {
                         if (commonResult.success) commonResult.output
                         else "失败：${commonResult.output}"
                     } else {
-                        when (name) {
-                            in SystemTools.TOOLS -> SystemTools.execute(name, args, context, settings)
-                            in FileTools.TOOLS -> FileTools.execute(name, args, context, settings)
-                            in MediaTools.TOOLS -> MediaTools.execute(name, args, context, settings)
-                            in RemoteTools.TOOLS -> RemoteTools.execute(name, args, context, settings)
-                            in ScreenTools.TOOLS -> ScreenTools.execute(name, args, context, settings)
-                            in ImageGenTools.TOOLS -> ImageGenTools.execute(name, args, context, settings)
-                            else -> "未知工具：$name"
-                        }
+                        // 【批次 18】查表路由，O(1) 速度
+                        PRIVATE_ROUTER[name]?.invoke(args, context, settings) ?: "未知工具：$name"
                     }
                 }
             }
@@ -1183,8 +1265,20 @@ object ToolRegistry {
             "工具执行异常：${e.message ?: "未知错误"}"
         }
 
-        AgentLogger.log("RESULT", "工具 $name 返回:\n$result")
-        return result
+        // 【批次 11 修复】RESULT 日志截断。
+        // 原实现全量写入 AgentLogger.logs，execute_command 跑一次 Gradle 输出几十 MB、
+        // grep 返回 5000 条命中、read_file 读 900KB 文件——全进内存 list 会造成：
+        //   - UI 日志页渲染卡顿
+        //   - 内存持续上涨（跑一天能到几百 MB）
+        //   - 日志文件写盘时全量写
+        // 现在只记录前 2000 字符 + 完整长度，需要看全文时从工具返回的上下文里找。
+        val logResult = if (result.length > 2000) {
+            result.take(2000) + "\n...（已截断，完整长度 ${result.length} 字符）"
+        } else {
+            result
+        }
+        AgentLogger.log("RESULT", "工具 $name 返回:\n$logResult")
+        result
     }
 }
 

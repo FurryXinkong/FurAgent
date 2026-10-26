@@ -33,18 +33,22 @@ object ScheduleTools {
     fun displayName(name: String): String =
         TOOLS.firstOrNull { it.name == name }?.displayName ?: name
 
-    fun execute(name: String, args: JSONObject): ToolResult? {
+    /**
+     * @param currentSessionId 当前协程上下文的会话 id（由 DesktopTools.execute 传入），
+     *   schedule 创建 run_agent 任务时若未显式指定 session_id，则绑定此会话。
+     */
+    fun execute(name: String, args: JSONObject, currentSessionId: String = ""): ToolResult? {
         if (name != "schedule") return null
         val op = args.optString("op", "").lowercase()
         return when (op) {
-            "create" -> doCreate(args)
+            "create" -> doCreate(args, currentSessionId)
             "list" -> doList()
             "cancel" -> doCancel(args)
             else -> ToolResult.fail("op 只能是 create / list / cancel")
         }
     }
 
-    private fun doCreate(args: JSONObject): ToolResult {
+    private fun doCreate(args: JSONObject, currentSessionId: String = ""): ToolResult {
         val action = args.optString("action", "").trim()
         val description = args.optString("description", "").trim()
         if (action !in listOf("notify", "run_tool", "run_workflow", "open_app", "run_command", "run_agent")) {
@@ -116,10 +120,12 @@ object ScheduleTools {
             notificationTitle = args.optString("notification_title", ""),
             notificationContent = args.optString("notification_content", ""),
             prompt = args.optString("prompt", ""),
-            // run_agent 未显式指定会话时，自动绑定当前正在聊的会话
+            // run_agent 未显式指定会话时，自动绑定当前正在执行的会话
             //（否则回复只能走系统通知，不会出现在聊天里）
+            // 【P0-2 收尾】从参数 currentSessionId 读（由 DesktopTools.execute 传入协程上下文里的值），
+            // 不再读已删除的全局 CurrentTaskSession。
             sessionId = args.optString("session_id", "").ifBlank {
-                if (action == "run_agent") DesktopTools.CurrentTaskSession.id else ""
+                if (action == "run_agent") currentSessionId else ""
             },
             conditions = conds,
             conditionMode = args.optString("condition_mode", "and"),

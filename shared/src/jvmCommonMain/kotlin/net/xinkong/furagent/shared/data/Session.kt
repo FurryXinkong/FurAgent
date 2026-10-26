@@ -18,7 +18,17 @@ data class Session(
      * 会话专用提示词：非空时注入该会话的系统提示词（追加在全局指令之后）。
      * null=未携带（persist 等场景重造对象时保留磁盘原值）；""=显式清空。
      */
-    val systemPrompt: String? = null
+    val systemPrompt: String? = null,
+    /**
+     * 【P0-4】标题是否被用户手动锁定（重命名后为 true）。
+     *
+     * persist 自动生成标题时会检查此字段：true 则保留用户设的标题，
+     * 不再用 generateTitle 覆盖。三态语义与 systemPrompt 一致：
+     *   - null  = 未携带（save 内部读磁盘原值兜底）
+     *   - false = 明确未锁
+     *   - true  = 已锁，persist 保留原标题
+     */
+    val titleLocked: Boolean? = null
 )
 
 /**

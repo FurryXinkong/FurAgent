@@ -1000,7 +1000,8 @@ object SystemTools {
                 val url = args.optString("url", "").trim()
                 // 【修复 B6】与桌面端 WebTools 对齐，默认 8000
                 val maxLength = args.optInt("max_length", 8000).coerceIn(500, 2_000_000)
-                WebSearchEngine.fetchContent(url, maxLength)
+                val selector = args.optString("selector", "").trim()
+                WebSearchEngine.fetchContent(url, maxLength, selector)
             }
             else -> "失败：op 只能是 search / fetch"
         }

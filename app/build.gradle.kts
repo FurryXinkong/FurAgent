@@ -106,10 +106,11 @@ android {
 chaquopy {
     defaultConfig {
         version = "3.12"
-        // 只带标准库，不装第三方包（体积小、启动快）。
-        // 需要第三方包时在 pip { install("xxx") } 里加。
         pip {
-            // 默认不装任何包
+            install("numpy")
+            install("pillow")
+            install("beautifulsoup4")
+            install("pyyaml")
         }
     }
 }

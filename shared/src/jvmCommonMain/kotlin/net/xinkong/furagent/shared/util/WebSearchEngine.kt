@@ -17,16 +17,6 @@ import java.util.concurrent.TimeUnit
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.milliseconds
 
-/**
- * 多源搜索与网页抓取（双端共用）。
- *
- * 搜索回退链（高 → 低优先级）：
- *   360 → 百度 → 必应
- *
- * 【设计原则：简单优先】
- *   只给 UA + Accept + Accept-Language 三个 header，不加 Sec-Fetch-* 等。
- *   不判降级 —— 有结果就返回，避免"查询词没在标题里出现"被误杀。
- */
 object WebSearchEngine {
 
     private val RE_WHITESPACE = Regex("""\s+""")
@@ -37,7 +27,6 @@ object WebSearchEngine {
         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
     private const val ACCEPT_LANG = "zh-CN,zh;q=0.9,en;q=0.8"
 
-    // Cookie 容器
     private val cookieJar = object : CookieJar {
         private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
 
@@ -69,7 +58,6 @@ object WebSearchEngine {
             .build()
     }
 
-    // 分域名限速
     private val lastRequestAt = ConcurrentHashMap<String, Long>()
     private val hostMutex = ConcurrentHashMap<String, Mutex>()
 
@@ -86,7 +74,6 @@ object WebSearchEngine {
         }
     }
 
-    // 极简请求
     private fun buildRequest(
         url: String,
         referer: String? = null,
@@ -104,11 +91,6 @@ object WebSearchEngine {
 
     data class SearchResult(val title: String, val url: String, val snippet: String)
 
-    // 对外入口
-
-    /**
-     * @param engine 可选：bing / baidu / 360。为空时按"360 → 百度 → 必应"顺序自动回退。
-     */
     suspend fun search(
         query: String,
         page: Int,
@@ -139,7 +121,6 @@ object WebSearchEngine {
             }
         }
 
-        // 自动回退链：360 → 百度 → 必应
         val so360Results = trySearch360(query, page)
         if (!so360Results.isNullOrEmpty()) {
             ToolLogger.log("SEARCH", "360 命中 ${so360Results.size} 条")
@@ -165,13 +146,11 @@ object WebSearchEngine {
                 "本次不再重试，请直接告知用户网络搜索暂时不可用。"
     }
 
-    // 调试日志：只在"未提取到结果"时打，避免污染正常日志
     private fun debugHtmlOnFailure(tag: String, html: String) {
         val head = html.take(300).replace(RE_WHITESPACE, " ")
         ToolLogger.log("SEARCH", "[$tag] 未提取到结果，HTML 长度=${html.length} 前 300 字符：$head")
     }
 
-    // 源 1：360 搜索
     private suspend fun trySearch360(query: String, page: Int): List<SearchResult>? {
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
@@ -198,7 +177,9 @@ object WebSearchEngine {
                 return null
             }
 
-            val doc = Jsoup.parse(html)
+            // 【批次 21 性能优化】限制最大解析长度
+            val safeHtml = if (html.length > 500_000) html.take(500_000) else html
+            val doc = Jsoup.parse(safeHtml)
 
             var items = doc.select("li.res-list, div.res-list, li.result, div.result")
             if (items.isEmpty()) {
@@ -282,7 +263,6 @@ object WebSearchEngine {
         }
     }
 
-    // 源 2：百度
     private suspend fun trySearchBaidu(query: String, page: Int): List<SearchResult>? {
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
@@ -308,7 +288,9 @@ object WebSearchEngine {
                 return null
             }
 
-            val doc = Jsoup.parse(html)
+            // 【批次 21 性能优化】限制最大解析长度
+            val safeHtml = if (html.length > 500_000) html.take(500_000) else html
+            val doc = Jsoup.parse(safeHtml)
 
             var items = doc.select("div.result, div.result-op, div.c-container")
             if (items.isEmpty()) {
@@ -378,7 +360,6 @@ object WebSearchEngine {
         }
     }
 
-    // 源 3：必应
     private suspend fun trySearchBing(query: String, page: Int): List<SearchResult>? {
         return try {
             val first = 1 + (page - 1) * 10
@@ -401,7 +382,9 @@ object WebSearchEngine {
                 return null
             }
 
-            val doc = Jsoup.parse(html)
+            // 【批次 21 性能优化】限制最大解析长度
+            val safeHtml = if (html.length > 500_000) html.take(500_000) else html
+            val doc = Jsoup.parse(safeHtml)
 
             var items = doc.select("li.b_algo")
             if (items.isEmpty()) {
@@ -449,7 +432,6 @@ object WebSearchEngine {
         }
     }
 
-    // 结果格式化
     private fun formatResults(
         source: String,
         query: String,
@@ -465,27 +447,18 @@ object WebSearchEngine {
             if (r.snippet.isNotBlank()) sb.append("   摘要: ${r.snippet}\n")
             sb.append("\n")
         }
-        sb.append("提示：如需了解某条结果的详细内容，请调用 fetch_web_content 工具并传入对应链接。")
+        sb.append("提示：如需了解某条结果的详细内容，请调用 web 工具（op=fetch）并传入对应链接。")
         return sb.toString()
     }
 
-    // 网页正文抓取
     /**
      * 抓取网页正文并转成 Markdown。
-     *
-     * 策略：
-     *   1. 先尝试平台渲染（[renderPageHtml]）——Android 端用 WebView 能拿到 JS 动态内容；
-     *      桌面端已废弃渲染，直接返回 null，走静态抓取。
-     *   2. 渲染不可用或失败时，回退到静态 HTTP 抓取（OkHttp + Jsoup）。
-     *
-     * 输出为 Markdown，保留标题 / 列表 / 链接 / 代码块 / 表格等结构，
-     * 信息密度高，因此 [maxLength] 只作为安全上限，正常页面不会触发截断。
+     * 【批次 23 增强】支持 CSS Selector 精准提取。
      */
-    suspend fun fetchContent(url: String, maxLength: Int): String = withContext(Dispatchers.IO) {
+    suspend fun fetchContent(url: String, maxLength: Int, selector: String = ""): String = withContext(Dispatchers.IO) {
         if (url.isBlank()) return@withContext "失败：未提供 URL"
         val validUrl = if (url.startsWith("http://") || url.startsWith("https://")) url else "https://$url"
 
-        // ---- 第一级：浏览器渲染 ----
         val renderedHtml: String? = try {
             renderPageHtml(validUrl, RENDER_TIMEOUT_MS)
         } catch (e: Exception) {
@@ -497,7 +470,6 @@ object WebSearchEngine {
             ToolLogger.log("FETCH", "渲染成功，HTML 长度=${renderedHtml.length}")
             renderedHtml
         } else {
-            // ---- 第二级：静态 HTTP 抓取 ----
             try {
                 val host = try { URI(validUrl).host ?: "" } catch (_: Exception) { "" }
                 if (host.isNotBlank()) throttle(host)
@@ -521,14 +493,30 @@ object WebSearchEngine {
             val doc = Jsoup.parse(safeHtml, validUrl)
             val title = doc.title().trim()
 
-            // 先备份一份未清理的 body 文本，作为最终兜底
+            // 【批次 23 增强】CSS Selector 提取
+            if (selector.isNotBlank()) {
+                val elements = doc.select(selector)
+                if (elements.isEmpty()) return@withContext "页面抓取成功，但选择器 '$selector' 未匹配到任何节点。"
+                val sb = StringBuilder()
+                sb.append("标题：$title\nURL：$validUrl\n找到 ${elements.size} 个节点：\n\n")
+                elements.take(100).forEachIndexed { idx, el ->
+                    sb.append("[${idx + 1}] 标签: <${el.tagName()}>\n")
+                    if (el.hasAttr("href")) sb.append("  href: ${el.attr("href")}\n")
+                    if (el.hasAttr("src")) sb.append("  src: ${el.attr("src")}\n")
+                    val text = el.text().trim().replace(RE_WHITESPACE, " ")
+                    if (text.isNotBlank()) sb.append("  文本: ${text.take(500)}${if (text.length > 500) "..." else ""}\n")
+                    sb.append("\n")
+                }
+                if (elements.size > 100) sb.append("（结果过多，仅显示前 100 个）\n")
+                return@withContext sb.toString()
+            }
+
             val rawBodyText = doc.body().text().replace(RE_WHITESPACE, " ").trim()
 
             HtmlToMarkdown.cleanDocument(doc)
             val root = HtmlToMarkdown.pickContentRoot(doc)
             var markdown = HtmlToMarkdown.convert(root)
 
-            // 多级回退：正文根没内容时，尝试最大文本块
             if (markdown.length < 100) {
                 val biggest = HtmlToMarkdown.findLargestTextBlock(doc)
                 if (biggest != null) {
@@ -536,13 +524,11 @@ object WebSearchEngine {
                     if (alt.length > markdown.length) markdown = alt
                 }
             }
-            // 最终兜底：用未清理的 body 纯文本
             if (markdown.length < 100 && rawBodyText.isNotBlank()) {
                 markdown = rawBodyText
             }
 
             if (markdown.isBlank()) {
-                // 调试：把 HTML 结构打到日志，便于定位
                 val head = safeHtml.take(3000).replace(RE_WHITESPACE, " ")
                 ToolLogger.log(
                     "FETCH",
@@ -566,6 +552,5 @@ object WebSearchEngine {
         }
     }
 
-    /** 浏览器渲染超时（毫秒）。 */
     private const val RENDER_TIMEOUT_MS = 15_000L
 }

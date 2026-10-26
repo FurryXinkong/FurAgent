@@ -147,8 +147,7 @@ object AgentRunner {
         val myToken = ++taskToken
         // 同步 AgentSession 代际：让阻塞式 IO（下载等）能感知本次任务
         AgentSession.beginTask()
-        // 记录主任务会话：子会话完成后「子代理完成」通知回流的目标
-        net.xinkong.furagent.tools.ToolRegistry.CurrentTaskSession.id = sessionId
+        // 【批次 19】这里不再写全局变量，runAgentTurn 会开启协程上下文
 
         // 【错误消失】新一轮任务开始，把上一次的 API 错误（如 HTTP 429）清掉。
         // Snapshot(...) 重建时 error 默认就是空，但旧代码在运行中会 copy() 保留旧值，
@@ -172,7 +171,43 @@ object AgentRunner {
             // 避免“UI 已停止但工具还在跑”。
             val cancelGen = AgentSession.currentGeneration()
 
+            // 【批次 12 性能】流式 chunk 节流。
+            // 原实现每 chunk 都 _snapshot.value.copy() + streaming + chunk，
+            // 1MB 输出 / 20 字符每 chunk = 50000 次 copy + O(n²) 字符串拼接（25GB 分配）。
+            // 改成 32ms 节流：每 32ms 才 push 一次，收益约 32 倍。
+            val streamBuf = StringBuilder()
+            val reasoningBuf = StringBuilder()
+            val bufLock = Any()
+            fun flushBufs() {
+                synchronized(bufLock) {
+                    if (streamBuf.isNotEmpty()) {
+                        val chunk = streamBuf.toString()
+                        streamBuf.setLength(0)
+                        _snapshot.value = _snapshot.value.copy(
+                            streaming = _snapshot.value.streaming + chunk
+                        )
+                    }
+                    if (reasoningBuf.isNotEmpty()) {
+                        val chunk = reasoningBuf.toString()
+                        reasoningBuf.setLength(0)
+                        _snapshot.value = _snapshot.value.copy(
+                            reasoning = _snapshot.value.reasoning + chunk
+                        )
+                    }
+                }
+            }
+            val flushJob = launch {
+                while (isActive) {
+                    delay(32.milliseconds)
+                    if (!isCurrent()) continue
+                    flushBufs()
+                }
+            }
+
             try {
+                kotlinx.coroutines.withContext(
+                    ToolRegistry.SessionIdElement(sessionId)
+                ) {
                 runAgentTurn(
                     profile = profile,
                     history = initialHistory,
@@ -205,19 +240,22 @@ object AgentRunner {
                     },
                     onReasoning = { r ->
                         if (!isCurrent()) return@runAgentTurn
-                        _snapshot.value = _snapshot.value.copy(
-                            reasoning = _snapshot.value.reasoning + r
-                        )
+                        // 【批次 12】入缓冲，由 flushJob 每 32ms 统一推
+                        synchronized(bufLock) { reasoningBuf.append(r) }
                     },
                     onStreamChunk = { chunk ->
                         if (!isCurrent()) return@runAgentTurn
-                        _snapshot.value = _snapshot.value.copy(
-                            streaming = _snapshot.value.streaming + chunk
-                        )
+                        // 【批次 12】入缓冲，由 flushJob 每 32ms 统一推
+                        synchronized(bufLock) { streamBuf.append(chunk) }
                     },
                     onStreamCommit = {
                         if (!isCurrent()) return@runAgentTurn
-                        // reasoning 已随 assistant 消息落库，清空运行时状态避免与消息内面板重复
+                        // onStreamCommit 时 assistant 消息已入 history，streaming/reasoning 要清空。
+                        // 缓冲直接丢（内容已落库，不再需要追加到 streaming）。
+                        synchronized(bufLock) {
+                            streamBuf.setLength(0)
+                            reasoningBuf.setLength(0)
+                        }
                         _snapshot.value = _snapshot.value.copy(streaming = "", reasoning = "")
                     },
                     onFinish = finish@{
@@ -257,6 +295,7 @@ object AgentRunner {
                         }
                     }
                 )
+                }
             } catch (e: CancellationException) {
                 if (isCurrent()) {
                     AgentLogger.log("SYS", "Agent 任务被取消")
@@ -289,6 +328,14 @@ object AgentRunner {
                             AgentService.stop(ctx)
                         } catch (_: Exception) { }
                     }
+                }
+            } finally {
+                // 【批次 12】停掉 flush 协程，最后做一次 flush 保底
+                // （正常路径下 onStreamCommit 已清空 buf，无事发生；
+                //   取消/异常路径下 buf 可能有内容，flush 出来让 UI 看到最后状态）
+                flushJob.cancel()
+                if (isCurrent()) {
+                    try { flushBufs() } catch (_: Exception) { }
                 }
             }
         }
@@ -365,12 +412,16 @@ object AgentRunner {
     }
 
     private fun extractToolName(history: List<ChatMessage>): String {
-        for (i in history.indices.reversed()) {
+        // 【批次 12】原 `history.indices.reversed()` 会创建 IntRange + 反转 List（
+        // 100 条消息 = 100 个 Integer 装箱 + 1 个 List 分配）。改成倒序 while 零分配。
+        var i = history.size - 1
+        while (i >= 0) {
             val m = history[i]
             when {
                 m.type == "tool_call" -> return m.content.substringBefore('\n').trim()
                 m.role == "assistant" && m.type == "text" -> return ""
             }
+            i--
         }
         return ""
     }

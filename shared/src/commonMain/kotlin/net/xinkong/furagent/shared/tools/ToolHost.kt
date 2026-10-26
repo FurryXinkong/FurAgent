@@ -109,7 +109,8 @@ interface ToolHost {
         nameGlob: String = "",
         maxResults: Int = 200,
         maxFileSize: Long = 2L * 1024 * 1024,
-        contextLines: Int = 0
+        contextLines: Int = 0,
+        maxDepth: Int = 15
     ): List<ContentMatch>
 
     // 显示

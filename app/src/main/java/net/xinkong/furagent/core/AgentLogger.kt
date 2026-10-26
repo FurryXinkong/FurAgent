@@ -62,7 +62,9 @@ object AgentLogger {
     @Volatile private var appContext: Context? = null
     @Volatile private var workerStarted = false
 
-    private val writeQueue = LinkedBlockingQueue<String>()
+    // 【批次 12】加容量上限：原来无上限，execute_command 跑 Gradle 输出几十 MB 全塞队列，
+    // 磁盘 IO 慢时能涨到几百 MB。给 256 条上限，满了用 offer 自动丢弃（日志系统的取舍）。
+    private val writeQueue = LinkedBlockingQueue<String>(256)
     private val writer = Executors.newSingleThreadExecutor { r ->
         Thread(r, "AgentLogger-writer").apply { isDaemon = true }
     }
@@ -153,7 +155,15 @@ object AgentLogger {
                 pendingQueue.clear()
             }
             _logs.addAll(batch)
-            while (_logs.size > MAX_LOG_ENTRIES) _logs.removeAt(0)
+            // 【批次 12】原 `while (_logs.size > MAX) _logs.removeAt(0)` 是 O(n) × excess 次：
+            // SnapshotStateList.removeAt(0) 每次搬移全部元素。100 次 × 500 条 = 50000 次操作。
+            // 改成一次性重建：O(4n) 一次，远好于 O(n²)。
+            val excess = _logs.size - MAX_LOG_ENTRIES
+            if (excess > 0) {
+                val keep = _logs.toList().takeLast(MAX_LOG_ENTRIES)
+                _logs.clear()
+                _logs.addAll(keep)
+            }
         }, FLUSH_THROTTLE_MS)
     }
 

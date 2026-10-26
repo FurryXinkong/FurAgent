@@ -177,14 +177,19 @@ fun main() {
             undecorated = true,
             state = rememberWindowState(width = 1280.dp, height = 820.dp),
             onPreviewKeyEvent = { event ->
-                event.type == KeyEventType.KeyDown && event.isCtrlPressed && when (event.key) {
-                    Key.N -> { HotkeyBus.send(HotkeyBus.Action.NEW_CHAT); true }
-                    Key.K -> { HotkeyBus.send(HotkeyBus.Action.SEARCH_SESSIONS); true }
-                    Key.L -> { HotkeyBus.send(HotkeyBus.Action.CLEAR_INPUT); true }
-                    Key.Comma -> { HotkeyBus.send(HotkeyBus.Action.OPEN_SETTINGS); true }
-                    Key.B -> { HotkeyBus.send(HotkeyBus.Action.TOGGLE_SIDEBAR); true }
-                    else -> false
-                }
+                // 【P1-9 修复】排除 Shift/Alt，避免 Ctrl+Shift+N 也触发新建会话
+                event.type == KeyEventType.KeyDown &&
+                    event.isCtrlPressed &&
+                    !event.isShiftPressed &&
+                    !event.isAltPressed &&
+                    when (event.key) {
+                        Key.N -> { HotkeyBus.send(HotkeyBus.Action.NEW_CHAT); true }
+                        Key.K -> { HotkeyBus.send(HotkeyBus.Action.SEARCH_SESSIONS); true }
+                        Key.L -> { HotkeyBus.send(HotkeyBus.Action.CLEAR_INPUT); true }
+                        Key.Comma -> { HotkeyBus.send(HotkeyBus.Action.OPEN_SETTINGS); true }
+                        Key.B -> { HotkeyBus.send(HotkeyBus.Action.TOGGLE_SIDEBAR); true }
+                        else -> false
+                    }
             }
         ) {
             val window = this.window
@@ -248,10 +253,33 @@ fun main() {
                 }
             }
 
+            // 【P2-23 修复】用 ComponentListener 监听 AWT 窗口状态变化，
+            // 覆盖 Win+↑ / 双击标题栏等用户直接操作，保证 isMaximized 与实际状态一致
+            DisposableEffect(window) {
+                val listener = object : java.awt.event.ComponentAdapter() {
+                    override fun componentResized(e: java.awt.event.ComponentEvent) {
+                        try {
+                            val wa = java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().maximumWindowBounds
+                            val b = window.bounds
+                            val nowMax = kotlin.math.abs(b.width - wa.width) <= 2 &&
+                                    kotlin.math.abs(b.height - wa.height) <= 2 &&
+                                    kotlin.math.abs(b.x - wa.x) <= 2 &&
+                                    kotlin.math.abs(b.y - wa.y) <= 2
+                            if (nowMax != isMaximized) isMaximized = nowMax
+                        } catch (_: Throwable) { }
+                    }
+                }
+                window.addComponentListener(listener)
+                onDispose { window.removeComponentListener(listener) }
+            }
+
             DisposableEffect(Unit) {
                 DesktopNotifier.setActions(
                     DesktopNotifier.TrayActions(
+                        // 【P0-7 修复】托盘/通知恢复窗口时必须同步 hiddenToTray，
+                        // 否则 Window(visible = !hiddenToTray) 会在下一次重组时把窗口藏回去
                         onShowWindow = {
+                            hiddenToTray = false
                             javax.swing.SwingUtilities.invokeLater {
                                 window.isVisible = true
                                 window.toFront()
@@ -262,6 +290,7 @@ fun main() {
                             javax.swing.SwingUtilities.invokeLater { window.isVisible = false }
                         },
                         onOpenSettings = {
+                            hiddenToTray = false
                             javax.swing.SwingUtilities.invokeLater {
                                 window.isVisible = true
                                 window.toFront()
@@ -299,7 +328,18 @@ fun main() {
                                     try { window.setState(java.awt.Frame.ICONIFIED) } catch (_: Exception) { }
                                 },
                                 onMaximize = { toggleMaximize() },
-                                onClose = { requestClose() }
+                                onClose = { requestClose() },
+                                // 【P1-10 修复】最大化状态下拖拽先还原，避免无边框窗口乱跳
+                                isMaximized = isMaximized,
+                                onRestoreIfMaximized = {
+                                    val b = restoreBounds
+                                    if (b != null) {
+                                        window.extendedState = window.extendedState and
+                                                java.awt.Frame.MAXIMIZED_BOTH.inv()
+                                        window.bounds = b
+                                        isMaximized = false
+                                    }
+                                }
                             )
                             App(settings = settings, onSettingsChange = { applySettings(it) })
                         }
@@ -334,12 +374,12 @@ fun main() {
                     MainWindowHolder.activate()
                 },
                 menu = {
-                    Item("View") {
+                    Item("显示主窗口") {
                         hiddenToTray = false
                         MainWindowHolder.activate()
                     }
                     Separator()
-                    Item("Quit") { shutdownAndExit() }
+                    Item("退出 FurAgent") { shutdownAndExit() }
                 }
             )
         }
@@ -377,12 +417,32 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
 
     // 【会话隔离】输入框草稿按会话保存：切走存盘、切回恢复、输入后防抖落盘。
     // 监听 currentSessionId 而非逐个改切换入口，新增入口也不会漏。
-    val draftPrefs = remember {
-        java.util.prefs.Preferences.userRoot().node("FurAgent/session_drafts")
+    // 【P1-8 修复】从 Preferences 改为文件存储：Preferences 单值有 8KB 上限，
+    // 超长草稿 put 会抛异常或静默失败，且 Windows 走注册表不稳。
+    val draftDir = remember {
+        java.io.File(System.getProperty("user.home"), ".furagent/drafts").apply { mkdirs() }
     }
-    fun readDraft(id: String): String = draftPrefs.get("d_$id", "") ?: ""
+    fun draftFile(id: String) = java.io.File(draftDir, "$id.txt")
+    fun readDraft(id: String): String = try {
+        val f = draftFile(id)
+        if (f.exists()) f.readText(Charsets.UTF_8) else ""
+    } catch (_: Throwable) { "" }
     fun writeDraft(id: String, text: String) {
-        draftPrefs.put("d_$id", text)
+        try {
+            val f = draftFile(id)
+            if (text.isEmpty()) {
+                if (f.exists()) f.delete()
+            } else {
+                // 原子写：先写临时文件再 rename，防止崩溃留下半截草稿
+                val tmp = java.io.File(draftDir, "$id.tmp")
+                tmp.writeText(text, Charsets.UTF_8)
+                if (f.exists()) f.delete()
+                if (!tmp.renameTo(f)) {
+                    f.writeText(text, Charsets.UTF_8)
+                    tmp.delete()
+                }
+            }
+        } catch (_: Throwable) { }
     }
     // 草稿归属者：知道当前 inputText 属于哪个会话
     var draftOwner by remember { mutableStateOf(currentSessionId) }
@@ -400,6 +460,13 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         if (draftOwner == currentSessionId) {
             currentSessionId?.let { writeDraft(it, inputText) }
         }
+    }
+
+    // 【P0-2 过渡】把"当前显示会话"同步给 UI 层 shim（HistoryPage 等页面使用）。
+    // 主 Agent 的工具归属已改用协程上下文（SessionIdElement），不再依赖此字段。
+    LaunchedEffect(currentSessionId) {
+        net.xinkong.furagent.desktop.tools.DesktopTools.CurrentTaskSession.id =
+            currentSessionId ?: ""
     }
 
     var currentPage by remember { mutableStateOf(AppPage.CHAT) }
@@ -442,6 +509,44 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
 
     /** 停掉指定会话的 Agent 任务。 */
     fun stopSession(sessionId: String) {
+        // 【P0-3 修复】cancel 之前先把已生成的流式内容落盘。
+        // 之前直接 cancel，finally 里 token 已变 isCurrent() 为 false，不持久化，
+        // 用户点了「停止」，屏幕上那段回复一切会话就没了。
+        val streaming = sessionStreaming[sessionId] ?: ""
+        if (streaming.isNotBlank()) {
+            val base = sessionMessages[sessionId] ?: messages
+            val withStreaming = base + DesktopMessage(
+                role = "assistant",
+                content = streaming,
+                type = "text",
+                interrupted = true
+            )
+            sessionMessages = sessionMessages + (sessionId to withStreaming)
+            if (currentSessionId == sessionId) messages = withStreaming
+            val createdAt = if (sessionId == currentSessionId) sessionCreatedAt
+                else DesktopSessionStore.load(sessionId)?.createdAt ?: System.currentTimeMillis()
+            // 【批次 2 修复】persist 定义在 stopSession 之后，局部函数不能前向引用，
+            // 这里直接调 DesktopSessionStore.save（标题/父会话保护逻辑与 persist 保持一致）。
+            try {
+                val existing = if (sessionId.startsWith("sub_")) DesktopSessionStore.load(sessionId) else null
+                val title = when {
+                    existing?.title?.startsWith("↳") == true -> existing.title
+                    sessionId.startsWith("sub_") -> "↳ " + DesktopSessionStore.generateTitle(withStreaming)
+                    else -> DesktopSessionStore.generateTitle(withStreaming)
+                }
+                DesktopSessionStore.save(
+                    DesktopSession(
+                        id = sessionId,
+                        title = title,
+                        createdAt = createdAt,
+                        updatedAt = System.currentTimeMillis(),
+                        messages = withStreaming,
+                        parentId = existing?.parentId
+                    )
+                )
+            } catch (_: Throwable) { }
+        }
+
         // 递增该会话的 token，让旧任务的 isCurrent() 变 false
         sessionTokens = sessionTokens + (sessionId to ((sessionTokens[sessionId] ?: 0L) + 1))
         sessionJobs[sessionId]?.cancel()
@@ -449,8 +554,11 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         // 【中断修复】杀掉正在跑的工具进程（execute_command / ffmpeg / python 等）。
         // 光 cancel 协程只能停住“下一轮”，正在阻塞执行的子进程不会自己退出，
         // 必须主动触发 TaskRuntime 的取消回调（内部会 destroyForcibly + taskkill）。
+        //
+        // 【P0-2】按会话精确取消：只杀属于本会话的正在运行工具，
+        // 不再误杀其他并发会话正在跑的工具。
         try {
-            TaskRuntime.tasks.value.filter { it.running }.forEach { TaskRuntime.cancel(it.id) }
+            TaskRuntime.cancelBySession(sessionId)
         } catch (_: Throwable) { }
         runningSessions = runningSessions - sessionId
         sessionThinking = sessionThinking - sessionId
@@ -479,8 +587,11 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
         // 子会话于是出现在主会话侧栏、又不在子代理列表里（看起来就像
         // “子代理把原会话覆盖了”，而且再也找不到回去的入口）。
         // 现在：子会话（id 以 sub_ 开头）保留原标题。
-        val existing = if (id.startsWith("sub_")) DesktopSessionStore.load(id) else null
+        // 【P0-4 修复】load 不限于子会话：主会话也可能被用户手动重命名过。
+        // titleLocked=true 表示用户手动设置过标题，persist 时保留，不覆盖。
+        val existing = DesktopSessionStore.load(id)
         val title = when {
+            existing?.titleLocked == true -> existing.title
             existing?.title?.startsWith("↳") == true -> existing.title
             id.startsWith("sub_") -> "↳ " + DesktopSessionStore.generateTitle(history)
             else -> DesktopSessionStore.generateTitle(history)
@@ -492,7 +603,8 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                 createdAt = createdAt,
                 updatedAt = System.currentTimeMillis(),
                 messages = history,
-                parentId = existing?.parentId
+                parentId = existing?.parentId,
+                titleLocked = existing?.titleLocked
             )
         )
         if (refreshList) {
@@ -580,6 +692,8 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
             // 流式输出缓冲：每 chunk 直接写 state 会让主窗口每 chunk 全量重组，
             // 合并到 32ms 间隔再由 flusher 协程刷出
             val streamBuf = java.util.concurrent.ConcurrentLinkedQueue<String>()
+            // 【P2-18 修复】reasoning 也走队列节流，否则每 chunk 都触发全局重组
+            val reasoningBuf = java.util.concurrent.ConcurrentLinkedQueue<String>()
             var thinkingLastFlush = 0L
             fun drainStream() {
                 if (streamBuf.isEmpty()) return
@@ -591,15 +705,26 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                 sessionStreaming = sessionStreaming +
                     (taskSessionId to ((sessionStreaming[taskSessionId] ?: "") + sb))
             }
+            fun drainReasoning() {
+                if (reasoningBuf.isEmpty()) return
+                val sb = StringBuilder()
+                while (true) {
+                    val c = reasoningBuf.poll() ?: break
+                    sb.append(c)
+                }
+                sessionReasoning = sessionReasoning +
+                    (taskSessionId to ((sessionReasoning[taskSessionId] ?: "") + sb))
+            }
             val flusher = launch {
-                while (isActive) { delay(32.milliseconds); drainStream() }
+                while (isActive) { delay(32.milliseconds); drainStream(); drainReasoning() }
             }
             try {
-                // 记录主任务会话：子会话完成后「子代理完成」通知回流的目标
-                DesktopTools.CurrentTaskSession.id = taskSessionId
+                // 【P0-2 收尾】不再写全局：sessionId 通过协程上下文传递，
+                // runTurn 内部 withContext(SessionIdElement(taskSessionId))
                 val result = DesktopAgent.runTurn(
                     settings = settings,
                     history = history,
+                    sessionId = taskSessionId,
                     onUpdate = { newList ->
                         if (!isCurrent()) return@runTurn
                         // 只更新内存状态，不在每次消息变化时写盘（persist 移到 onStreamCommit/finally）
@@ -624,7 +749,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                     },
                     onReasoning = { r ->
                         if (!isCurrent()) return@runTurn
-                        sessionReasoning = sessionReasoning + (taskSessionId to ((sessionReasoning[taskSessionId] ?: "") + r))
+                        reasoningBuf.add(r)
                     },
                     onStream = { chunk ->
                         if (!isCurrent()) return@runTurn
@@ -633,9 +758,17 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                     onStreamCommit = {
                         if (!isCurrent()) return@runTurn
                         drainStream()
+                        drainReasoning()
                         // 每次助手消息落盘时持久化一次（比 onUpdate 每次工具返回都写盘省 I/O）
                         // refreshList=false：agent 运行期间会话列表不变，省掉磁盘读取
-                        persist(taskSessionId, messages, taskCreatedAt, refreshList = false)
+                        // 【P0-1 修复】多会话并发时，用本会话的历史，不用当前显示的 messages；
+                        // 否则用户切到 B 会话时，A 的流式内容会写进 B 的会话文件
+                        persist(
+                            taskSessionId,
+                            sessionMessages[taskSessionId] ?: history,
+                            taskCreatedAt,
+                            refreshList = false
+                        )
                         sessionStreaming = sessionStreaming + (taskSessionId to "")
                         sessionReasoning = sessionReasoning + (taskSessionId to "")
                     },
@@ -675,22 +808,28 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                 // 异常退出时也要保存已产生的消息；
                 // 非用户主动停止的异常写一条系统提示进会话，避免对话"无声死亡"只留日志
                 if (isCurrent()) {
-                    if (e !is CancellationException) {
-                        messages = messages + DesktopMessage(
+                    // 【P0-1 修复】用本会话的历史，不动当前显示的 messages
+                    val base = sessionMessages[taskSessionId] ?: history
+                    val newList = if (e !is CancellationException) {
+                        base + DesktopMessage(
                             role = "system",
                             type = "system_note",
                             content = "本轮执行异常已中断：${e.javaClass.simpleName}: ${e.message}",
                             timestamp = System.currentTimeMillis()
                         )
-                    }
-                    persist(taskSessionId, messages, taskCreatedAt, refreshList = false)
+                    } else base
+                    sessionMessages = sessionMessages + (taskSessionId to newList)
+                    if (currentSessionId == taskSessionId) messages = newList
+                    persist(taskSessionId, newList, taskCreatedAt, refreshList = false)
                 }
             } finally {
                 flusher.cancel()
                 drainStream()
-                // 确保所有消息都被持久化（包括中途被取消的情况）
-                if (isCurrent()) persist(taskSessionId, messages, taskCreatedAt, refreshList = false)
+                drainReasoning()
+                // 【P0-1 修复】用本会话的历史落盘
                 if (isCurrent()) {
+                    val hist = sessionMessages[taskSessionId] ?: history
+                    persist(taskSessionId, hist, taskCreatedAt, refreshList = false)
                     runningSessions = runningSessions - taskSessionId
                     sessionStreaming = sessionStreaming - taskSessionId
                     sessionThinking = sessionThinking - taskSessionId
@@ -1125,7 +1264,10 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
             onDismiss = { renamingSessionId = null },
             onConfirm = { newTitle ->
                 DesktopSessionStore.load(id)?.let { s ->
-                    DesktopSessionStore.save(s.copy(title = newTitle, updatedAt = System.currentTimeMillis()))
+                    // 【P0-4】手动重命名置 titleLocked = true，persist 不再用 generateTitle 覆盖
+                    DesktopSessionStore.save(
+                        s.copy(title = newTitle, titleLocked = true, updatedAt = System.currentTimeMillis())
+                    )
                 }
                 sessionList = DesktopSessionStore.list().filter { it.parentId == null }
                 renamingSessionId = null

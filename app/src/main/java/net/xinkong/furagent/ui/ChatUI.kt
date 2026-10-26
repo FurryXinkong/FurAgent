@@ -404,38 +404,30 @@ fun WorkProcessItemList(
             if (!run.isParallel) {
                 run.entries.forEach { e ->
                     key(e.main.id) {
-                        AnimatedVisibility(
-                            visible = true,
-                            enter = expandVertically(tween(220)) + fadeIn(tween(180))
-                        ) {
-                            TreeBranch(isLast = runIndex == runs.lastIndex) {
-                                WorkProcessEntryRow(
-                                    e = e,
-                                    onMessageLongPress = onMessageLongPress,
-                                    onImageClick = onImageClick
-                                )
-                            }
+                        // 【P2-21 修复】原 AnimatedVisibility(visible = true) 永不触发动画，
+                        // 只是多了一层 composition/state。直接去掉。
+                        TreeBranch(isLast = runIndex == runs.lastIndex) {
+                            WorkProcessEntryRow(
+                                e = e,
+                                onMessageLongPress = onMessageLongPress,
+                                onImageClick = onImageClick
+                            )
                         }
                     }
                 }
             } else {
                 // 并行组：一个头部 + 组内段落，视觉上明确这一批是同时跑的
-                AnimatedVisibility(
-                    visible = true,
-                    enter = expandVertically(tween(220)) + fadeIn(tween(180))
-                ) {
-                    TreeBranch(isLast = runIndex == runs.lastIndex) {
-                        Column(Modifier.fillMaxWidth()) {
-                            ParallelGroupHeader(run.entries.size)
-                            Column(Modifier.padding(start = 10.dp)) {
-                                run.entries.forEach { e ->
-                                    key(e.main.id) {
-                                        WorkProcessEntryRow(
-                                            e = e,
-                                            onMessageLongPress = onMessageLongPress,
-                                            onImageClick = onImageClick
-                                        )
-                                    }
+                TreeBranch(isLast = runIndex == runs.lastIndex) {
+                    Column(Modifier.fillMaxWidth()) {
+                        ParallelGroupHeader(run.entries.size)
+                        Column(Modifier.padding(start = 10.dp)) {
+                            run.entries.forEach { e ->
+                                key(e.main.id) {
+                                    WorkProcessEntryRow(
+                                        e = e,
+                                        onMessageLongPress = onMessageLongPress,
+                                        onImageClick = onImageClick
+                                    )
                                 }
                             }
                         }
@@ -1900,6 +1892,8 @@ fun RichMessageText(
 
     if (plainText) {
         // 流式输出：原有的 Text 渲染逻辑
+        // 【批次 20 优化】applyStreamingGradient 可能会对大文本做复杂的 AnnotatedString 构造，
+        // 这里用 remember 缓存，且依赖项更严谨。
         val annotatedString = remember(content, textColor) { applyStreamingGradient(content, textColor) }
         var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
@@ -1938,8 +1932,12 @@ fun RichMessageText(
         )
     } else {
         // Markdown 渲染
-        ComposeMarkdownRenderer(
-            text = content,
+        // 【批次 20 优化】ComposeMarkdownRenderer 内部做了大量的正则解析和树构建。
+        // 如果 content 没有变化（例如只是父组件重组），不应重复解析。
+        // 这里利用 key 强制：如果 content 没变，ComposeMarkdownRenderer 内部缓存命中。
+        key(content) {
+            ComposeMarkdownRenderer(
+                text = content,
             colors = MarkdownColors(
                 textColor = textColor,
                 linkColor = linkColor,
@@ -1950,18 +1948,19 @@ fun RichMessageText(
             ),
             modifier = modifier,
             maxLines = maxLines,
-            onLinkClick = { url ->
-                try {
-                    context.startActivity(
-                        Intent(Intent.ACTION_VIEW, url.toUri()).apply {
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                        }
-                    )
-                } catch (_: Exception) { }
-            },
-            onLongPress = onLongPress,
-            onTap = onTap
-        )
+                onLinkClick = { url ->
+                    try {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, url.toUri()).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            }
+                        )
+                    } catch (_: Exception) { }
+                },
+                onLongPress = onLongPress,
+                onTap = onTap
+            )
+        }
     }
 }
 

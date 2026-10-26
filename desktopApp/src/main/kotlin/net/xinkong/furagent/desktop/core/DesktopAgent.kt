@@ -110,8 +110,15 @@ object DesktopAgent {
          * 为什么需要：子代理是被派出去干活的，它跑 100 轮也不会自己停下来，
          * 主会话设多少轮它就跑多少轮，然后全部烧掉。子会话必须有独立的硬上限。
          */
-        maxLoopsOverride: Int? = null
-    ): List<DesktopMessage> = withContext(Dispatchers.IO) {
+        maxLoopsOverride: Int? = null,
+        /**
+         * 【P0-2】会话 id：通过协程上下文（SessionIdElement）传给内部所有工具调用。
+         * 多会话并发时，不同 runTurn 各自的 sessionId 互不干扰，工具归属正确，
+         * 停止时按会话精确取消。
+         * 空串表示「不归属任何会话」（如子会话收尾总结）。
+         */
+        sessionId: String = ""
+    ): List<DesktopMessage> = withContext(Dispatchers.IO + SessionIdElement(sessionId)) {
         var current = history
 
         val profile = settings.currentProfile()
@@ -792,10 +799,20 @@ object DesktopAgent {
         return obj
     }
 
+    // 【批次 14 性能】图片 Base64 缓存。
+    // 原实现每次 buildMessageObject 都会重新读文件、压缩、转 Base64。
+    // 当历史里有图片时，每一轮对话（多次请求）都会重复这套极其耗 CPU 和 IO 的操作。
+    private val dataUrlCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+
     private fun readAsDataUrl(path: String, settings: DesktopSettings): String? {
         return try {
             val f = File(path)
             if (!f.exists() || !f.isFile) return null
+
+            // 缓存 Key 包含文件路径、修改时间、压缩参数，任何一个变了都重新生成
+            val cacheKey = "${f.absolutePath}_${f.lastModified()}_${settings.imageCompress}_${settings.imageCompressQuality}_${settings.imageCompressMaxDim}"
+            dataUrlCache[cacheKey]?.let { return it }
+
             val effectiveMaxDim = if (settings.imageCompress) settings.imageCompressMaxDim else 1920
             val effectiveQuality = if (settings.imageCompress) settings.imageCompressQuality else 90
 
@@ -816,7 +833,13 @@ object DesktopAgent {
                 "png" -> "image/png"; "gif" -> "image/gif"; "webp" -> "image/webp"
                 else -> "image/jpeg"
             }
-            "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
+            val dataUrl = "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
+            dataUrlCache[cacheKey] = dataUrl
+            
+            // 防内存泄漏：缓存超过 100 个时清空
+            if (dataUrlCache.size > 100) dataUrlCache.clear()
+            
+            dataUrl
         } catch (e: Exception) {
             DesktopLogger.error("Agent", "读取图片失败：$path - ${e.message}")
             null
