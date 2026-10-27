@@ -2879,27 +2879,38 @@ private fun downloadUpdateApk(
         if (!dir.exists()) dir.mkdirs()
         val target = java.io.File(dir, name)
 
+        // 申请一个专属通知槽位，并行下载时互不覆盖
+        val slotKey = target.absolutePath
+        val slot = net.xinkong.furagent.system.NotificationHelper
+            .acquireDownloadSlot(slotKey)
+
         // 进度节流：最多每 300ms 刷一次通知，避免高频 notify 卡顿
         var lastNotifyAt = 0L
-        val result = net.xinkong.furagent.shared.util.DownloadEngine.download(
-            url = url,
-            target = target,
-            threads = 4,
-            onProgress = { done, total ->
-                val now = System.currentTimeMillis()
-                if (now - lastNotifyAt >= 300L || (total > 0 && done >= total)) {
-                    lastNotifyAt = now
-                    net.xinkong.furagent.system.NotificationHelper
-                        .showDownloadProgress(context, name, done, total)
+        val result = try {
+            net.xinkong.furagent.shared.util.DownloadEngine.download(
+                url = url,
+                target = target,
+                threads = 4,
+                onProgress = { done, total ->
+                    val now = System.currentTimeMillis()
+                    if (now - lastNotifyAt >= 300L || (total > 0 && done >= total)) {
+                        lastNotifyAt = now
+                        net.xinkong.furagent.system.NotificationHelper
+                            .showDownloadProgress(context, name, done, total, slot)
+                    }
                 }
-            }
-        )
+            )
+        } finally {
+            // 无论成败都撤掉进度通知并归还槽位
+            net.xinkong.furagent.system.NotificationHelper
+                .cancelDownloadProgress(context, slot)
+            net.xinkong.furagent.system.NotificationHelper
+                .releaseDownloadSlot(slotKey)
+        }
 
         if (result.ok) {
-            net.xinkong.furagent.system.NotificationHelper.cancelDownloadProgress(context)
             installApk(context, target)
         } else {
-            net.xinkong.furagent.system.NotificationHelper.cancelDownloadProgress(context)
             notifyToast(context, "下载失败：${result.message}")
         }
     }

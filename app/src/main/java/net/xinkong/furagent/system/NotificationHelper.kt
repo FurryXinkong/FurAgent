@@ -14,8 +14,48 @@ object NotificationHelper {
     private const val CHANNEL_ID = "furagent_tasks"
     private const val CHANNEL_NAME = "定时任务"
     private const val LIVE_NOTIFICATION_ID = 2002
-    /** 更新包下载进度通知的固定 ID（同一个 ID 反复 notify 才能原地刷新进度条） */
-    private const val UPDATE_DOWNLOAD_ID = 2003
+    /** 下载进度通知的起始 ID。第一个下载用 2003，第二个 2004，依次递增。 */
+    private const val DOWNLOAD_ID_BASE = 2003
+
+    /**
+     * 下载进度通知的槽位分配器。
+     *
+     * 每个下载任务占一个独立通知 ID，避免并行下载时互相覆盖进度条。
+     * 用「任务 key」（一般是目标文件绝对路径）映射到 ID：
+     *   - 同一个文件重复下载复用同一个 ID，不会越用越多
+     *   - 任务结束 release，ID 归还池子，下次可复用
+     *
+     * 不设上限：下载进度对用户很重要，宁可多几条通知也不要丢。
+     */
+    private val downloadSlots = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val downloadSlotLock = Any()
+    private var nextDownloadId = DOWNLOAD_ID_BASE
+
+    /**
+     * 为一个下载任务申请通知 ID。
+     *
+     * @param key 任务唯一标识，建议用目标文件绝对路径
+     * @return 该任务专属的通知 ID
+     */
+    fun acquireDownloadSlot(key: String): Int = synchronized(downloadSlotLock) {
+        downloadSlots[key]?.let { return@synchronized it }
+        // 找一个没被占用的 ID（从 nextDownloadId 开始往后扫）
+        val used = downloadSlots.values.toHashSet()
+        var id = nextDownloadId
+        while (id in used) id++
+        downloadSlots[key] = id
+        nextDownloadId = id + 1
+        id
+    }
+
+    /** 下载任务结束，归还通知 ID。 */
+    fun releaseDownloadSlot(key: String) {
+        synchronized(downloadSlotLock) {
+            downloadSlots.remove(key)
+            // 池子空了就把游标复位，避免 ID 无限增长
+            if (downloadSlots.isEmpty()) nextDownloadId = DOWNLOAD_ID_BASE
+        }
+    }
 
     /**
      * 通知图标。
@@ -253,9 +293,11 @@ object NotificationHelper {
     /**
      * 更新包下载进度通知。
      *
-     * 用固定 ID 反复 notify，系统会原地刷新进度条而不是堆一屏通知。
+     * 同一个 slotId 反复 notify，系统会原地刷新进度条而不是堆一屏通知。
+     * 并行下载时每个任务用不同的 slotId（见 acquireDownloadSlot），互不干扰。
      * 总大小未知时（total <= 0）走不确定进度条。
      *
+     * @param slotId 该下载任务专属的通知 ID，由 acquireDownloadSlot 分配
      * @param cancelIntent 点「取消」时发的 PendingIntent，可为 null
      */
     fun showDownloadProgress(
@@ -263,13 +305,14 @@ object NotificationHelper {
         fileName: String,
         downloaded: Long,
         total: Long,
+        slotId: Int = DOWNLOAD_ID_BASE,
         cancelIntent: PendingIntent? = null
     ) {
         try {
             ensureChannel(context)
             val builder = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download)
-                .setContentTitle("正在下载更新包")
+                .setContentTitle("正在下载 $fileName")
                 .setContentText(
                     if (total > 0) {
                         "${formatBytes(downloaded)} / ${formatBytes(total)}"
@@ -300,7 +343,7 @@ object NotificationHelper {
 
             try {
                 NotificationManagerCompat.from(context)
-                    .notify(UPDATE_DOWNLOAD_ID, builder.build())
+                    .notify(slotId, builder.build())
             } catch (_: SecurityException) { }
         } catch (e: Exception) {
             AgentLogger.log(
@@ -310,10 +353,14 @@ object NotificationHelper {
         }
     }
 
-    /** 下载失败/取消时把进度通知撤掉 */
-    fun cancelDownloadProgress(context: Context) {
+    /**
+     * 撤掉某个下载任务的进度通知。
+     *
+     * @param slotId 该任务的通知 ID；不传则撤掉起始 ID 那条（兼容旧调用）
+     */
+    fun cancelDownloadProgress(context: Context, slotId: Int = DOWNLOAD_ID_BASE) {
         try {
-            NotificationManagerCompat.from(context).cancel(UPDATE_DOWNLOAD_ID)
+            NotificationManagerCompat.from(context).cancel(slotId)
         } catch (_: Exception) { }
     }
 
@@ -338,7 +385,7 @@ object NotificationHelper {
             }
             val pi = PendingIntent.getActivity(
                 context,
-                UPDATE_DOWNLOAD_ID,
+                DOWNLOAD_ID_BASE,
                 installIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
@@ -351,7 +398,7 @@ object NotificationHelper {
                 .setContentIntent(pi)
             try {
                 NotificationManagerCompat.from(context)
-                    .notify(UPDATE_DOWNLOAD_ID, builder.build())
+                    .notify(DOWNLOAD_ID_BASE, builder.build())
             } catch (_: SecurityException) { }
         } catch (e: Exception) {
             AgentLogger.log(

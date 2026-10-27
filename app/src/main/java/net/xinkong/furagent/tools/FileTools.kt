@@ -59,7 +59,7 @@ object FileTools {
         "file_op" -> doFileOp(args, context, settings)
         "zip" -> doZip(args, settings)
         "base64" -> doBase64(args, settings)
-        "download_file" -> doDownloadFile(args, settings)
+        "download_file" -> doDownloadFile(args, context, settings)
         else -> "未实现的文件工具：$name"
     }
 
@@ -481,7 +481,11 @@ object FileTools {
 
     // download_file
 
-    private suspend fun doDownloadFile(args: JSONObject, settings: AppSettings): String {
+    private suspend fun doDownloadFile(
+        args: JSONObject,
+        context: Context,
+        settings: AppSettings
+    ): String {
         val url = args.optString("url", "").trim()
         val savePath = normalizeAlias(args.optString("save_path", ""))
         if (url.isBlank()) return "失败：未提供 URL"
@@ -505,11 +509,24 @@ object FileTools {
             rejectMessage = "用户已拒绝下载操作"
         )?.let { return it }
 
+        val fileName = target.name
+        // 申请专属通知槽位，并行下载时互不覆盖
+        val slotKey = target.absolutePath
+        val slot = net.xinkong.furagent.system.NotificationHelper
+            .acquireDownloadSlot(slotKey)
+
         return withContext(Dispatchers.IO) {
             try {
                 // 记下当前取消代际：用户点「停止」时 AgentSession.cancelAll() 会递增代际，
                 // 引擎的 isCancelled 回调据此中断下载。
                 val gen = AgentSession.currentGeneration()
+
+                // 进度通知节流：最多每 300ms 刷一次。
+                // DownloadEngine 多线程下载时 onProgress 回调非常密集，
+                // 每次都 notify() 是跨进程 IPC，会拖慢下载并卡 UI。
+                var lastNotifyAt = 0L
+                var lastLoggedPct = -1
+
                 val result = DownloadEngine.download(
                     url = url,
                     target = target,
@@ -517,15 +534,32 @@ object FileTools {
                     proxy = proxy,
                     resume = resume,
                     onProgress = { done, total ->
-                        AgentLogger.log(
-                            "INFO",
-                            "下载中：${formatFileSize(done)}" +
-                                    if (total > 0) " / ${formatFileSize(total)}" else ""
-                        )
+                        // 日志按 10% 一档打，避免刷屏
+                        if (total > 0) {
+                            val pct = ((done * 100) / total).toInt()
+                            if (pct / 10 != lastLoggedPct / 10) {
+                                lastLoggedPct = pct
+                                AgentLogger.log(
+                                    "INFO",
+                                    "下载中：${formatFileSize(done)} / ${formatFileSize(total)}（$pct%）"
+                                )
+                            }
+                        }
+                        // 通知按 300ms 节流
+                        val now = System.currentTimeMillis()
+                        if (now - lastNotifyAt >= 300L || (total > 0 && done >= total)) {
+                            lastNotifyAt = now
+                            net.xinkong.furagent.system.NotificationHelper
+                                .showDownloadProgress(context, fileName, done, total, slot)
+                        }
                     },
                     isCancelled = { AgentSession.isCancelled(gen) },
                     onCallCreated = { call -> AgentSession.setCall(call) }
                 )
+
+                // 无论成败都撤掉进度通知，避免残留一条卡住的进度条
+                net.xinkong.furagent.system.NotificationHelper
+                    .cancelDownloadProgress(context, slot)
 
                 if (!result.ok) {
                     "失败：${result.message}"
@@ -536,14 +570,23 @@ object FileTools {
                         else if (threads > 1) append("，单线程（服务器不支持 Range 或文件过小）")
                         if (proxy != null) append("，经代理 $proxy")
                     }
+                    // 完成通知：点击打开文件
+                    net.xinkong.furagent.system.NotificationHelper
+                        .showFileReceivedNotification(context, target)
                     note
                 }
             } catch (e: Exception) {
+                net.xinkong.furagent.system.NotificationHelper
+                    .cancelDownloadProgress(context, slot)
                 AgentLogger.log(
                     "ERR",
                     "下载文件失败（$url -> $savePath）：${e.javaClass.simpleName}: ${e.message}"
                 )
                 "下载失败：${e.message}"
+            } finally {
+                // 归还槽位，让 ID 可被后续下载复用
+                net.xinkong.furagent.system.NotificationHelper
+                    .releaseDownloadSlot(slotKey)
             }
         }
     }

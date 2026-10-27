@@ -41,6 +41,17 @@ object MemoryStore {
     @Volatile private var cachedMtime: Long = -1L
     private val cacheLock = Any()
 
+    /**
+     * 读-改-写 互斥锁。
+     *
+     * cacheLock 只保护缓存字段本身；这把锁保护「list() 取快照 → 改 → save() 写回」
+     * 整个事务。没有它，并行删两条记忆会互相覆盖：
+     *   T1 读到 [A,B,C]，T2 也读到 [A,B,C]
+     *   T1 删 A 写回 [B,C]，T2 删 B 写回 [A,C]  ← A 复活了
+     * 两次调用都返回成功，但实际只删掉一条。
+     */
+    private val writeLock = Any()
+
     private fun atomicWrite(target: File, content: String) {
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
@@ -124,7 +135,7 @@ object MemoryStore {
         return list().filter { it.content.lowercase().contains(q) }
     }
 
-    fun add(content: String): Memory {
+    fun add(content: String): Memory = synchronized(writeLock) {
         val current = list().toMutableList()
         // 重复内容不删除旧条目，避免已有记忆位置变化。
         current.firstOrNull { it.content == content }?.let { return it }
@@ -137,10 +148,10 @@ object MemoryStore {
         // 追加到尾部
         current.add(m)
         save(current)
-        return m
+        m
     }
 
-    fun addAll(contents: List<String>): Int {
+    fun addAll(contents: List<String>): Int = synchronized(writeLock) {
         if (contents.isEmpty()) return 0
         val current = list().toMutableList()
         val existing = current.map { it.content }.toHashSet()
@@ -164,7 +175,7 @@ object MemoryStore {
         return added
     }
 
-    fun update(id: String, newContent: String) {
+    fun update(id: String, newContent: String) = synchronized(writeLock) {
         val current = list().toMutableList()
         val idx = current.indexOfFirst { it.id == id }
         if (idx >= 0) {
@@ -177,7 +188,7 @@ object MemoryStore {
      * 切换单条记忆的启用状态。
      * 关闭后该条不注入 system prompt，但仍留在列表可随时重开。
      */
-    fun setEnabled(id: String, enabled: Boolean) {
+    fun setEnabled(id: String, enabled: Boolean) = synchronized(writeLock) {
         val current = list().toMutableList()
         val idx = current.indexOfFirst { it.id == id }
         if (idx >= 0) {
@@ -186,10 +197,19 @@ object MemoryStore {
         }
     }
 
-    fun remove(id: String) {
+    /**
+     * 删除一条记忆。
+     *
+     * 必须持 writeLock：并行删多条时，无锁的「读-改-写」会互相覆盖，
+     * 表现为「提示删除成功但列表没变」。
+     *
+     * @return 是否真的删掉了（id 不存在时返回 false）
+     */
+    fun remove(id: String): Boolean = synchronized(writeLock) {
         val current = list().toMutableList()
-        current.removeAll { it.id == id }
-        save(current)
+        val removed = current.removeAll { it.id == id }
+        if (removed) save(current)
+        removed
     }
 
     /**
@@ -197,7 +217,11 @@ object MemoryStore {
      * 调用前应先 removeBySessionId。
      * detail：摘要生成详情 JSON（可为空）。
      */
-    fun addSessionSummary(sessionId: String, content: String, detail: String = ""): Memory {
+    fun addSessionSummary(
+        sessionId: String,
+        content: String,
+        detail: String = ""
+    ): Memory = synchronized(writeLock) {
         val current = list().toMutableList()
         val m = Memory(
             id = UUID.randomUUID().toString(),
@@ -215,15 +239,15 @@ object MemoryStore {
     /**
      * 删除某会话的旧摘要（幂等覆盖用）。
      */
-    fun removeBySessionId(sessionId: String) {
-        if (sessionId.isBlank()) return
+    fun removeBySessionId(sessionId: String) = synchronized(writeLock) {
+        if (sessionId.isBlank()) return@synchronized
         val current = list().toMutableList()
         val before = current.size
         current.removeAll { it.sessionId == sessionId }
         if (current.size != before) save(current)
     }
 
-    fun clear() {
+    fun clear() = synchronized(writeLock) {
         try {
             file().delete()
             synchronized(cacheLock) { cachedMemories = null; cachedMtime = -1L }

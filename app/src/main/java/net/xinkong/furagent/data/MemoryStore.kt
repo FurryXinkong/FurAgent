@@ -31,6 +31,19 @@ object MemoryStore {
     @Volatile private var cachedMemories: List<Memory>? = null
     @Volatile private var cachedFileMtime: Long = -1L
 
+    /**
+     * 读-改-写 互斥锁。
+     *
+     * 所有「list() 取快照 → 改 → save() 写回」的操作都必须持有这把锁，
+     * 否则并行调用会互相覆盖：
+     *   T1 读到 [A,B,C]，T2 也读到 [A,B,C]
+     *   T1 删 A 写回 [B,C]，T2 删 B 写回 [A,C]  ← A 复活了
+     * 两次调用都返回成功，但实际只删掉一条。
+     *
+     * 用 MemoryStore 单例本身当锁，保证全进程唯一。
+     */
+    private val writeLock = Any()
+
     private fun atomicWrite(target: File, content: String) {
         net.xinkong.furagent.shared.util.JsonFile.atomicWrite(target, content)
     }
@@ -113,7 +126,7 @@ object MemoryStore {
         return list(context).filter { it.content.lowercase().contains(q) }
     }
 
-    fun add(context: Context, content: String): Memory {
+    fun add(context: Context, content: String): Memory = synchronized(writeLock) {
         val current = list(context).toMutableList()
         // 重复内容不删除旧条目，避免已有记忆位置变化。
         current.firstOrNull { it.content == content }?.let { return it }
@@ -127,11 +140,11 @@ object MemoryStore {
         current.add(m)
         // 记忆是用户资产，不设上限
         save(context, current)
-        return m
+        m
     }
 
-    fun addAll(context: Context, contents: List<String>): Int {
-        if (contents.isEmpty()) return 0
+    fun addAll(context: Context, contents: List<String>): Int = synchronized(writeLock) {
+        if (contents.isEmpty()) return@synchronized 0
         val current = list(context).toMutableList()
         val existing = current.map { it.content }.toHashSet()
         var added = 0
@@ -152,10 +165,10 @@ object MemoryStore {
             // 记忆是用户资产，不设上限
             save(context, current)
         }
-        return added
+        added
     }
 
-    fun update(context: Context, id: String, newContent: String) {
+    fun update(context: Context, id: String, newContent: String) = synchronized(writeLock) {
         val current = list(context).toMutableList()
         val idx = current.indexOfFirst { it.id == id }
         if (idx >= 0) {
@@ -168,7 +181,7 @@ object MemoryStore {
      * 切换单条记忆的启用状态。
      * 关闭后该条不注入 system prompt，但仍留在列表可随时重开。
      */
-    fun setEnabled(context: Context, id: String, enabled: Boolean) {
+    fun setEnabled(context: Context, id: String, enabled: Boolean) = synchronized(writeLock) {
         val current = list(context).toMutableList()
         val idx = current.indexOfFirst { it.id == id }
         if (idx >= 0) {
@@ -177,13 +190,22 @@ object MemoryStore {
         }
     }
 
-    fun remove(context: Context, id: String) {
+    /**
+     * 删除一条记忆。
+     *
+     * 必须持锁：并行删多条时，无锁的「读-改-写」会互相覆盖，
+     * 表现为「提示删除成功但列表没变」。
+     *
+     * @return 是否真的删掉了（id 不存在时返回 false）
+     */
+    fun remove(context: Context, id: String): Boolean = synchronized(writeLock) {
         val current = list(context).toMutableList()
-        current.removeAll { it.id == id }
-        save(context, current)
+        val removed = current.removeAll { it.id == id }
+        if (removed) save(context, current)
+        removed
     }
 
-    fun clear(context: Context) {
+    fun clear(context: Context) = synchronized(writeLock) {
         try {
             file(context).delete()
             cachedMemories = emptyList()
