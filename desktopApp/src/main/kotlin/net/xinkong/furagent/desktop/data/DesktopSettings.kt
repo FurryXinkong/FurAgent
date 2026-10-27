@@ -80,6 +80,17 @@ data class DesktopSettings(
      */
     val imageProfileId: String = "",
 
+    /**
+     * 子代理专用模型 id（kind != "image"）。
+     *
+     * 子代理（run_sub_session）是被派出去干活的：读文件、跑命令、批量改代码。
+     * 这类任务量大、轮次多、对推理深度要求不高，用便宜快的模型更划算，
+     * 没必要跟主对话抢同一个贵模型。
+     *
+     * 空串 = 回退到主对话模型（currentProfile），保持旧行为。
+     */
+    val subAgentProfileId: String = "",
+
     val apiKeySource: String = "profile",
 
     val maxToolCallLoops: Int = 20,
@@ -172,6 +183,16 @@ data class DesktopSettings(
         profiles.firstOrNull { it.id == imageProfileId && it.kind == "image" }
             ?: imageProfiles().firstOrNull()
 
+    /**
+     * 当前生效的子代理模型。
+     *
+     * 优先取 subAgentProfileId 选中的对话模型；没选或选中的已失效时
+     * 回退到主对话模型，保证子代理永远能跑起来。
+     */
+    fun currentSubAgentProfile(): DesktopModelProfile? =
+        profiles.firstOrNull { it.id == subAgentProfileId && it.kind != "image" }
+            ?: currentProfile()
+
     fun toolPath(toolKey: String): String =
         customToolPaths[toolKey]?.takeIf { it.isNotBlank() } ?: ""
 
@@ -203,6 +224,7 @@ data class DesktopSettings(
                 put("currentProfileId", currentProfileId)
                 put("summaryProfileId", summaryProfileId)
                 put("imageProfileId", imageProfileId)
+                put("subAgentProfileId", subAgentProfileId)
                 put("apiKeySource", apiKeySource)
                 put("maxToolCallLoops", maxToolCallLoops)
                 put("maxTurns", maxTurns)
@@ -357,6 +379,7 @@ data class DesktopSettings(
                     currentProfileId = currentId,
                     summaryProfileId = o.optString("summaryProfileId", ""),
                     imageProfileId = o.optString("imageProfileId", ""),
+                    subAgentProfileId = o.optString("subAgentProfileId", ""),
                     apiKeySource = o.optString("apiKeySource", "profile")
                         .takeIf { it in listOf("profile", "env") } ?: "profile",
                     maxToolCallLoops = o.optInt("maxToolCallLoops", 20).coerceAtLeast(1),

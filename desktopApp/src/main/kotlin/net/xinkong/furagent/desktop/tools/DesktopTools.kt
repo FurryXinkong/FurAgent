@@ -634,6 +634,8 @@ object DesktopTools {
                         settings = DesktopSettingsHolder.current,
                         history = initial,
                         sessionId = reuseId,
+                        // 子代理模型：设置里单独指定过就用它，否则回退主对话模型
+                        profileOverride = DesktopSettingsHolder.current.currentSubAgentProfile(),
                         onUpdate = { h ->
                             subHistory = h
                             SubSessionProgress.update(
@@ -746,6 +748,8 @@ object DesktopTools {
                     history = initial,
                     maxLoopsOverride = subLoops,
                     sessionId = subId,
+                    // 子代理模型：设置里单独指定过就用它，否则回退主对话模型
+                    profileOverride = DesktopSettingsHolder.current.currentSubAgentProfile(),
                     onUpdate = { h ->
                         subHistory = h
                         SubSessionProgress.update(

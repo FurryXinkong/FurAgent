@@ -1,17 +1,16 @@
 package net.xinkong.furagent.data
 
-import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.edit
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.shared.SecretCodec
+import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.tools.SDCARD_PATH
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -812,6 +811,7 @@ object SessionStore {
                 put("pcBridgePort", prefs.getInt("pc_bridge_port", 8425))
                 put("floatingWindowEnabled", prefs.getBoolean("floating_window_enabled", true))
                 put("imageProfileId", prefs.getString("image_profile_id", "") ?: "")
+                put("subAgentProfileId", prefs.getString("sub_agent_profile_id", "") ?: "")
                 put("enableThinking", prefs.getBoolean("enable_thinking", false))
             })
 
@@ -1010,6 +1010,7 @@ object SessionStore {
                     putInt("pc_bridge_port", s.optInt("pcBridgePort", 8425).coerceIn(1, 65535))
                     putBoolean("floating_window_enabled", s.optBoolean("floatingWindowEnabled", true))
                     putString("image_profile_id", s.optString("imageProfileId", ""))
+                    putString("sub_agent_profile_id", s.optString("subAgentProfileId", ""))
                     putBoolean("enable_thinking", s.optBoolean("enableThinking", false))
                 }
                 // 反读一次，得到 deobfuscate 后的 AppSettings，

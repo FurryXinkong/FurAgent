@@ -425,6 +425,57 @@ fun SettingsPage(
                                     }
                                 }
                             }
+
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                "子代理模型",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                "AI 派发子代理（run_sub_session）时用该模型。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            var subAgentMenuOpen by remember { mutableStateOf(false) }
+                            val subAgentName = local.profiles
+                                .firstOrNull { it.id == local.subAgentProfileId && it.kind != "image" }?.name
+                                ?: "跟随主模型"
+                            Box {
+                                OutlinedButton(
+                                    onClick = { subAgentMenuOpen = true },
+                                    shape = RoundedCornerShape(AppRadius.SM)
+                                ) {
+                                    Text(subAgentName)
+                                    Icon(
+                                        Icons.Default.KeyboardArrowDown,
+                                        contentDescription = null
+                                    )
+                                }
+                                DropdownMenu(
+                                    expanded = subAgentMenuOpen,
+                                    onDismissRequest = { subAgentMenuOpen = false }
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("跟随主模型") },
+                                        onClick = {
+                                            subAgentMenuOpen = false
+                                            quickSave(local.copy(subAgentProfileId = ""))
+                                        }
+                                    )
+                                    local.profiles.filter { it.kind != "image" }.forEach { p ->
+                                        DropdownMenuItem(
+                                            text = { Text(p.name.ifBlank { "未命名" }) },
+                                            onClick = {
+                                                subAgentMenuOpen = false
+                                                quickSave(local.copy(subAgentProfileId = p.id))
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }

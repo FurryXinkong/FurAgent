@@ -1,20 +1,14 @@
 package net.xinkong.furagent.desktop.core
 
-import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.*
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-import net.xinkong.furagent.desktop.data.ApiKeyResolver
-import net.xinkong.furagent.desktop.data.DesktopMessage
-import net.xinkong.furagent.desktop.data.DesktopSettings
-import net.xinkong.furagent.desktop.data.MemoryStore
+import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.system.EnvDetector
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.tools.EditSessionTracker
 import net.xinkong.furagent.desktop.tools.PhoneTools
-import net.xinkong.furagent.shared.tools.ToolResult
 import net.xinkong.furagent.shared.ThinkingLevel
+import net.xinkong.furagent.shared.tools.ToolResult
 import net.xinkong.furagent.shared.util.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -24,9 +18,10 @@ import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import kotlin.time.Duration.Companion.milliseconds
 
 object DesktopAgent {
@@ -124,11 +119,17 @@ object DesktopAgent {
          * 停止时按会话精确取消。
          * 空串表示「不归属任何会话」（如子会话收尾总结）。
          */
-        sessionId: String = ""
+        sessionId: String = "",
+        /**
+         * 覆盖本轮使用的模型。传 null 用 settings.currentProfile()。
+         *
+         * 子代理用它切到「子代理模型」，避免跟主对话抢同一个贵模型。
+         */
+        profileOverride: DesktopModelProfile? = null
     ): List<DesktopMessage> = withContext(Dispatchers.IO + SessionIdElement(sessionId)) {
         var current = history
 
-        val profile = settings.currentProfile()
+        val profile = profileOverride ?: settings.currentProfile()
         if (profile == null) {
             val err = DesktopMessage(role = "assistant", content = "请先在设置里配置模型")
             val newList = current + err

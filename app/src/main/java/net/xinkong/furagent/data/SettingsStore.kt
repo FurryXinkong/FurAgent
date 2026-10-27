@@ -99,6 +99,7 @@ object SettingsStore {
                 } else raw
             },
             imageProfileId = prefs.getString("image_profile_id", "") ?: "",
+            subAgentProfileId = prefs.getString("sub_agent_profile_id", "") ?: "",
             showTokenBar = prefs.getBoolean("show_token_bar", false),
             showModifiedFiles = prefs.getBoolean("show_modified_files", false),
             enableNewSessionSuggest = prefs.getBoolean("enable_new_session_suggest", false),
@@ -153,6 +154,7 @@ object SettingsStore {
                 .putInt("pc_bridge_port", s.pcBridgePort.coerceIn(1, 65535))
                 .putString("pc_receive_dir", s.pcReceiveDir)
                 .putString("image_profile_id", s.imageProfileId)
+                .putString("sub_agent_profile_id", s.subAgentProfileId)
                 .putBoolean("show_token_bar", s.showTokenBar)
                 .putBoolean("show_modified_files", s.showModifiedFiles)
                 .putBoolean("enable_new_session_suggest", s.enableNewSessionSuggest)

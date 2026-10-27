@@ -900,7 +900,8 @@ object ToolRegistry {
         val task = args.optString("task", "").trim()
         if (task.isBlank()) return "失败：run_sub_session 需要 task 参数"
         val title = args.optString("title", "").trim().ifBlank { task.take(30) }
-        val profile = settings.currentProfile()
+        // 子代理模型：设置里单独指定过就用它，否则回退主对话模型。
+        val profile = settings.currentSubAgentProfile()
             ?: return "失败：未配置模型，无法启动子会话"
 
         // 并行槽位：原子检查+占位，杜绝同毫秒并发绕过检查

@@ -1,15 +1,14 @@
 package net.xinkong.furagent.desktop.data
 
-import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.*
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.SecretCodec
 import net.xinkong.furagent.shared.ThinkingLevel
+import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.shared.util.FileRecovery
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.milliseconds
@@ -425,6 +424,7 @@ object DesktopSessionStore {
                 put("currentProfileId", settings.currentProfileId)
                 put("summaryProfileId", settings.summaryProfileId)
                 put("imageProfileId", settings.imageProfileId)
+                put("subAgentProfileId", settings.subAgentProfileId)
                 put("apiKeySource", settings.apiKeySource)
                 put("maxToolCallLoops", settings.maxToolCallLoops)
                 put("maxTurns", settings.maxTurns)
@@ -623,6 +623,7 @@ object DesktopSessionStore {
                     currentProfileId = currentId,
                     summaryProfileId = s.optString("summaryProfileId", current.summaryProfileId),
                     imageProfileId = s.optString("imageProfileId", current.imageProfileId),
+                    subAgentProfileId = s.optString("subAgentProfileId", current.subAgentProfileId),
                     apiKeySource = s.optString("apiKeySource", current.apiKeySource)
                         .takeIf { it in listOf("profile", "env") } ?: current.apiKeySource,
                     maxToolCallLoops = s.optInt("maxToolCallLoops", current.maxToolCallLoops).coerceAtLeast(1),

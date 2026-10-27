@@ -4,40 +4,30 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 import net.xinkong.furagent.desktop.data.*
-import net.xinkong.furagent.desktop.system.EnvDetector
-import net.xinkong.furagent.shared.tools.BackupHelper
 import net.xinkong.furagent.desktop.system.DesktopVersion
-import net.xinkong.furagent.shared.update.UpdateChecker
-import net.xinkong.furagent.desktop.system.openExternalUrl
-import net.xinkong.furagent.shared.tools.TrashHelper
 import net.xinkong.furagent.desktop.system.TempCleaner
+import net.xinkong.furagent.desktop.system.openExternalUrl
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.update.UpdateChecker
 import java.io.File
-import net.xinkong.furagent.desktop.system.NativeFilePicker
-import kotlin.time.Duration.Companion.milliseconds
 
 val HIDDEN_GROUPS: List<Pair<String, String>> = listOf(
     "appearance" to "外观",
@@ -485,6 +475,56 @@ fun SettingsPage(
                                                 onClick = {
                                                     imageMenuOpen = false
                                                     onSettingsChange(settings.copy(imageProfileId = p.id))
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 子代理模型选择（同会话摘要模型样式）
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("子代理模型", fontSize = 13.sp, color = TextPrimary())
+                                    Text(
+                                        "AI 派发子代理（run_sub_session）时用该模型。",
+                                        fontSize = 11.sp,
+                                        color = TextMuted()
+                                    )
+                                }
+                                var subAgentMenuOpen by remember { mutableStateOf(false) }
+                                val subAgentName = settings.profiles
+                                    .firstOrNull { it.id == settings.subAgentProfileId && it.kind != "image" }?.name
+                                    ?: "跟随主模型"
+                                Box {
+                                    SecondaryButton(
+                                        text = subAgentName,
+                                        icon = Icons.Default.ExpandMore,
+                                        modifier = Modifier.width(160.dp)
+                                    ) { subAgentMenuOpen = true }
+                                    DropdownMenu(
+                                        expanded = subAgentMenuOpen,
+                                        onDismissRequest = { subAgentMenuOpen = false },
+                                        containerColor = CardColor()
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("跟随主模型", fontSize = 12.sp, color = TextPrimary()) },
+                                            onClick = {
+                                                subAgentMenuOpen = false
+                                                onSettingsChange(settings.copy(subAgentProfileId = ""))
+                                            }
+                                        )
+                                        settings.chatProfiles().forEach { p ->
+                                            DropdownMenuItem(
+                                                text = { Text(p.name, fontSize = 12.sp, color = TextPrimary()) },
+                                                onClick = {
+                                                    subAgentMenuOpen = false
+                                                    onSettingsChange(settings.copy(subAgentProfileId = p.id))
                                                 }
                                             )
                                         }

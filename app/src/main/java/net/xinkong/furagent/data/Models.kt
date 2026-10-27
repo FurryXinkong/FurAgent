@@ -1,7 +1,6 @@
 package net.xinkong.furagent.data
 
 import net.xinkong.furagent.shared.ThinkingLevel
-import java.util.*
 
 /**
  * ChatMessage 抽到 shared/data/ChatMessage.kt。
@@ -160,6 +159,17 @@ data class AppSettings(
      */
     val imageProfileId: String = "",
 
+    /**
+     * 子代理专用模型 id（kind != "image"）。
+     *
+     * 子代理（run_sub_session）是被派出去干活的：读文件、跑命令、批量改代码。
+     * 这类任务量大、轮次多、对推理深度要求不高，用便宜快的模型更划算，
+     * 没必要跟主对话抢同一个贵模型。
+     *
+     * 空串 = 回退到主对话模型（currentProfile），保持旧行为。
+     */
+    val subAgentProfileId: String = "",
+
     /** 页面底部 token 消耗状态栏（轮次 / 工具步数 / 估算 token / 上下文占用） */
     val showTokenBar: Boolean = false,
     /** 输入区上方「本次修改的文件」折叠卡片 */
@@ -193,4 +203,14 @@ fun AppSettings.imageProfiles(): List<ModelProfile> =
 /** 当前生效的文生图模型：优先取 imageProfileId 选中的，否则取第一个 kind=="image" 的。 */
 fun AppSettings.currentImageProfile(): ModelProfile? =
     profiles.firstOrNull { it.id == imageProfileId && it.kind == "image" }
+
+/**
+ * 当前生效的子代理模型。
+ *
+ * 优先取 subAgentProfileId 选中的对话模型；没选或选中的已失效时
+ * 回退到主对话模型，保证子代理永远能跑起来。
+ */
+fun AppSettings.currentSubAgentProfile(): ModelProfile? =
+    profiles.firstOrNull { it.id == subAgentProfileId && it.kind != "image" }
+        ?: currentProfile()
         ?: imageProfiles().firstOrNull()
