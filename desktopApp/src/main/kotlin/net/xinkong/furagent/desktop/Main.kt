@@ -208,10 +208,14 @@ fun main() {
                 shutdownAndExit()
             }
 
+            // applySettings 由 UI 控件频繁触发（滑块拖动、开关切换）。
+            // 同步写盘会阻塞主线程，改为后台异步写。仍需立即更新内存态，
+            // 否则 UI 控件读不到新值。
+            val settingsSaveScope = rememberCoroutineScope()
             fun applySettings(newSettings: DesktopSettings) {
                 settings = newSettings
                 DesktopSettingsHolder.current = newSettings
-                newSettings.save()
+                settingsSaveScope.launch(Dispatchers.IO) { newSettings.save() }
             }
 
             fun toggleMaximize() {

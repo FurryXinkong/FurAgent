@@ -215,29 +215,58 @@ object DesktopAgent {
                         "prompt≈$promptTokens tokens）"
             )
 
-            val body = JSONObject().apply {
-                put("model", profile.model)
-                put("messages", messages)
-                put("tools", tools)
-                // 温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
-                put("temperature", profile.temperature)
-                // 惩罚参数：只在非默认值时发送（部分中转站不认，无脑发会 400）
-                if (profile.presencePenalty != 0.0) put("presence_penalty", profile.presencePenalty)
-                if (profile.frequencyPenalty != 0.0) put("frequency_penalty", profile.frequencyPenalty)
-                put("stream", true)
+            val isAnthropic =
+                ApiProtocol.normalize(profile.protocol) ==
+                        ApiProtocol.ANTHROPIC
+
+            val body = if (isAnthropic) {
+                // Anthropic Messages 协议：消息结构、工具定义、system 位置都不同，
+                // 由 AnthropicCompat 统一转换。思考强度/惩罚参数 Anthropic 不支持，忽略。
+                AnthropicCompat.buildRequestBody(
+                    model = profile.model,
+                    openAiMessages = messages,
+                    openAiTools = tools,
+                    temperature = profile.temperature,
+                    stream = true
+                )
+            } else {
+                JSONObject().apply {
+                    put("model", profile.model)
+                    put("messages", messages)
+                    put("tools", tools)
+                    // 温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
+                    put("temperature", profile.temperature)
+                    // 惩罚参数：只在非默认值时发送（部分中转站不认，无脑发会 400）
+                    if (profile.presencePenalty != 0.0) put("presence_penalty", profile.presencePenalty)
+                    if (profile.frequencyPenalty != 0.0) put("frequency_penalty", profile.frequencyPenalty)
+                    put("stream", true)
+                }
             }
             // 按模型能力强制关闭/开启思考（与手机端 Agent.kt 一致）
-            if (settings.thinkingLevel != ThinkingLevel.OFF) {
-                applyEnableThinking(body, profile, settings.thinkingLevel)
-            } else {
-                applyDisableThinking(body, profile)
+            // Anthropic 协议不支持这些字段，跳过
+            if (!isAnthropic) {
+                if (settings.thinkingLevel != ThinkingLevel.OFF) {
+                    applyEnableThinking(body, profile, settings.thinkingLevel)
+                } else {
+                    applyDisableThinking(body, profile)
+                }
             }
 
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url(profile.baseUrl)
-                .addHeader("Authorization", "Bearer $effectiveApiKey")
                 .addHeader("Content-Type", "application/json")
                 .addHeader("Accept", "text/event-stream")
+            if (isAnthropic) {
+                // Anthropic 用 x-api-key，不是 Bearer
+                requestBuilder.addHeader("x-api-key", effectiveApiKey)
+                requestBuilder.addHeader(
+                    "anthropic-version",
+                    AnthropicCompat.API_VERSION
+                )
+            } else {
+                requestBuilder.addHeader("Authorization", "Bearer $effectiveApiKey")
+            }
+            val request = requestBuilder
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
 
@@ -264,7 +293,7 @@ object DesktopAgent {
                 // 简短文案：`HTTP 429 · 用量配额已用尽`
                 // 不走 onUpdate，避免占 AI 聊天气泡
                 onError(
-                    net.xinkong.furagent.shared.util.ApiErrorInfo
+                    ApiErrorInfo
                         .format(response.code, errStr)
                 )
                 return@withContext current
@@ -287,20 +316,32 @@ object DesktopAgent {
                     }
                     try {
                         response.body.source().use { source ->
-                            toolCalls = parseSseStream(
-                                readLine = { source.readUtf8Line() },
-                                onContent = { content ->
-                                    contentBuilder.append(content)
-                                    onStream(content)
-                                },
-                                onReasoning = { r ->
-                                    reasoningBuilder.append(r)
-                                    onReasoning(r)
-                                },
-                                onParseError = { cls, data ->
-                                    DesktopLogger.warn("Agent", "SSE 单行 JSON 解析失败：$cls，行：${data.take(120)}")
-                                }
-                            )
+                            val onContentCb: (String) -> Unit = { content ->
+                                contentBuilder.append(content)
+                                onStream(content)
+                            }
+                            val onReasoningCb: (String) -> Unit = { r ->
+                                reasoningBuilder.append(r)
+                                onReasoning(r)
+                            }
+                            val onParseErrorCb: (String, String) -> Unit = { cls, data ->
+                                DesktopLogger.warn("Agent", "SSE 单行 JSON 解析失败：$cls，行：${data.take(120)}")
+                            }
+                            toolCalls = if (isAnthropic) {
+                                AnthropicCompat.parseSseStream(
+                                    readLine = { source.readUtf8Line() },
+                                    onContent = onContentCb,
+                                    onReasoning = onReasoningCb,
+                                    onParseError = onParseErrorCb
+                                )
+                            } else {
+                                parseSseStream(
+                                    readLine = { source.readUtf8Line() },
+                                    onContent = onContentCb,
+                                    onReasoning = onReasoningCb,
+                                    onParseError = onParseErrorCb
+                                )
+                            }
                         }
                     } finally {
                         handle?.dispose()
@@ -454,7 +495,7 @@ object DesktopAgent {
                             val startMs = System.currentTimeMillis()
                             val r = try {
                                 runOneTool(acc.name, acc.arguments.toString(), settings, loadedToolNames)
-                            } catch (ce: kotlinx.coroutines.CancellationException) {
+                            } catch (ce: CancellationException) {
                                 throw ce
                             } catch (t: Throwable) {
                                 DesktopLogger.error(
@@ -715,7 +756,15 @@ object DesktopAgent {
 
                     messages.put(JSONObject().apply {
                         put("role", "assistant")
-                        put("content", "")
+                        // 正文回填：AI 上一轮常常先说一句话再调工具，
+                        // 那句话被存成了独立的 type="text" 消息。
+                        // 旧逻辑这里硬编码空串，导致回放时 AI 看不到自己说过什么，
+                        // 而且会产出「连续两条 assistant」，Anthropic 协议直接 400。
+                        // 这里把紧邻前面的 text 消息正文取过来，合并成一条 assistant。
+                        val prevText = history.getOrNull(i - 1)
+                            ?.takeIf { it.type == "text" && it.role == "assistant" }
+                            ?.content ?: ""
+                        put("content", prevText)
                         put("tool_calls", JSONArray().apply {
                             put(JSONObject().apply {
                                 put("id", callId)
@@ -812,7 +861,14 @@ object DesktopAgent {
     // 图片 Base64 缓存。
     // 原实现每次 buildMessageObject 都会重新读文件、压缩、转 Base64。
     // 当历史里有图片时，每一轮对话（多次请求）都会重复这套极其耗 CPU 和 IO 的操作。
-    private val dataUrlCache = java.util.concurrent.ConcurrentHashMap<String, String>()
+    //
+    // LRU（accessOrder=true）：最多保留 100 张，超出自动淘汰最老的。
+    // 旧实现用 ConcurrentHashMap + "size > 100 就 clear()"，会在 101 张时全部失效，
+    // 导致后续任何请求都要重新读盘 + 压缩 + base64。
+    // 用 synchronized 包装访问（LinkedHashMap 非线程安全）。
+    private val dataUrlCache = object : java.util.LinkedHashMap<String, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>): Boolean = size > 100
+    }
 
     private fun readAsDataUrl(path: String, settings: DesktopSettings): String? {
         return try {
@@ -821,7 +877,7 @@ object DesktopAgent {
 
             // 缓存 Key 包含文件路径、修改时间、压缩参数，任何一个变了都重新生成
             val cacheKey = "${f.absolutePath}_${f.lastModified()}_${settings.imageCompress}_${settings.imageCompressQuality}_${settings.imageCompressMaxDim}"
-            dataUrlCache[cacheKey]?.let { return it }
+            synchronized(dataUrlCache) { dataUrlCache[cacheKey] }?.let { return it }
 
             val effectiveMaxDim = if (settings.imageCompress) settings.imageCompressMaxDim else 1920
             val effectiveQuality = if (settings.imageCompress) settings.imageCompressQuality else 90
@@ -844,11 +900,8 @@ object DesktopAgent {
                 else -> "image/jpeg"
             }
             val dataUrl = "data:$mime;base64,${Base64.getEncoder().encodeToString(bytes)}"
-            dataUrlCache[cacheKey] = dataUrl
-            
-            // 防内存泄漏：缓存超过 100 个时清空
-            if (dataUrlCache.size > 100) dataUrlCache.clear()
-            
+            synchronized(dataUrlCache) { dataUrlCache[cacheKey] = dataUrl }
+            // LRU 自动淘汰，无需手动清空
             dataUrl
         } catch (e: Exception) {
             DesktopLogger.error("Agent", "读取图片失败：$path - ${e.message}")
@@ -950,7 +1003,7 @@ object DesktopAgent {
                     val body = try {
                         resp.peekBody(4096).string()
                     } catch (_: Exception) { "" }
-                    net.xinkong.furagent.shared.util.ApiErrorInfo.explain(429, body).retryable
+                    ApiErrorInfo.explain(429, body).retryable
                 } else {
                     code == 500 || code == 502 || code == 503 || code == 504
                 }
@@ -963,7 +1016,7 @@ object DesktopAgent {
                 DesktopLogger.warn("Agent", "API $code，第 ${attempt + 1} 次重试，等待 ${waitMs}ms")
                 // 友好提示 用共享错误解释器，与安卓端文案一致
                 onThinking(
-                    net.xinkong.furagent.shared.util.ApiErrorInfo
+                    ApiErrorInfo
                         .retryHint(code, attempt + 1, maxRetries + 1, waitMs)
                 )
                 delay(waitMs.milliseconds)
@@ -1072,7 +1125,7 @@ object DesktopAgent {
             } else {
                 DesktopTools.execute(name, argsJson)
             }
-        } catch (e: kotlinx.coroutines.CancellationException) {
+        } catch (e: CancellationException) {
             // 取消信号必须原样上抛，不能当成工具失败
             throw e
         } catch (e: Exception) {
@@ -1095,7 +1148,7 @@ object DesktopAgent {
         }
     }
 
-    private suspend fun buildSystemPrompt(settings: DesktopSettings, sessionPrompt: String = ""): String {
+    private fun buildSystemPrompt(settings: DesktopSettings, sessionPrompt: String = ""): String {
         // 时间戳只到天
         val now = DateFormats.formatDate()
         val os = "${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})"
@@ -1127,7 +1180,7 @@ object DesktopAgent {
 
         // 会话专用提示词：只作用于当前会话，追加在全局指令之后
         if (sessionPrompt.isNotBlank()) {
-            prompt += "\n\n【本会话专用指令】\n" + sessionPrompt
+            prompt += "\n\n【本会话专用指令】\n$sessionPrompt"
         }
         return prompt
     }
@@ -1145,10 +1198,10 @@ object DesktopAgent {
      */
     internal fun applyDisableThinking(
         body: JSONObject,
-        profile: net.xinkong.furagent.desktop.data.DesktopModelProfile
+        profile: DesktopModelProfile
     ) {
         if (!profile.supportsDisableThinking) return
-        net.xinkong.furagent.shared.util.applyDisableThinking(body, profile.baseUrl)
+        applyDisableThinking(body, profile.baseUrl)
     }
 
     /**
@@ -1157,11 +1210,11 @@ object DesktopAgent {
      */
     internal fun applyEnableThinking(
         body: JSONObject,
-        profile: net.xinkong.furagent.desktop.data.DesktopModelProfile,
+        profile: DesktopModelProfile,
         level: ThinkingLevel
     ) {
         if (!profile.supportsThinking) return
-        net.xinkong.furagent.shared.util.applyEnableThinking(body, profile.baseUrl, level)
+        applyEnableThinking(body, profile.baseUrl, level)
     }
 
     private fun prettyJson(raw: String): String = try {

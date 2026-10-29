@@ -1,10 +1,6 @@
 @file:OptIn(kotlinx.coroutines.FlowPreview::class)
 package net.xinkong.furagent
 
-import net.xinkong.furagent.shared.util.DateFormats
-import net.xinkong.furagent.shared.ThinkingLevel
-import net.xinkong.furagent.ui.AndroidBackupHistoryDialog
-import net.xinkong.furagent.ui.AndroidSubSessionListDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -22,18 +18,18 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -41,20 +37,18 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
@@ -74,9 +68,16 @@ import net.xinkong.furagent.bridge.PcBridgeClient
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.AgentRunner
 import net.xinkong.furagent.core.ConfirmationBroker
+import net.xinkong.furagent.core.SessionSummarizer
 import net.xinkong.furagent.core.mcp.McpManager
 import net.xinkong.furagent.data.*
 import net.xinkong.furagent.service.FloatingService
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.update.UpdateChecker
+import net.xinkong.furagent.shared.update.UpdateInfo
+import net.xinkong.furagent.shared.util.ChatListItem
+import net.xinkong.furagent.shared.util.SessionAnalytics
+import net.xinkong.furagent.shared.util.buildChatItems
 import net.xinkong.furagent.system.LocalNetworkPermission
 import net.xinkong.furagent.system.PermissionRequestBroker
 import net.xinkong.furagent.system.SpeechHelper
@@ -86,20 +87,9 @@ import net.xinkong.furagent.tools.SDCARD_PATH
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.tools.ToolRegistry.SubSessionProgress
 import net.xinkong.furagent.ui.*
-import net.xinkong.furagent.shared.update.UpdateChecker
-import net.xinkong.furagent.shared.update.UpdateInfo
 import net.xinkong.furagent.ui.pages.*
-import net.xinkong.furagent.ui.theme.FurAgentTheme
 import net.xinkong.furagent.ui.theme.AppRadius
-import net.xinkong.furagent.shared.util.ChatListItem
-import net.xinkong.furagent.shared.util.buildChatItems
-import net.xinkong.furagent.shared.util.SessionAnalytics
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.TextButton
-import net.xinkong.furagent.ui.PocoDivider
-import net.xinkong.furagent.ui.ModelSettingsButton
+import net.xinkong.furagent.ui.theme.FurAgentTheme
 import org.json.JSONObject
 import java.io.File
 import java.util.*
@@ -205,7 +195,9 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             }
-            val (hp, _) = AndroidHttpFileServer.start(applicationContext, settings.pcBridgePort + 1)
+            // 端口 65535 + 1 = 65536 无效，clamp 到 1..65535
+            val httpPort = (settings.pcBridgePort + 1).coerceIn(1, 65535)
+            val (hp, _) = AndroidHttpFileServer.start(applicationContext, httpPort)
             AgentLogger.log("BRIDGE", "本地 HTTP 文件服务端口：$hp")
         } catch (e: Exception) {
             AgentLogger.log("ERR", "启动本地 HTTP 服务失败：${e.message}")
@@ -271,8 +263,10 @@ class MainActivity : ComponentActivity() {
     override fun onPause() {
         super.onPause()
         try {
-            // 会话文件写盘节流 500ms，退到后台时强制落盘，避免进程被杀时丢最后一条消息
-            SessionStore.flushPending(applicationContext)
+            // 会话文件写盘节流 500ms，退到后台时请求立即落盘。
+            // 不能用 flushPending（内部 latch.await(3s) 会阻塞主线程，ANR 风险）；
+            // requestFlush 只投递任务到后台 HandlerThread，不等待完成。
+            SessionStore.requestFlush(applicationContext)
         } catch (e: Exception) {
             AgentLogger.log(
                 "SYS",
@@ -521,6 +515,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         if (ver.isNotBlank()) {
             UpdateChecker.check(ver, UpdateChecker.Platform.ANDROID).onSuccess { updateInfo = it }
         }
+    }
+    // 会话摘要：启动时异步跑一次（不阻塞 UI）。
+    // 未配置摘要模型时内部直接返回；脏标记保证只有新消息的会话才会重新摘要。
+    LaunchedEffect(Unit) {
+        SessionSummarizer.runOnStartup(context, SettingsStore.load(prefs))
     }
     var crashInfo by remember { mutableStateOf(CrashStore.load(context)) }
     var selectedMessage by remember { mutableStateOf<ChatMessage?>(null) }
@@ -957,9 +956,14 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
     }
 
-    fun startAgent(initialHistory: List<ChatMessage>) {
-        val profile = currentProfileValue ?: return
-        val sid = currentSessionId ?: return
+    /**
+     * 启动 Agent。
+     *
+     * @return true 表示成功启动；false 表示已有任务在运行（调用方可能需要回滚自己的状态）
+     */
+    fun startAgent(initialHistory: List<ChatMessage>): Boolean {
+        val profile = currentProfileValue ?: return false
+        val sid = currentSessionId ?: return false
         // 会话专用提示词：每轮发送前实时读盘，编辑后下一轮即生效
         val sessionPrompt = SessionStore.load(context, sid)?.systemPrompt ?: ""
         val started = AgentRunner.start(
@@ -990,6 +994,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
             }
         )
         if (!started) notifyToast(context, "已有 AI 任务在运行中，请先停止")
+        return started
     }
 
     fun sendMessageInternal(text: String, images: List<String> = emptyList()) {
@@ -1031,12 +1036,25 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 // 且自动滚动逻辑里 shouldFollow = !userScrolledUp || last?.role == "user"，
                 // 最后一条是 user 消息时本就会强制跟随滚动，功能上无需额外重置。
                 persist()
+
+                // startAgent 可能因并发冲突返回 false，此时 user message 已进 chatHistory，
+                // 用户会看到"自己发了一条消息但 AI 不回复"。失败时回滚，让消息不会凭空消失。
+                if (!startAgent(withUser)) {
+                    chatHistory = chatHistory.dropLast(1)
+                    persist()
+                    return@withLock
+                }
+
                 userInput = ""
+                // 清理临时缓存文件。选图后用户没发送就退出的场景，cacheDir/picked_* 会一直堆积。
+                // 发出去的图片已由 ImageCompressor 压到 /sdcard/FurAgent/temp/
+                // （TempCleaner 负责清理），这里清的是 cacheDir 原始副本。
+                pendingPickedImages.forEach { path ->
+                    try { java.io.File(path).delete() } catch (_: Exception) { }
+                }
                 pendingPickedImages = emptyList()
                 keyboardController?.hide()
                 focusManager.clearFocus()
-
-                startAgent(withUser)
             }
         }
     }
@@ -1348,7 +1366,12 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }.collect { totalItems ->
             if (totalItems == 0) return@collect
             val last = chatHistory.lastOrNull()
-            // 用户主动上滑后不强制拉到底部
+            // 自动跟随规则：
+            //   1. 用户没上滑 → 永远跟随
+            //   2. 用户上滑了，但来了新的用户消息 → 跟随（用户刚发完消息，想看回复）
+            //   3. 用户上滑了，但 AI 正在流式输出 → 不跟随（用户主动在看历史，别拽回去）
+            // 旧逻辑只看 last?.role == "user"，导致 AI 流式输出时完全不跟随，
+            // 用户发完消息后如果稍微上滑一点，就再也看不到新内容了。
             val shouldFollow = !userScrolledUp || last?.role == "user"
             if (shouldFollow) {
                 try {
@@ -1523,6 +1546,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     AgentRunner.cancel(context)
                 }
                 SessionStore.delete(context, id)
+                // 会话删了，摘要本体由 delete 级联清掉，但脏标记会变孤儿键，顺手清理
+                SessionSummarizer.pruneState(context)
                 sessionList = SessionStore.list(context).filter { it.parentId == null }
                 if (id == currentSessionId) {
                     val next = sessionList.firstOrNull()
@@ -2182,7 +2207,10 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                 scope.launch {
                                     try {
                                         userScrolledUp = false
-                                        listState.animateScrollToItem(chatItems.size - 1)
+                                        // 用 Int.MAX_VALUE 而非 chatItems.size - 1：
+                                        // LazyColumn 里除 chatItems 还有 status bar / modified files /
+                                        // streaming bubble 等额外 item，size-1 滚不到真正底部。
+                                        listState.animateScrollToItem(Int.MAX_VALUE)
                                     } catch (_: Exception) { }
                                 }
                             },

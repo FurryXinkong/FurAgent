@@ -79,7 +79,14 @@ data class ModelProfile(
      * 模型类型："chat"（对话，默认）/ "image"（文生图）。
      * 文生图模型不参与对话切换，仅用于 generate_image。
      */
-    val kind: String = "chat"
+    val kind: String = "chat",
+    /**
+     * API 协议："openai"（默认，Chat Completions 兼容）/ "anthropic"（Messages 兼容）。
+     *
+     * 同一个服务商可能同时提供两种协议（如小米 MiMo），
+     * 请求体、响应体、鉴权头完全不同，必须显式区分。
+     */
+    val protocol: String = "openai"
 )
 
 private val DEFAULT_PROFILES: List<ModelProfile> = listOf(
@@ -160,6 +167,17 @@ data class AppSettings(
     val imageProfileId: String = "",
 
     /**
+     * 会话摘要专用模型 id（kind != "image"）。
+     *
+     * 每天首次打开时，用该模型把历史会话压成一句标签存入记忆。
+     * 摘要任务量小、对推理要求低，用便宜快的模型更划算。
+     *
+     * 空串 = 不启用会话摘要。
+     */
+    val summaryProfileId: String = "",
+
+    /**
+     * 子代理专用模型 id（kind != "image"）。
      * 子代理专用模型 id（kind != "image"）。
      *
      * 子代理（run_sub_session）是被派出去干活的：读文件、跑命令、批量改代码。
@@ -205,6 +223,16 @@ fun AppSettings.currentImageProfile(): ModelProfile? =
     profiles.firstOrNull { it.id == imageProfileId && it.kind == "image" }
 
 /**
+ * 当前生效的会话摘要模型。
+ *
+ * 没选或选中的已失效时返回 null（表示不启用摘要），
+ * 不回退到主对话模型——摘要会额外消耗 token，用户没选就是不想用。
+ */
+fun AppSettings.currentSummaryProfile(): ModelProfile? =
+    profiles.firstOrNull { it.id == summaryProfileId && it.kind != "image" }
+
+/**
+ * 当前生效的子代理模型。
  * 当前生效的子代理模型。
  *
  * 优先取 subAgentProfileId 选中的对话模型；没选或选中的已失效时
@@ -213,4 +241,5 @@ fun AppSettings.currentImageProfile(): ModelProfile? =
 fun AppSettings.currentSubAgentProfile(): ModelProfile? =
     profiles.firstOrNull { it.id == subAgentProfileId && it.kind != "image" }
         ?: currentProfile()
-        ?: imageProfiles().firstOrNull()
+        // 不回退到 imageProfiles：用生图模型跑子代理必然失败，且错误信息很奇怪
+        // （"模型未返回内容"之类）。返回 null 让调用方拒绝执行。

@@ -439,6 +439,7 @@ object DesktopSessionStore {
                 put("requireConfirmShell", settings.requireConfirmShell)
                 put("requireConfirmPython", settings.requireConfirmPython)
                 put("requireConfirmSkill", settings.requireConfirmSkill)
+                put("requireConfirmFfmpegOverwrite", settings.requireConfirmFfmpegOverwrite)
                 put("showTokenBar", settings.showTokenBar)
                 put("showModifiedFiles", settings.showModifiedFiles)
                 put("enableNewSessionSuggest", settings.enableNewSessionSuggest)
@@ -641,6 +642,7 @@ object DesktopSessionStore {
                     requireConfirmDelete = s.optBoolean("requireConfirmDelete", current.requireConfirmDelete),
                     requireConfirmShell = s.optBoolean("requireConfirmShell", current.requireConfirmShell),
                     requireConfirmPython = s.optBoolean("requireConfirmPython", current.requireConfirmPython),
+                    requireConfirmFfmpegOverwrite = s.optBoolean("requireConfirmFfmpegOverwrite", current.requireConfirmFfmpegOverwrite),
                     showTokenBar = s.optBoolean("showTokenBar", current.showTokenBar),
                     showModifiedFiles = s.optBoolean("showModifiedFiles", current.showModifiedFiles),
                     enableNewSessionSuggest = s.optBoolean("enableNewSessionSuggest", current.enableNewSessionSuggest),

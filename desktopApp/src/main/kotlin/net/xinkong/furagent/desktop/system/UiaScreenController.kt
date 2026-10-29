@@ -40,6 +40,10 @@ object UiaScreenController : ScreenController {
     @Volatile private var availabilityCache: Boolean? = null
     @Volatile private var availabilityMissAt: Long = 0L
     @Volatile private var lastAvailabilityError: String? = null
+    // 连续命令失败计数。UIA 组件被禁用时 PowerShell 脚本每次都会超时，
+    // 但 availabilityCache 上次成功后就永久为 true，导致 dumpScreen 一直返回空。
+    // 连续 3 次失败后降级，走 availabilityMissAt 的 30s TTL 重试。
+    @Volatile private var consecutiveCommandFailures: Int = 0
 
     private const val AVAILABILITY_MISS_TTL_MS = 30_000L
     private const val SCRIPT_NAME = "furagent_uia.ps1"
@@ -262,7 +266,9 @@ object UiaScreenController : ScreenController {
                             continue
                         }
                         return@withLock try {
-                            JSONObject(trimmed)
+                            val json = JSONObject(trimmed)
+                            consecutiveCommandFailures = 0  // 成功清空失败计数
+                            json
                         } catch (e: Exception) {
                             DesktopLogger.warn(
                                 "UIA",
@@ -276,6 +282,18 @@ object UiaScreenController : ScreenController {
                 // 超时：杀进程
                 DesktopLogger.warn("UIA", "命令超时（${timeoutSec}s），重启常驻进程")
                 killProcess(p)
+                // 连续超时检测：UIA 组件被禁用时 PowerShell 脚本每次都超时。
+                // 连续 3 次后把 availabilityCache 置空 + 记录 miss 时间，
+                // 走 isAvailable() 的 30s TTL 重新探活。
+                val failCount = ++consecutiveCommandFailures
+                if (failCount >= 3) {
+                    availabilityCache = null
+                    availabilityMissAt = System.currentTimeMillis()
+                    DesktopLogger.warn(
+                        "UIA",
+                        "连续 $failCount 次命令超时，暂时判定 UIA 不可用（30s 后重试）"
+                    )
+                }
                 null
             }
         }

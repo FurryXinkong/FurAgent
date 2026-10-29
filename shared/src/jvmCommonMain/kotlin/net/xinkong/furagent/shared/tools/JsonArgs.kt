@@ -31,7 +31,12 @@ class JsonArgs(private val raw: JSONObject) {
         fun from(jsonStr: String): JsonArgs {
             return try {
                 if (jsonStr.isBlank()) JsonArgs(JSONObject()) else JsonArgs(JSONObject(jsonStr))
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // 静默回退会让调试时无法发现非法 JSON。加日志便于排查。
+                ToolLogger.log(
+                    "JsonArgs",
+                    "JSON 解析失败，已回退空对象：${e.javaClass.simpleName}: ${e.message}（长度 ${jsonStr.length}）"
+                )
                 JsonArgs(JSONObject())
             }
         }

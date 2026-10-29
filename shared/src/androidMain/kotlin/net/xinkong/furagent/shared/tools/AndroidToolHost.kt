@@ -5,7 +5,6 @@ import android.os.Environment
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
-import java.util.*
 
 class AndroidToolHost(
     private val context: Context,
@@ -226,6 +225,9 @@ class AndroidToolHost(
 
     override suspend fun textLineCount(path: String): Int =
         ToolCodeNav.textLineCount(path)
+
+    override suspend fun readTailLines(path: String, tailLines: Int): Pair<Int, List<TextLine>>? =
+        ToolCodeNav.readTailLines(path, tailLines)
 
     override suspend fun searchInFiles(
         root: String,

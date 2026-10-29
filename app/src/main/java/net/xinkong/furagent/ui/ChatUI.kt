@@ -40,20 +40,7 @@ import androidx.core.net.toUri
 import net.xinkong.furagent.data.ChatMessage
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.ui.applyStreamingGradient
-import net.xinkong.furagent.shared.util.ChatListItem
-import net.xinkong.furagent.shared.util.ComposeMarkdownRenderer
-import net.xinkong.furagent.shared.util.ImagePathExtractor
-import net.xinkong.furagent.shared.util.MarkdownColors
-import net.xinkong.furagent.shared.util.SubSessionInfo
-import net.xinkong.furagent.shared.util.WorkProcessEntry
-import net.xinkong.furagent.shared.util.buildWorkProcessEntries
-import net.xinkong.furagent.shared.util.buildWorkProcessRuns
-import net.xinkong.furagent.shared.util.extractFailureReason
-import net.xinkong.furagent.shared.util.formatDuration
-import net.xinkong.furagent.shared.util.isToolFailure
-import net.xinkong.furagent.shared.util.shouldCollapseContent
-import net.xinkong.furagent.shared.util.toolCallLabel
-import net.xinkong.furagent.shared.util.toolResultLineCount
+import net.xinkong.furagent.shared.util.*
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.ui.theme.AppRadius
 
@@ -269,9 +256,6 @@ fun CollapsiblePanel(
 
     Column(modifier.fillMaxWidth()) {
         Surface(
-            //   1) 去掉 widthIn(max = 320.dp)：旧实现只占 320dp，右边留一大片空白，
-            //      是聊天页“乱”的主因。改为 fillMaxWidth 通栏。
-            //   2) 底色从 accent 半透明改为卡片色，与桌面端 CardColor() 一致。
             color = MaterialTheme.colorScheme.surface,
             shape = RoundedCornerShape(AppRadius.SM),
             border = BorderStroke(1.dp, accent.copy(alpha = 0.45f)),
@@ -1262,11 +1246,10 @@ fun TextBubble(
                     }
                 }
             } else {
-                // AI 消息：柔和气泡
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
                     shape = RoundedCornerShape(4.dp, 16.dp, 16.dp, 16.dp),
-                    modifier = Modifier.widthIn(max = maxBubbleWidth)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)) {
                         SelectionContainer {

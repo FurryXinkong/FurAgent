@@ -109,12 +109,14 @@ class MediaSessionListenerService : NotificationListenerService() {
         // 过滤自己发的通知
         if (pkg == applicationContext.packageName) return
 
+        // 截断 title/text：EXTRA_BIG_TEXT 可能几百字，100 条缓存会塞几十 KB 的 WebSocket 消息
+        // 到电脑端。在手机端截断比两端都处理更省带宽。
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)
-            ?.toString()?.trim().orEmpty()
+            ?.toString()?.trim().orEmpty().take(200)
         val text = (
                 extras.getCharSequence(Notification.EXTRA_TEXT)
                     ?: extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
-                )?.toString()?.trim().orEmpty()
+                )?.toString()?.trim().orEmpty().take(500)
 
         if (title.isBlank() && text.isBlank()) return
 

@@ -1,7 +1,5 @@
 ﻿package net.xinkong.furagent.ui
-import net.xinkong.furagent.ui.theme.AppRadius
 
-import net.xinkong.furagent.shared.util.DateFormats
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -21,13 +19,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import net.xinkong.furagent.data.ModelProfile
-import net.xinkong.furagent.data.ScheduleStore
-import net.xinkong.furagent.data.ScheduledTask
-import net.xinkong.furagent.data.SessionStore
-import net.xinkong.furagent.data.WorkflowStore
+import net.xinkong.furagent.data.*
+import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.tools.ToolRegistry
-import java.text.SimpleDateFormat
+import net.xinkong.furagent.ui.theme.AppRadius
 import java.util.*
 
 // 通用输入对话框
@@ -81,6 +76,7 @@ fun EditModelDialog(
     var temperature by remember { mutableStateOf(initial.temperature.toFloat()) }
     var presencePenalty by remember { mutableStateOf(initial.presencePenalty.toFloat()) }
     var frequencyPenalty by remember { mutableStateOf(initial.frequencyPenalty.toFloat()) }
+    var protocol by remember { mutableStateOf(initial.protocol.ifBlank { "openai" }) }
     val isImageModel = initial.kind == "image"
 
     AlertDialog(
@@ -106,11 +102,47 @@ fun EditModelDialog(
                 OutlinedTextField(
                     value = baseUrl, onValueChange = { baseUrl = it },
                     label = { Text("Base URL") },
-                    placeholder = { Text("http://192.168.1.100:11434/v1/chat/completions") },
+                    placeholder = { Text("https://api.xiaomimimo.com/v1") },
                     modifier = Modifier.fillMaxWidth(), singleLine = false, maxLines = 3,
                     shape = RoundedCornerShape(AppRadius.SM),
                     colors = pocoFieldColors()
                 )
+                if (!isImageModel) {
+                    // 协议选择：同一个服务商可能同时提供两种兼容协议
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            "API 协议",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            "OpenAI 走 /chat/completions，Anthropic 走 /v1/messages。" +
+                                    "只填到 /v1 这类版本号会自动补全路径。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("openai" to "OpenAI 格式", "anthropic" to "Anthropic 格式")
+                                .forEach { (value, label) ->
+                                    val selected = protocol == value
+                                    OutlinedButton(
+                                        onClick = { protocol = value },
+                                        shape = RoundedCornerShape(AppRadius.SM),
+                                        colors = if (selected) {
+                                            ButtonDefaults.outlinedButtonColors(
+                                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                            )
+                                        } else {
+                                            ButtonDefaults.outlinedButtonColors()
+                                        }
+                                    ) { Text(label) }
+                                }
+                        }
+                    }
+                }
                 OutlinedTextField(
                     value = model, onValueChange = { model = it },
                     label = { Text("模型名称") },
@@ -267,7 +299,10 @@ fun EditModelDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                if (name.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank()) {
+                // 模型名允许为空：用户只填了裸 base（如 https://api.xiaomimimo.com/v1）时，
+                // 保存后会自动探测 /models 并弹窗批量添加。
+                // 旧逻辑要求 model 非空，导致点保存毫无反应，探测永远不触发。
+                if (name.isNotBlank() && baseUrl.isNotBlank()) {
                     onConfirm(initial.copy(
                         name = name.trim(),
                         apiKey = apiKey.trim(),
@@ -277,7 +312,8 @@ fun EditModelDialog(
                         supportsVision = supportsVision,
                         temperature = temperature.toDouble(),
                         presencePenalty = presencePenalty.toDouble(),
-                        frequencyPenalty = frequencyPenalty.toDouble()
+                        frequencyPenalty = frequencyPenalty.toDouble(),
+                        protocol = protocol
                     ))
                 }
             }) { Text("保存") }

@@ -1,6 +1,5 @@
 package net.xinkong.furagent.tools
 
-import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -18,6 +17,7 @@ import kotlinx.coroutines.withContext
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.ConfirmationBroker
 import net.xinkong.furagent.data.*
+import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.shared.util.TaskCondition
 import net.xinkong.furagent.shared.util.WebSearchEngine
 import net.xinkong.furagent.shared.util.formatFileSize
@@ -27,7 +27,6 @@ import net.xinkong.furagent.system.PermissionRequestBroker
 import net.xinkong.furagent.system.ShizukuHelper
 import org.json.JSONArray
 import org.json.JSONObject
-import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -367,8 +366,18 @@ object SystemTools {
             putExtra(CalendarContract.EXTRA_EVENT_END_TIME, end)
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(intent)
-        return "已打开日历页面，请用户确认后保存日程：$title（未保存前不代表已创建）"
+        // 之前没有 try-catch，SecurityException 会传到 ToolRegistry.execute 的外层兜底
+        // 变成 "工具执行异常：Permission Denial..."，用户看不出是日历权限问题。
+        return try {
+            context.startActivity(intent)
+            "已打开日历页面，请用户确认后保存日程：$title（未保存前不代表已创建）"
+        } catch (e: SecurityException) {
+            AgentLogger.log("ERR", "打开日历缺少权限：${e.message}")
+            "失败：缺少权限，请到系统设置授予 FurAgent 访问日历权限"
+        } catch (e: Exception) {
+            AgentLogger.log("ERR", "打开日历失败：${e.javaClass.simpleName}: ${e.message}")
+            "失败：${e.message}"
+        }
     }
 
     private suspend fun readCalendar(args: JSONObject, context: Context): String {
@@ -947,8 +956,11 @@ object SystemTools {
             }
             "recall" -> {
                 val query = args.optString("query", "").trim()
-                val list = if (query.isBlank()) MemoryStore.list(context)
-                else MemoryStore.search(context, query)
+                // 只返回已启用的记忆：用户在记忆页关掉的条目，AI 不该看到。
+                // 之前直接调 MemoryStore.list()/search() 没过滤 enabled，
+                // 导致「关掉」的记忆照样被 AI 读出来，等于开关失效。
+                val list = (if (query.isBlank()) MemoryStore.list(context)
+                else MemoryStore.search(context, query)).filter { it.enabled }
                 if (list.isEmpty()) "暂无相关记忆"
                 else {
                     val sb = StringBuilder("找到 ${list.size} 条记忆：\n")
@@ -957,7 +969,7 @@ object SystemTools {
                 }
             }
             "list" -> {
-                val list = MemoryStore.list(context)
+                val list = MemoryStore.list(context).filter { it.enabled }
                 if (list.isEmpty()) "暂无记忆"
                 else {
                     val sb = StringBuilder("共 ${list.size} 条记忆：\n\n")
@@ -1214,6 +1226,11 @@ object SystemTools {
             }
             context.startActivity(intent)
             "已打开联系人页面：$name${if (phone.isNotBlank()) " / $phone" else ""}，请用户确认保存"
+        } catch (e: SecurityException) {
+            // SecurityException 之前被 Exception 兜底成 "打开失败：Permission Denial..."，
+            // 用户看不出是权限问题。单独 catch 给出可操作的提示。
+            AgentLogger.log("ERR", "打开新建联系人缺少权限：${e.message}")
+            "失败：缺少权限，请到系统设置授予 FurAgent 访问联系人权限"
         } catch (e: Exception) {
             AgentLogger.log(
                 "ERR",

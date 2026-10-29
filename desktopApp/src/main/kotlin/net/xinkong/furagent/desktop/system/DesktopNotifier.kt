@@ -1,7 +1,7 @@
 package net.xinkong.furagent.desktop.system
 
-import java.awt.*
-import java.awt.image.BufferedImage
+import java.awt.SystemTray
+import java.awt.TrayIcon
 
 /**
  * 桌面通知。
@@ -47,6 +47,19 @@ object DesktopNotifier {
                     return
                 }
                 val tray = SystemTray.getSystemTray()
+                // 检测 Compose 的 Tray 是否已经创建了图标。
+                // 两者都创建会导致 Windows 托盘区出现两个 FurAgent 图标。
+                // 若已有，本模块降级为只打日志（用户可通过托盘交互，本模块只发通知调用场景
+                // 会比较少见，日志足以排查；通知仍可通过其他 UI 途径到达用户）。
+                val existing = tray.trayIcons
+                if (existing.isNotEmpty()) {
+                    DesktopLogger.info(
+                        "Notify",
+                        "检测到 ${existing.size} 个已有托盘图标（Compose Tray），DesktopNotifier 降级为只打日志"
+                    )
+                    available = false
+                    return
+                }
                 val image = net.xinkong.furagent.desktop.ui.AppIcon.awtImage()
                 val icon = TrayIcon(image, "FurAgent").apply {
                     isImageAutoSize = true

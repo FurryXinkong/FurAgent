@@ -183,7 +183,7 @@ object HistoryStore {
                 )
             }
             val c = connection()
-            synchronized(lock) {
+            val updated = synchronized(lock) {
                 c.prepareStatement(
                     "INSERT INTO history_entry(ts,path,action,size,added,removed,tool,session_id,backup,patch) VALUES(?,?,?,?,?,?,?,?,?,?)"
                 ).use { st ->
@@ -199,6 +199,14 @@ object HistoryStore {
                     st.setString(10, d.patch)
                     st.executeUpdate()
                 }
+            }
+            // executeUpdate 返回 0 表示写入失败（磁盘满/约束冲突等），之前静默丢失。
+            if (updated <= 0) {
+                net.xinkong.furagent.shared.tools.ToolLogger.log(
+                    "HistoryStore",
+                    "历史记录写入失败（executeUpdate 返回 $updated）：$originalPath"
+                )
+                return null
             }
             BackupHelper.BackupEntry(
                 ts = ts,

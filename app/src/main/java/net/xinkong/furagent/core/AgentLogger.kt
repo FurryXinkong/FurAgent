@@ -1,14 +1,13 @@
 package net.xinkong.furagent.core
 
-import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import androidx.compose.runtime.mutableStateListOf
 import net.xinkong.furagent.data.LogEntry
+import net.xinkong.furagent.shared.util.DateFormats
 import java.io.File
 import java.io.FileOutputStream
-import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.Executors
 import java.util.concurrent.LinkedBlockingQueue
@@ -58,6 +57,8 @@ object AgentLogger {
     private val pendingQueue = ArrayDeque<LogEntry>()
     private val pendingLock = Any()
     private val flushPending = AtomicBoolean(false)
+    // 独立计数，避免在后台线程读 SnapshotStateList 的 size（跨 Snapshot 上下文会抛异常）
+    private val entryCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     @Volatile private var appContext: Context? = null
     @Volatile private var workerStarted = false
@@ -133,7 +134,7 @@ object AgentLogger {
 
         enqueueFile("${fileSdf.format(Date(now))} [$type] $full")
 
-        if (!panelOpen && _logs.size >= IDLE_KEEP_ENTRIES) return
+        if (!panelOpen && entryCount.get() >= IDLE_KEEP_ENTRIES) return
 
         synchronized(pendingLock) {
             pendingQueue.addLast(entry)
@@ -155,6 +156,7 @@ object AgentLogger {
                 pendingQueue.clear()
             }
             _logs.addAll(batch)
+            entryCount.set(_logs.size)  // 主线程内一致，安全
             // 原 `while (_logs.size > MAX) _logs.removeAt(0)` 是 O(n) × excess 次：
             // SnapshotStateList.removeAt(0) 每次搬移全部元素。100 次 × 500 条 = 50000 次操作。
             // 改成一次性重建：O(4n) 一次，远好于 O(n²)。
@@ -169,7 +171,10 @@ object AgentLogger {
 
     fun clear() {
         synchronized(pendingLock) { pendingQueue.clear() }
-        h.post { _logs.clear() }
+        h.post {
+            _logs.clear()
+            entryCount.set(0)
+        }
     }
 
     fun logDir(): File? {

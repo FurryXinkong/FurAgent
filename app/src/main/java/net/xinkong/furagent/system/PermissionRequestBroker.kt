@@ -81,6 +81,10 @@ object PermissionRequestBroker {
         } catch (_: Exception) { false }
         if (granted) {
             deferred?.complete(true)
+            // 清空状态：否则用户切来 App 多次，后续每次 onResume 都会重复 complete
+            // （第二次起返回 false 无害，但状态应该明确清理）。
+            deferred = null
+            waitingPermission = null
         }
     }
 }

@@ -31,7 +31,7 @@ object ImageGenTools {
         if (prompt.isBlank()) return "失败：generate_image 需要 prompt 参数"
 
         val savePathRaw = args.optString("save_path", "").trim()
-        val savePath = resolveSavePath(savePathRaw)
+        val savePath = resolveSavePath(savePathRaw, context)
             ?: return "失败：无法解析保存路径：$savePathRaw"
 
         // 文生图模型（kind == "image"，由「设置 → 文生图模型」选中）
@@ -87,8 +87,11 @@ object ImageGenTools {
      *   - 纯文件名 → /sdcard/FurAgent/images/<文件名>
      *   - 其他 → normalizeAlias 展开
      */
-    private fun resolveSavePath(raw: String): String? {
-        val defaultDir = File(SDCARD_PATH, "FurAgent/images")
+    private fun resolveSavePath(raw: String, context: Context): String? {
+        // 用 outputDir 而非直接 File(SDCARD_PATH, ...)：
+        // 分区存储 / 无存储权限时 mkdirs() 静默失败，后续写入抛 FileNotFoundException，
+        // 报错完全看不出是权限问题。outputDir 会自动回退到 app 私有目录。
+        val defaultDir = outputDir(context, "images")
         val name = raw.trim()
         if (name.isBlank()) {
             defaultDir.mkdirs()

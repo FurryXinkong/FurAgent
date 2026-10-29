@@ -17,7 +17,12 @@ data class Memory(
      * 新建的记忆默认 true；用户可在记忆列表手动关闭某条。
      * 反序列化时默认 true，保证旧数据不丢失。
      */
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    /**
+     * 会话摘要专用：对应会话 id。
+     * 普通记忆为空串；会话摘要填对应 sessionId，用于幂等覆盖。
+     */
+    val sessionId: String = ""
 )
 
 object MemoryStore {
@@ -66,10 +71,11 @@ object MemoryStore {
                 return emptyList()
             }
             
-            // 检查缓存
+            // 检查缓存。先保存一份局部引用，避免并发 clear() 时 cachedMemories 变 null
+            val cached = cachedMemories
             val currentMtime = f.lastModified()
-            if (cachedMemories != null && cachedFileMtime == currentMtime) {
-                return cachedMemories!!
+            if (cached != null && cachedFileMtime == currentMtime) {
+                return cached
             }
 
             val arr = JSONArray(f.readText(Charsets.UTF_8))
@@ -93,7 +99,8 @@ object MemoryStore {
                             id = id.ifBlank { UUID.randomUUID().toString() },
                             content = content,
                             createdAt = o.optLong("createdAt", 0L),
-                            enabled = o.optBoolean("enabled", true)
+                            enabled = o.optBoolean("enabled", true),
+                            sessionId = o.optString("sessionId", "")
                         )
                     )
                 } catch (e: Exception) {
@@ -203,6 +210,38 @@ object MemoryStore {
         val removed = current.removeAll { it.id == id }
         if (removed) save(context, current)
         removed
+    }
+
+    /**
+     * 新增一条会话摘要（幂等：同 sessionId 只保留一条）。
+     * 调用前应先 [removeBySessionId]。
+     */
+    fun addSessionSummary(
+        context: Context,
+        sessionId: String,
+        content: String,
+        detail: String = ""
+    ): Memory = synchronized(writeLock) {
+        val current = list(context).toMutableList()
+        val m = Memory(
+            id = UUID.randomUUID().toString(),
+            content = content,
+            createdAt = System.currentTimeMillis(),
+            enabled = true,
+            sessionId = sessionId
+        )
+        current.add(m)
+        save(context, current)
+        m
+    }
+
+    /** 删除某个会话的摘要（会话删除 / 重新摘要前调用）。 */
+    fun removeBySessionId(context: Context, sessionId: String) = synchronized(writeLock) {
+        if (sessionId.isBlank()) return@synchronized
+        val current = list(context).toMutableList()
+        if (current.removeAll { it.sessionId == sessionId }) {
+            save(context, current)
+        }
     }
 
     fun clear(context: Context) = synchronized(writeLock) {

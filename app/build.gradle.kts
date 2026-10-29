@@ -141,8 +141,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.0")
     implementation("org.jsoup:jsoup:1.23.2")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
-    implementation("dev.ffmpegkit-maintained:ffmpeg-kit-full:8.1.9")
-    // compose resources：shared 的 Res.font.* 消费方依赖
     implementation(compose.components.resources)
 
     testImplementation("junit:junit:4.13.2")

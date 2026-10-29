@@ -123,7 +123,9 @@ object AppTools {
         try {
             when {
                 isWin -> if (extraArgs.isNotBlank())
-                    ProcessBuilder("cmd.exe", "/c", "start", "", path, extraArgs).start()
+                    // cmd.exe /c start 的语义：第一个带引号的参数是窗口标题（空标题传 ""），
+                    // 第二个是路径。含空格的路径必须加引号，否则被 cmd 当作两个参数。
+                    ProcessBuilder("cmd.exe", "/c", "start", "\"\"", "\"$path\"", extraArgs).start()
                 else ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", path).start()
                 isMac -> if (extraArgs.isNotBlank())
                     ProcessBuilder("open", "-a", path, "--args", extraArgs).start()

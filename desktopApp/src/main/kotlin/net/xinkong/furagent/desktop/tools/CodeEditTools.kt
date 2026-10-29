@@ -1,15 +1,15 @@
 package net.xinkong.furagent.desktop.tools
 
-import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.DesktopPaths
 import net.xinkong.furagent.desktop.system.DesktopLogger
+import net.xinkong.furagent.desktop.tools.CodeEditTools.buildFilesDiagnosis
 import net.xinkong.furagent.shared.tools.ToolResult
+import net.xinkong.furagent.shared.util.DateFormats
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 
 /**
@@ -601,6 +601,18 @@ object CodeEditTools {
             // 行尾归一化 文件与锚点都转成 LF 再匹配，避免 CRLF/LF 差异导致误报「找不到」。
             val ending = detectLineEnding(original)
             val originalLf = toLf(original)
+
+            // 混用检查：line_* / insert_* / delete_* 与 old/new 不能在同一文件内混用。
+            // 工具描述说"old/new 先应用，line_* 后应用"，实际实现是"line_* 先应用，old/new 后应用"。
+            // 混用时 old 锚点基于原文件，但会在 line_* 修改后的内容里找 → 容易找不到或找到错位置。
+            // 宁可让 AI 看到明确错误重试，也不要基于错位的锚点静默做错误编辑。
+            if ((lineOps.isNotEmpty() || delOps.isNotEmpty()) && ops.isNotEmpty()) {
+                errors.add(
+                    "$pathStr：同一文件不能混用行号操作（line_* / insert_* / delete_*）和锚点操作（old/new）。" +
+                            "请分两次 code_edit 调用，或统一用一种方式。"
+                )
+                continue
+            }
 
             // 逐个锚点校验唯一性，并在内存里累积替换
             var applied = 0

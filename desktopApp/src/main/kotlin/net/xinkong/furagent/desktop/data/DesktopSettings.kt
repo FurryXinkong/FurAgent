@@ -37,7 +37,14 @@ data class DesktopModelProfile(
     /** 存在惩罚（-2.0 ~ 2.0）。默认 0.0（不干预）。 */
     val presencePenalty: Double = 0.0,
     /** 频率惩罚（-2.0 ~ 2.0）。默认 0.0（不干预）。 */
-    val frequencyPenalty: Double = 0.0
+    val frequencyPenalty: Double = 0.0,
+    /**
+     * API 协议："openai"（默认，Chat Completions 兼容）/ "anthropic"（Messages 兼容）。
+     *
+     * 同一个服务商可能同时提供两种协议（如小米 MiMo），
+     * 请求体、响应体、鉴权头完全不同，必须显式区分。
+     */
+    val protocol: String = "openai"
 )
 
 data class ModelPreset(
@@ -218,6 +225,7 @@ data class DesktopSettings(
                             put("presencePenalty", p.presencePenalty)
                             put("frequencyPenalty", p.frequencyPenalty)
                             put("kind", p.kind)
+                            put("protocol", p.protocol)
                         })
                     }
                 })
@@ -316,7 +324,8 @@ data class DesktopSettings(
                                 temperature = p.optDouble("temperature", 0.1),
                                 presencePenalty = p.optDouble("presencePenalty", 0.0),
                                 frequencyPenalty = p.optDouble("frequencyPenalty", 0.0),
-                                kind = p.optString("kind", "chat").ifBlank { "chat" }
+                                kind = p.optString("kind", "chat").ifBlank { "chat" },
+                                protocol = p.optString("protocol", "openai").ifBlank { "openai" }
                             ))
                         } catch (e: Exception) {
                             DesktopLogger.warn(

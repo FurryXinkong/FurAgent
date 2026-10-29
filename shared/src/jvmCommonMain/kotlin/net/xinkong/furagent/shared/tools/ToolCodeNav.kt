@@ -52,6 +52,78 @@ object ToolCodeNav {
         }
 
     /**
+     * 从文件末尾反向读最后 [tailLines] 行。
+     *
+     * 为什么单独一个方法：
+     *   旧实现是 textLineCount() 扫一遍全文拿总行数，再 readTextLines() 从头
+     *   流式跳到 start 行——大文件等于读两遍。这里用 RandomAccessFile 从末尾
+     *   往前按块读，只读尾部需要的字节，100MB 文件读最后 100 行只需几十 KB。
+     *
+     * @return Pair(总行数, 行列表)；失败返回 null
+     */
+    suspend fun readTailLines(path: String, tailLines: Int): Pair<Int, List<TextLine>>? =
+        withContext(Dispatchers.IO) {
+            try {
+                val f = File(path)
+                if (!f.isFile) return@withContext null
+                if (f.length() == 0L) return@withContext 0 to emptyList()
+
+                java.io.RandomAccessFile(f, "r").use { raf ->
+                    val fileLen = raf.length()
+                    // 从末尾往前扩块，直到攒够 tailLines 个换行（或读到文件头）
+                    var pos = fileLen
+                    var collected = 0
+                    val chunk = 64 * 1024L
+                    var buf = ByteArray(0)
+                    while (pos > 0 && collected < tailLines + 1) {
+                        val readLen = minOf(chunk, pos).toInt()
+                        pos -= readLen
+                        raf.seek(pos)
+                        val part = ByteArray(readLen)
+                        raf.readFully(part)
+                        // 新块拼到旧块前面
+                        val merged = ByteArray(part.size + buf.size)
+                        System.arraycopy(part, 0, merged, 0, part.size)
+                        System.arraycopy(buf, 0, merged, part.size, buf.size)
+                        buf = merged
+                        collected = 0
+                        for (b in buf) if (b == 0x0A.toByte()) collected++
+                    }
+
+                    // 总行数：需要全文扫一遍换行数（但只扫字节，很快）
+                    var totalNewlines = 0L
+                    raf.seek(0)
+                    val scanBuf = ByteArray(64 * 1024)
+                    var lastByte = -1
+                    while (true) {
+                        val n = raf.read(scanBuf)
+                        if (n <= 0) break
+                        for (i in 0 until n) {
+                            if (scanBuf[i] == 0x0A.toByte()) totalNewlines++
+                        }
+                        lastByte = scanBuf[n - 1].toInt() and 0xFF
+                    }
+                    val total = if (lastByte == 0x0A) totalNewlines else totalNewlines + 1
+
+                    // 把尾部字节按行切开，取最后 tailLines 行
+                    val text = String(buf, Charsets.UTF_8)
+                    val allLines = text.split('\n')
+                    // 若文件末尾有换行，split 会多出一个空串，去掉
+                    val trimmed = if (allLines.isNotEmpty() && allLines.last().isEmpty())
+                        allLines.dropLast(1) else allLines
+                    val take = trimmed.takeLast(tailLines)
+                    val startNo = (total - take.size + 1).toInt().coerceAtLeast(1)
+                    val out = take.mapIndexed { idx, s ->
+                        TextLine(startNo + idx, s.trimEnd('\r'))
+                    }
+                    total.toInt() to out
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+    /**
      * 行数。空文件算 0 行；结尾无换行时补上最后一行。失败返回 -1。
      *
      * 原实现逐行 readLine() 走 UTF-8 解码，100MB 文件要几秒。

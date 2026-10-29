@@ -2,7 +2,6 @@
 
 package net.xinkong.furagent.ui.pages
 
-import net.xinkong.furagent.shared.util.DateFormats
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -11,7 +10,6 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,9 +26,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.data.HistoryStore
-import net.xinkong.furagent.tools.ToolRegistry.CurrentTaskSession
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.tools.BackupHelper
-import net.xinkong.furagent.ui.*
+import net.xinkong.furagent.shared.util.DateFormats
+import net.xinkong.furagent.tools.ToolRegistry.CurrentTaskSession
+import net.xinkong.furagent.ui.ApplyBackgroundBlur
+import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.PocoEmptyState
+import net.xinkong.furagent.ui.PocoPageTopBar
 import net.xinkong.furagent.ui.theme.AppRadius
 import java.io.File
 import java.text.SimpleDateFormat
@@ -721,87 +724,3 @@ private fun NavButton(
     }
 }
 
-// ── 对齐算法（与桌面端同源：前缀/后缀裁剪 + 中段 LCS + 行配对） ──
-// 对齐行定义移入 shared/util/LcsDiff.Row
-private typealias AlignRow = net.xinkong.furagent.shared.util.LcsDiff.Row
-
-private fun alignRows(oldText: String, newText: String): List<AlignRow> {
-    val a = oldText.split('\n')
-    val b = newText.split('\n')
-    var pre = 0
-    while (pre < a.size && pre < b.size && a[pre] == b[pre]) pre++
-    var suf = 0
-    while (suf < a.size - pre && suf < b.size - pre && a[a.size - 1 - suf] == b[b.size - 1 - suf]) suf++
-    val midA = a.subList(pre, a.size - suf)
-    val midB = b.subList(pre, b.size - suf)
-    val out = ArrayList<AlignRow>(maxOf(a.size, b.size))
-    var oldNo = 1
-    var newNo = 1
-    for (i in 0 until pre) out.add(AlignRow(oldNo++, a[i], newNo++, b[i], '='))
-    val n = midA.size
-    val m = midB.size
-    if (n.toLong() * m > 4_000_000L) {
-        for (i in 0 until n) out.add(AlignRow(oldNo++, midA[i], null, null, '-'))
-        for (j in 0 until m) out.add(AlignRow(null, null, newNo++, midB[j], '+'))
-    } else if (n == 0) {
-        for (j in 0 until m) out.add(AlignRow(null, null, newNo++, midB[j], '+'))
-    } else if (m == 0) {
-        for (i in 0 until n) out.add(AlignRow(oldNo++, midA[i], null, null, '-'))
-    } else {
-        val dp = Array(n + 1) { IntArray(m + 1) }
-        for (i in n - 1 downTo 0) {
-            for (j in m - 1 downTo 0) {
-                dp[i][j] = if (midA[i] == midB[j]) dp[i + 1][j + 1] + 1
-                else maxOf(dp[i + 1][j], dp[i][j + 1])
-            }
-        }
-        var i = 0
-        var j = 0
-        while (i < n && j < m) {
-            when {
-                midA[i] == midB[j] -> {
-                    out.add(AlignRow(oldNo++, midA[i], newNo++, midB[j], '='))
-                    i++; j++
-                }
-                dp[i + 1][j] >= dp[i][j + 1] -> {
-                    out.add(AlignRow(oldNo++, midA[i], null, null, '-')); i++
-                }
-                else -> {
-                    out.add(AlignRow(null, null, newNo++, midB[j], '+')); j++
-                }
-            }
-        }
-        while (i < n) { out.add(AlignRow(oldNo++, midA[i], null, null, '-')); i++ }
-        while (j < m) { out.add(AlignRow(null, null, newNo++, midB[j], '+')); j++ }
-    }
-    for (k in 0 until suf) {
-        out.add(AlignRow(oldNo++, a[a.size - suf + k], newNo++, b[b.size - suf + k], '='))
-    }
-    // 配对相邻 -/+ 为 '!'
-    val paired = ArrayList<AlignRow>(out.size)
-    var x = 0
-    while (x < out.size) {
-        val r = out[x]
-        if (r.kind == '-') {
-            val dels = ArrayList<AlignRow>()
-            while (x < out.size && out[x].kind == '-') { dels.add(out[x]); x++ }
-            val adds = ArrayList<AlignRow>()
-            while (x < out.size && out[x].kind == '+') { adds.add(out[x]); x++ }
-            if (adds.isEmpty()) { paired.addAll(dels); continue }
-            val k = maxOf(dels.size, adds.size)
-            for (t in 0 until k) {
-                val d = dels.getOrNull(t)
-                val ad = adds.getOrNull(t)
-                when {
-                    d != null && ad != null ->
-                        paired.add(AlignRow(d.oldNo, d.oldText, ad.newNo, ad.newText, '!'))
-                    d != null -> paired.add(d)
-                    else -> if (ad != null) paired.add(ad)
-                }
-            }
-        } else {
-            paired.add(r); x++
-        }
-    }
-    return paired
-}

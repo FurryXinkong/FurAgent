@@ -93,6 +93,20 @@ interface ToolHost {
     suspend fun textLineCount(path: String): Int
 
     /**
+     * 从文件末尾反向读最后 [tailLines] 行，同时返回总行数。
+     *
+     * 默认实现退回「数行数 + 从头读」，子类可覆盖成真正的反向读。
+     * 返回 null 表示读取失败。
+     */
+    suspend fun readTailLines(path: String, tailLines: Int): Pair<Int, List<TextLine>>? {
+        val total = textLineCount(path)
+        if (total <= 0) return null
+        val start = (total - tailLines).coerceAtLeast(1)
+        val lines = readTextLines(path, start, tailLines) ?: return null
+        return total to lines
+    }
+
+    /**
      * 在文件正文里搜关键字。
      *
      * @param root        搜索根目录

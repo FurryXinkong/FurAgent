@@ -59,22 +59,6 @@ object ChatFocusTracker {
  * 送给 TTS 前清理文本。
  */
 
-private val RE_CODE_BLOCK = Regex("```[\\s\\S]*?```")
-private val RE_INLINE_CODE = Regex("(`[^`\n]+`)")
-private val RE_IMAGE = Regex("!\\[[^\\]]*]\\([^)]+\\)")
-private val RE_LINK = Regex("\\[([^\\]]+)]\\([^)]+\\)")
-private val RE_BOLD = Regex("""\*\*([^*]+)\*\*""")
-private val RE_ITALIC = Regex("""(?!\*)\*([^*]+)\*(?!\*)""")
-private val RE_BOLD_UL = Regex("__([^_]+)__")
-private val RE_ITALIC_UL = Regex("_([^_]+)_")
-private val RE_HEADING = Regex("(?m)^\\s*#{1,6}\\s*")
-private val RE_UL_LIST = Regex("(?m)^\\s*[-*+]\\s+")
-private val RE_OL_LIST = Regex("""(?m)^\s*\d+\.\s+""")
-private val RE_URL = Regex("https?://\\S+")
-private val RE_PATH = Regex("(?:[A-Za-z]:[\\\\/]|/)(?:[^\\s/]+/)*[^\\s/]*")
-private val RE_EMOJI = Regex("[\\uD83C-\\uDBFF\\uDC00-\\uDFFF]+")
-private val RE_WHITESPACE = Regex("[ \\t]+")
-private val RE_MULTI_NL = Regex("\\n{2,}")
 
 internal fun cleanForSpeech(text: String): String =
     // 完整 15 正则清洗已移入 shared/util/SpeechCleaner
@@ -492,7 +476,11 @@ private fun ChatMessageList(
             if (chatItems.size > lastItemCount) {
                 lastItemCount = chatItems.size
                 val last = messages.lastOrNull()
-                // 用户上滑后不强制拉到底部，除非是用户刚发的消息
+                // 自动跟随规则：
+                //   1. 用户没上滑 → 永远跟随
+                //   2. 用户上滑了，但来了新的用户消息 → 跟随
+                //   3. 用户上滑了，AI 正在流式输出 → 不跟随（用户在看历史，别拽回去）
+                // 旧逻辑只看 last?.role == "user"，导致 AI 流式输出时完全不跟随。
                 val shouldFollow = !userScrolledUp || last?.role == "user"
                 if (scrollToMessageId == null && shouldFollow) {
                     programmaticScroll = true

@@ -3,11 +3,7 @@ package net.xinkong.furagent.shared.util
 import android.annotation.SuppressLint
 import android.os.Handler
 import android.os.Looper
-import android.webkit.WebResourceRequest
-import android.webkit.WebResourceResponse
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
+import android.webkit.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.shared.tools.ToolLogger
@@ -33,7 +29,9 @@ actual suspend fun renderPageHtml(url: String, timeoutMs: Long): String? = withC
 
     try {
         renderWithWebView(context, url, timeoutMs)
-    } catch (e: Throwable) {
+    } catch (e: Exception) {
+        // 用 Exception 而非 Throwable：避免吞 OutOfMemoryError / StackOverflowError，
+        // 那会让 JVM / ART 处于不确定状态。
         ToolLogger.log("FETCH", "WebView 渲染异常：${e.message}")
         null
     }

@@ -1,5 +1,4 @@
 package net.xinkong.furagent.ui.pages
-import net.xinkong.furagent.ui.theme.AppRadius
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -11,7 +10,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -19,8 +17,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import net.xinkong.furagent.ui.SuccessColor
-import net.xinkong.furagent.shared.util.formatFileSize
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -29,7 +25,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.bridge.PcBridgeClient
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.util.formatFileSize
 import net.xinkong.furagent.ui.PocoCard
+import net.xinkong.furagent.ui.SuccessColor
+import net.xinkong.furagent.ui.theme.AppRadius
 import java.io.File
 
 /**
@@ -284,8 +284,10 @@ fun PcFileTransferTab(
                     }
 
                     if (sending) {
+                        // 上传进度回调未实现（PcBridgeClient.uploadFileToPc 内部只调一次
+                        // onProgress(0, 0) 占位），用不确定模式避免进度条永远停在 0%
+                        // 看起来像卡住。真正的进度回调需要自定义 RequestBody 包装 sink。
                         LinearProgressIndicator(
-                            progress = { sendProgress },
                             modifier = Modifier.fillMaxWidth()
                         )
                     }

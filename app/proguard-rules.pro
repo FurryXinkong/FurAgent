@@ -73,11 +73,6 @@
 -keep public class * extends android.content.ContentProvider
 
 # ============================================================
-# FFmpeg（JNI 回调）
-# ============================================================
--keep class com.arthenica.ffmpegkit.** { *; }
--keep class com.arthenica.ffmpegkit.fl.** { *; }
--dontwarn com.arthenica.ffmpegkit.**
 
 # ============================================================
 # Compose

@@ -1,6 +1,8 @@
 package net.xinkong.furagent.desktop.tools
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.DesktopPaths
 import net.xinkong.furagent.desktop.system.DesktopNotifier
@@ -171,7 +173,7 @@ object SystemIntegrationTools {
         else String.format(Locale.US, "%d:%02d", m, s)
     }
 
-    private fun sendMediaKeyWindows(action: String): Boolean {
+    private suspend fun sendMediaKeyWindows(action: String): Boolean {
         val vk = when (action) {
             "play_pause", "toggle", "play" -> 0xB3
             "next" -> 0xB0
@@ -253,7 +255,7 @@ object SystemIntegrationTools {
         }
     }
 
-    private fun sendVolumeKeys(action: String, count: Int): Boolean {
+    private suspend fun sendVolumeKeys(action: String, count: Int): Boolean {
         val n = count.coerceIn(1, 50)
         return when {
             isWin -> {
@@ -398,7 +400,7 @@ object SystemIntegrationTools {
         } catch (e: Exception) { ToolResult.fail("电源操作失败：${e.message}") }
     }
 
-    private fun doNotify(args: JSONObject): ToolResult {
+    private suspend fun doNotify(args: JSONObject): ToolResult {
         val title = args.optString("title", "FurAgent").trim().ifBlank { "FurAgent" }
         val content = args.optString("content", "").trim()
         if (content.isBlank()) return ToolResult.fail("content 不能为空")
@@ -418,7 +420,7 @@ object SystemIntegrationTools {
         }
     }
 
-    private fun windowControlWindows(action: String, match: String): ToolResult {
+    private suspend fun windowControlWindows(action: String, match: String): ToolResult {
         if (action == "list") {
             val out = runPowerShell(
                 $$"Get-Process | Where-Object { $_.MainWindowTitle -ne '' } | " +
@@ -574,7 +576,7 @@ object SystemIntegrationTools {
         java.net.InetAddress.getLocalHost().hostName
     } catch (_: Exception) { "unknown" }
 
-    private fun getCpuInfo(): String {
+    private suspend fun getCpuInfo(): String {
         val sb = StringBuilder()
         val cores = Runtime.getRuntime().availableProcessors()
         sb.append("核心数：").append(cores).append("\n")
@@ -639,7 +641,7 @@ object SystemIntegrationTools {
         return sb.toString()
     }
 
-    private fun getGpuInfo(): String {
+    private suspend fun getGpuInfo(): String {
         val sb = StringBuilder()
         try {
             when {
@@ -670,7 +672,7 @@ object SystemIntegrationTools {
         return sb.toString()
     }
 
-    private fun getMotherboardInfo(): String {
+    private suspend fun getMotherboardInfo(): String {
         val sb = StringBuilder()
         try {
             when {
@@ -729,32 +731,43 @@ object SystemIntegrationTools {
      * 旧实现用 File.createTempFile("furagent_", ".ps1")，落在系统 %TEMP%，
      * TempCleaner 根本不扫那个目录，导致 PS 脚本永远残留。
      */
-    private val psLock = Any()
+    private val psLock = Mutex()
     private val psScriptFile: File by lazy {
         File(DesktopPaths.tempDir(), "furagent_sys.ps1")
     }
 
-    private fun runPowerShell(script: String, timeoutSec: Int): String? {
+    /**
+     * 执行 PowerShell 脚本。
+     *
+     * 用 Mutex 而非 synchronized：synchronized 会阻塞线程，在协程里
+     * 卡住调度器（Dispatchers.IO 线程池被占满时整个 Agent 循环停摆）。
+     * Mutex 挂起协程而不占线程。
+     *
+     * 串行是必须的：所有调用共用一个 psScriptFile，并发写会互相覆盖。
+     */
+    private suspend fun runPowerShell(script: String, timeoutSec: Int): String? {
         if (!isWin) return null
-        synchronized(psLock) {
-            return try {
-                psScriptFile.parentFile?.mkdirs()
-                psScriptFile.outputStream().use { out ->
-                    out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
-                    out.write(("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n$script").toByteArray(Charsets.UTF_8))
-                }
+        return psLock.withLock {
+            withContext(Dispatchers.IO) {
                 try {
-                    val p = ProcessBuilder(
-                        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                        "-File", psScriptFile.absolutePath
-                    ).redirectErrorStream(true).start()
-                    val finished = p.waitFor(timeoutSec.toLong(), TimeUnit.SECONDS)
-                    if (!finished) { p.destroyForcibly(); return null }
-                    p.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                } finally {
-                    try { psScriptFile.delete() } catch (_: Exception) { }
-                }
-            } catch (_: Exception) { null }
+                    psScriptFile.parentFile?.mkdirs()
+                    psScriptFile.outputStream().use { out ->
+                        out.write(byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte()))
+                        out.write(("[Console]::OutputEncoding = [System.Text.Encoding]::UTF8\r\n$script").toByteArray(Charsets.UTF_8))
+                    }
+                    try {
+                        val p = ProcessBuilder(
+                            "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                            "-File", psScriptFile.absolutePath
+                        ).redirectErrorStream(true).start()
+                        val finished = p.waitFor(timeoutSec.toLong(), TimeUnit.SECONDS)
+                        if (!finished) { p.destroyForcibly(); return@withContext null }
+                        p.inputStream.bufferedReader(Charsets.UTF_8).readText()
+                    } finally {
+                        try { psScriptFile.delete() } catch (_: Exception) { }
+                    }
+                } catch (_: Exception) { null }
+            }
         }
     }
 

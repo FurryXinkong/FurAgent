@@ -18,6 +18,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.DesktopVersion
 import net.xinkong.furagent.desktop.system.TempCleaner
@@ -27,6 +28,8 @@ import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.update.UpdateChecker
+import net.xinkong.furagent.shared.util.ApiUrlResolver
+import net.xinkong.furagent.shared.util.ModelDiscovery
 import java.io.File
 
 val HIDDEN_GROUPS: List<Pair<String, String>> = listOf(
@@ -66,6 +69,11 @@ fun SettingsPage(
     var showAddImageProfile by remember { mutableStateOf(false) }
     var pendingDeleteProfileId by remember { mutableStateOf<String?>(null) }
     var infoMsg by remember { mutableStateOf<String?>(null) }
+
+    // 模型自动发现：保存裸 base 后探测 /models，弹窗让用户确认批量添加
+    var discoveryResult by remember { mutableStateOf<ModelDiscovery.Result?>(null) }
+    var discoverySource by remember { mutableStateOf<DesktopModelProfile?>(null) }
+    val discoveryScope = rememberCoroutineScope()
 
     val hidden = settings.hiddenSettings
     fun isVisible(key: String) = key !in hidden
@@ -189,19 +197,19 @@ fun SettingsPage(
                         expanded = isExpanded("model"),
                         onToggle = { toggleGroup("model") }
                     ) {
-                        HintText("点击卡片切换当前对话模型。带「生图」标签的模型不参与对话，仅用于 AI 生图。")
+                        HintText("点击卡片切换当前模型。对话模型和文生图模型分两组，生图模型只能用于 AI 生图。")
 
+                        // 对话模型组
+                        Text("对话模型", fontSize = 12.sp, color = TextMuted())
+                        Spacer(Modifier.height(6.dp))
                         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            settings.profiles.forEach { profile ->
+                            settings.chatProfiles().forEach { profile ->
                                 key(profile.id) {
                                     ModelProfileCard(
                                         profile = profile,
-                                        isCurrent = profile.kind != "image" &&
-                                                profile.id == settings.currentProfileId,
+                                        isCurrent = profile.id == settings.currentProfileId,
                                         onSetCurrent = {
-                                            if (profile.kind != "image") {
-                                                onSettingsChange(settings.copy(currentProfileId = profile.id))
-                                            }
+                                            onSettingsChange(settings.copy(currentProfileId = profile.id))
                                         },
                                         onEdit = { editingProfile = profile },
                                         onDelete = { pendingDeleteProfileId = profile.id }
@@ -210,19 +218,49 @@ fun SettingsPage(
                             }
                         }
 
-                        Spacer(Modifier.height(4.dp))
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            SecondaryButton(
-                                text = "添加对话模型",
-                                icon = Icons.Default.Add,
-                                modifier = Modifier.weight(1f)
-                            ) { showAddProfile = true }
-                            SecondaryButton(
-                                text = "添加文生图模型",
-                                icon = Icons.Default.Add,
-                                modifier = Modifier.weight(1f)
-                            ) { showAddImageProfile = true }
+                        Spacer(Modifier.height(8.dp))
+                        SecondaryButton(
+                            text = "添加对话模型",
+                            icon = Icons.Default.Add,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { showAddProfile = true }
+
+                        Spacer(Modifier.height(14.dp))
+
+                        // 文生图模型组：卡片上直接选中，不再另设下拉框
+                        Text("文生图模型", fontSize = 12.sp, color = TextMuted())
+                        Spacer(Modifier.height(6.dp))
+                        val imageProfiles = settings.imageProfiles()
+                        if (imageProfiles.isEmpty()) {
+                            HintText("还没有文生图模型。添加后 AI 才能生图。")
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                imageProfiles.forEach { profile ->
+                                    key(profile.id) {
+                                        ModelProfileCard(
+                                            profile = profile,
+                                            isCurrent = false,
+                                            isImageSelected = profile.id == settings.imageProfileId,
+                                            onSetCurrent = { },
+                                            onSetImage = {
+                                                // 再点一次已选中的 → 取消选择（不启用生图）
+                                                val newId = if (settings.imageProfileId == profile.id) "" else profile.id
+                                                onSettingsChange(settings.copy(imageProfileId = newId))
+                                            },
+                                            onEdit = { editingProfile = profile },
+                                            onDelete = { pendingDeleteProfileId = profile.id }
+                                        )
+                                    }
+                                }
+                            }
                         }
+
+                        Spacer(Modifier.height(8.dp))
+                        SecondaryButton(
+                            text = "添加文生图模型",
+                            icon = Icons.Default.Add,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { showAddImageProfile = true }
 
                         Spacer(Modifier.height(8.dp))
                         GlassDivider(color = BorderSubtle())
@@ -425,56 +463,6 @@ fun SettingsPage(
                                                 onClick = {
                                                     summaryMenuOpen = false
                                                     onSettingsChange(settings.copy(summaryProfileId = p.id))
-                                                }
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // 文生图模型选择（同会话摘要模型样式）
-                            Spacer(Modifier.height(8.dp))
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp)
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("文生图模型", fontSize = 13.sp, color = TextPrimary())
-                                    Text(
-                                        "选中后，AI 生图走该模型（只能生图，不参与对话）。不选则不启用生图。",
-                                        fontSize = 11.sp,
-                                        color = TextMuted()
-                                    )
-                                }
-                                var imageMenuOpen by remember { mutableStateOf(false) }
-                                val imageName = settings.profiles
-                                    .firstOrNull { it.id == settings.imageProfileId && it.kind == "image" }?.name
-                                    ?: "不启用"
-                                Box {
-                                    SecondaryButton(
-                                        text = imageName,
-                                        icon = Icons.Default.ExpandMore,
-                                        modifier = Modifier.width(160.dp)
-                                    ) { imageMenuOpen = true }
-                                    DropdownMenu(
-                                        expanded = imageMenuOpen,
-                                        onDismissRequest = { imageMenuOpen = false },
-                                        containerColor = CardColor()
-                                    ) {
-                                        DropdownMenuItem(
-                                            text = { Text("不启用", fontSize = 12.sp, color = TextPrimary()) },
-                                            onClick = {
-                                                imageMenuOpen = false
-                                                onSettingsChange(settings.copy(imageProfileId = ""))
-                                            }
-                                        )
-                                        settings.imageProfiles().forEach { p ->
-                                            DropdownMenuItem(
-                                                text = { Text(p.name, fontSize = 12.sp, color = TextPrimary()) },
-                                                onClick = {
-                                                    imageMenuOpen = false
-                                                    onSettingsChange(settings.copy(imageProfileId = p.id))
                                                 }
                                             )
                                         }
@@ -1072,8 +1060,33 @@ fun SettingsPage(
                     )
                 )
                 showAddProfile = false
-            }
-        )
+                // 只填了裸 base（如 https://api.xiaomimimo.com/v1）时，
+                // 自动探测模型列表，弹窗让用户批量添加
+                if (ApiUrlResolver.isBareBase(newProfile.baseUrl)) {
+                    discoveryScope.launch {
+                        val r = ModelDiscovery.discover(
+                            baseUrl = newProfile.baseUrl,
+                            protocol = newProfile.protocol,
+                            apiKey = newProfile.apiKey
+                        ) { url, headers ->
+                            val req = okhttp3.Request.Builder().url(url).get().apply {
+                                headers.forEach { (k, v) -> addHeader(k, v) }
+                            }.build()
+                            val client = okhttp3.OkHttpClient()
+                            client.newCall(req).execute().use { resp ->
+                                resp.code to resp.body.string()
+                            }
+                        }
+                        if (r.ok) {
+                            discoveryResult = r
+                            discoverySource = newProfile
+                        } else {
+                            // 探测失败也要告诉用户，否则看起来像「什么都没发生」
+                            infoMsg = "自动探测失败（${r.error}）。请手动填写模型名称。"
+                        }
+                    }
+                }
+            })
     }
 
     if (showAddImageProfile) {
@@ -1092,6 +1105,53 @@ fun SettingsPage(
                     )
                 )
                 showAddImageProfile = false
+            }
+        )
+    }
+
+    // 模型自动发现结果弹窗
+    discoveryResult?.let { result ->
+        val src = discoverySource
+        // 过滤掉语音/嵌入等非对话模型
+        val chatModels = result.modelIds.filter { !ModelDiscovery.isNonChatModel(it) }
+        ConfirmDialog(
+            title = "识别到 ${chatModels.size} 个模型",
+            message = buildString {
+                append("探测地址：${result.probeUrl}\n\n")
+                append("是否把这些模型全部添加到模型列表？\n\n")
+                chatModels.take(30).forEach { append("· $it\n") }
+                if (chatModels.size > 30) append("...（还有 ${chatModels.size - 30} 个）")
+            },
+            confirmText = "全部添加",
+            onConfirm = {
+                if (src != null && chatModels.isNotEmpty()) {
+                    val provider = ModelDiscovery.hostOf(src.baseUrl)
+                    val chatEndpoint = ApiUrlResolver.toChatEndpoint(src.baseUrl, src.protocol)
+                    val newProfiles = chatModels.map { mid ->
+                        DesktopModelProfile(
+                            id = "custom_${System.currentTimeMillis()}_${mid.hashCode()}",
+                            name = if (provider.isBlank()) mid else "$provider · $mid",
+                            baseUrl = chatEndpoint,
+                            model = mid,
+                            apiKey = src.apiKey,
+                            protocol = src.protocol
+                        )
+                    }
+                    // 去掉刚才手动加的那个空模型
+                    val cleaned = settings.profiles.filter { it.id != src.id }
+                    onSettingsChange(
+                        settings.copy(
+                            profiles = cleaned + newProfiles,
+                            currentProfileId = newProfiles.first().id
+                        )
+                    )
+                }
+                discoveryResult = null
+                discoverySource = null
+            },
+            onDismiss = {
+                discoveryResult = null
+                discoverySource = null
             }
         )
     }

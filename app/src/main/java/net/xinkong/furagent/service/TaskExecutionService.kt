@@ -1,6 +1,5 @@
 package net.xinkong.furagent.service
 
-import net.xinkong.furagent.shared.util.DateFormats
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -10,21 +9,14 @@ import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.*
 import net.xinkong.furagent.core.AgentLogger
-import net.xinkong.furagent.core.AgentSession
 import net.xinkong.furagent.core.runAgentTurn
-import net.xinkong.furagent.data.ChatMessage
-import net.xinkong.furagent.data.ScheduleStore
-import net.xinkong.furagent.data.ScheduledTask
-import net.xinkong.furagent.data.Session
-import net.xinkong.furagent.data.SessionStore
-import net.xinkong.furagent.data.SettingsStore
-import net.xinkong.furagent.data.currentProfile
+import net.xinkong.furagent.data.*
+import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.system.NotificationHelper
 import net.xinkong.furagent.system.ShizukuHelper
 import net.xinkong.furagent.system.SpeechHelper
 import net.xinkong.furagent.tools.ToolRegistry
 import org.json.JSONObject
-import java.util.*
 
 /**
  * 定时任务执行服务。
@@ -386,8 +378,11 @@ class TaskExecutionService : Service() {
         // 把本次 prompt 作为 user 消息追加
         val history = baseHistory + ChatMessage(role = "user", content = prompt)
 
-        // 与 AgentRunner 一致：开始任务时拿代际，工具执行前会比对
-        val cancelGen = AgentSession.beginTask()
+        // 定时任务无人值守，不响应主会话的"停止"按钮，取消代际传 0 表示不检查。
+        // 为什么不能传 AgentSession.beginTask() 的返回值：
+        //   generation 是全局单例，定时任务调 beginTask() 会把主 Agent 的代际顶掉，
+        //   主 Agent 下一次工具执行 cancelled() 返回 true，工具被静默跳过。
+        val cancelGen = 0L
 
         var finalHistory: List<ChatMessage> = history
         var errorText = ""

@@ -26,6 +26,15 @@ object SkillStore {
     @Volatile
     private var runtime: SkillRuntime? = null
 
+    // list() 缓存：脚本目录内所有 .py 的 (name, mtime, size) 拼成缓存键。
+    // 桌面端每次 list() 对每个 .py 起一个 Python 进程做 AST 解析（20 个脚本 = 20 次进程启动），
+    // dynamicTools() 每轮 Agent 循环都调 list()，不缓存的话每轮请求都有 20 次进程启动开销。
+    // 缓存失效条件：任何一个 .py 的 name/mtime/size 变化，或新增/删除脚本。
+    @Volatile
+    private var cachedList: List<SkillMeta>? = null
+    @Volatile
+    private var cachedListKey: String = ""
+
     /** 注册脚本运行时（两端 App 启动时各调一次）。 */
     fun install(rt: SkillRuntime) {
         runtime = rt
@@ -62,13 +71,23 @@ object SkillStore {
             val root = scriptsDir()
             val files = root.listFiles { f -> f.isFile && f.name.endsWith(EXT, ignoreCase = true) }
                 ?: return emptyList()
+            // 缓存键：所有 .py 的 (name, mtime, size) 拼接。任何一个变化（编辑/新增/删除）
+            // 都会让 key 不同，自动失效。saveConfig 改的是 .config.json 不动 .py，不影响缓存。
+            val cacheKey = files.joinToString("|") { "${it.name}:${it.lastModified()}:${it.length()}" }
+            val cached = cachedList
+            if (cached != null && cachedListKey == cacheKey) return cached
             val out = mutableListOf<SkillMeta>()
             for (f in files) {
                 val meta = loadFrom(f)
                 if (meta != null) out.add(meta)
             }
-            out.sortedBy { it.name }
-        } catch (e: Throwable) {
+            val result = out.sortedBy { it.name }
+            cachedList = result
+            cachedListKey = cacheKey
+            result
+        } catch (e: Exception) {
+            // 用 Exception 而非 Throwable：Throwable 会吞 OutOfMemoryError /
+            // StackOverflowError，让 JVM 处于不确定状态。
             ToolLogger.log("Skill", "list 失败：${e.javaClass.simpleName}: ${e.message}")
             emptyList()
         }
@@ -89,7 +108,7 @@ object SkillStore {
                 out.add(BrokenSkill(f.name, reason, f))
             }
             out.sortedBy { it.fileName }
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             ToolLogger.log("Skill", "listBroken 失败：${e.javaClass.simpleName}: ${e.message}")
             emptyList()
         }

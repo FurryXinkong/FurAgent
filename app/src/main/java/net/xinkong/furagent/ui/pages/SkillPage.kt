@@ -1,14 +1,12 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
-import net.xinkong.furagent.ui.theme.AppRadius
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,12 +19,14 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.skill.BrokenSkill
 import net.xinkong.furagent.shared.skill.SkillConfig
 import net.xinkong.furagent.shared.skill.SkillMeta
 import net.xinkong.furagent.shared.skill.SkillStore
 import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.*
+import net.xinkong.furagent.ui.theme.AppRadius
 
 /**
  * 自定义脚本 —— 整屏页面（安卓端）。
@@ -43,6 +43,8 @@ import net.xinkong.furagent.ui.*
 @Composable
 fun SkillPage(onBack: () -> Unit) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    // 用 Composable 作用域的 scope，避免每次执行脚本新建 MainScope() 泄漏
+    val scope = rememberCoroutineScope()
     var refreshKey by remember { mutableIntStateOf(0) }
     var loading by remember { mutableStateOf(true) }
     var skills by remember { mutableStateOf<List<SkillMeta>>(emptyList()) }
@@ -251,7 +253,7 @@ fun SkillPage(onBack: () -> Unit) {
                 runningName = meta.name
                 runResult = null
                 // 后台执行
-                kotlinx.coroutines.MainScope().launch {
+                scope.launch {
                     val args = buildArgs(meta, values)
                     val cfg = SkillStore.loadConfig(meta.name)
                     val timeout = SkillStore.effectiveTimeout(meta, cfg)

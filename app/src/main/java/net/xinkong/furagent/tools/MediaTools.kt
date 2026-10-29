@@ -30,7 +30,7 @@ object MediaTools {
         name: String, args: JSONObject, context: Context, settings: AppSettings
     ): String = when (name) {
         "ffmpeg" -> doFfmpeg(args, settings)
-        "screenshot" -> doScreenshot()
+        "screenshot" -> doScreenshot(context)
         "view_image" -> doViewImage(args)
         "media_session" -> doMediaSession(args, context)
         else -> "未实现的媒体工具：$name"
@@ -607,12 +607,12 @@ object MediaTools {
         return null
     }
 
-    private suspend fun doScreenshot(): String {
+    private suspend fun doScreenshot(context: Context): String {
         if (!ShizukuHelper.isAvailable()) return "失败：Shizuku 服务未运行"
         if (!ShizukuHelper.hasPermission()) return "失败：未获得 Shizuku 权限"
         return withContext(Dispatchers.IO) {
             try {
-                val path = VisionHelper.newScreenshotPath()
+                val path = VisionHelper.newScreenshotPath(context)
                 val result = ShizukuHelper.executeCommand("screencap -p \"$path\"", timeoutSeconds = 15)
                 val ok = File(path).exists() && File(path).length() > 0
                 if (!ok) return@withContext "截图失败：${result.take(200)}"

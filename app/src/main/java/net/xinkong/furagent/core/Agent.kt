@@ -1,10 +1,9 @@
 package net.xinkong.furagent.core
 
-import net.xinkong.furagent.shared.util.DateFormats
-import net.xinkong.furagent.shared.ThinkingLevel
 import android.content.Context
 import kotlinx.coroutines.*
 import net.xinkong.furagent.data.*
+import net.xinkong.furagent.shared.ThinkingLevel
 import net.xinkong.furagent.shared.util.*
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.tools.VisionHelper
@@ -15,8 +14,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
-import java.text.SimpleDateFormat
-import java.util.*
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import kotlin.time.Duration.Companion.milliseconds
@@ -486,7 +483,15 @@ private fun buildHistoryMessages(
 
                 messages.put(JSONObject().apply {
                     put("role", "assistant")
-                    put("content", "")
+                    // 正文回填：AI 上一轮常常先说一句话再调工具，
+                    // 那句话被存成了独立的 type="text" 消息。
+                    // 旧逻辑这里硬编码空串，导致回放时 AI 看不到自己说过什么，
+                    // 而且会产出「连续两条 assistant」，Anthropic 协议直接 400。
+                    // 这里把紧邻前面的 text 消息正文取过来，合并成一条 assistant。
+                    val prevText = recent.getOrNull(i - 1)
+                        ?.takeIf { it.type == "text" && it.role == "assistant" }
+                        ?.content ?: ""
+                    put("content", prevText)
                     put("tool_calls", JSONArray().apply {
                         toolCallFunctions.forEach { put(it) }
                     })
@@ -673,23 +678,39 @@ suspend fun runAgentLoop(
         // 每轮重新构建 tools（loadedToolNames 会变化）
         val availableTools = ToolRegistry.getToolsWithLoaded(settings, loadedToolNames)
 
-        val body = JSONObject().apply {
-            put("model", profile.model)
-            put("messages", messages)
-            put("tools", availableTools)
-            // 温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
-            put("temperature", profile.temperature)
-            // 惩罚参数：只在非默认值时发送。
-            // 很多中转站/本地模型不认这两个字段，无脑发送可能直接 400。
-            if (profile.presencePenalty != 0.0) put("presence_penalty", profile.presencePenalty)
-            if (profile.frequencyPenalty != 0.0) put("frequency_penalty", profile.frequencyPenalty)
-            put("stream", true)
+        val isAnthropic = ApiProtocol.normalize(profile.protocol) == ApiProtocol.ANTHROPIC
+
+        val body = if (isAnthropic) {
+            // Anthropic Messages 协议：消息结构、工具定义、system 位置都不同，
+            // 由 AnthropicCompat 统一转换。思考强度/惩罚参数 Anthropic 不支持，忽略。
+            AnthropicCompat.buildRequestBody(
+                model = profile.model,
+                openAiMessages = messages,
+                openAiTools = availableTools,
+                temperature = profile.temperature,
+                stream = true
+            )
+        } else {
+            JSONObject().apply {
+                put("model", profile.model)
+                put("messages", messages)
+                put("tools", availableTools)
+                // 温度从 profile 读，默认 0.1（Agent 场景要稳定调工具）
+                put("temperature", profile.temperature)
+                // 惩罚参数：只在非默认值时发送。
+                // 很多中转站/本地模型不认这两个字段，无脑发送可能直接 400。
+                if (profile.presencePenalty != 0.0) put("presence_penalty", profile.presencePenalty)
+                if (profile.frequencyPenalty != 0.0) put("frequency_penalty", profile.frequencyPenalty)
+                put("stream", true)
+            }
         }
-        if (settings.thinkingLevel != ThinkingLevel.OFF) {
-            // 主动开启思考（全局设置），优先级高于全局关闭开关
-            applyEnableThinking(body, profile.baseUrl, settings.thinkingLevel)
-        } else if (profile.supportsDisableThinking) {
-            applyDisableThinking(body, profile.baseUrl)
+        if (!isAnthropic) {
+            if (settings.thinkingLevel != ThinkingLevel.OFF) {
+                // 主动开启思考（全局设置），优先级高于全局关闭开关
+                applyEnableThinking(body, profile.baseUrl, settings.thinkingLevel)
+            } else if (profile.supportsDisableThinking) {
+                applyDisableThinking(body, profile.baseUrl)
+            }
         }
 
         val response: okhttp3.Response
@@ -707,11 +728,18 @@ suspend fun runAgentLoop(
                     onEvent(AgentEvent("thinking", hint))
                 },
                 buildRequest = {
-                    Request.Builder()
+                    val builder = Request.Builder()
                         .url(profile.baseUrl)
-                        .addHeader("Authorization", "Bearer ${profile.apiKey}")
                         .addHeader("Content-Type", "application/json")
                         .addHeader("Accept", "text/event-stream")
+                    if (isAnthropic) {
+                        // Anthropic 用 x-api-key，不是 Bearer
+                        builder.addHeader("x-api-key", profile.apiKey)
+                        builder.addHeader("anthropic-version", AnthropicCompat.API_VERSION)
+                    } else {
+                        builder.addHeader("Authorization", "Bearer ${profile.apiKey}")
+                    }
+                    builder
                         .post(body.toString().toRequestBody("application/json".toMediaType()))
                         .build()
                 }
@@ -743,23 +771,35 @@ suspend fun runAgentLoop(
         try {
             // okhttp 5.x：body 是 non-null，去掉多余的 ?.
             response.body.source().use { source ->
-                toolCalls = parseSseStream(
-                    readLine = { source.readUtf8Line() },
-                    onContent = { content ->
-                        contentBuilder.append(content)
-                        onStreamChunk(content)
-                    },
-                    onReasoning = { r ->
-                        reasoningBuilder.append(r)
-                        onEvent(AgentEvent("reasoning", r))
-                    },
-                    onParseError = { cls, data ->
-                        AgentLogger.log(
-                            "ERR",
-                            "SSE 单行 JSON 解析失败：$cls，行：${data.take(150)}"
-                        )
-                    }
-                )
+                val onContentCb: (String) -> Unit = { content ->
+                    contentBuilder.append(content)
+                    onStreamChunk(content)
+                }
+                val onReasoningCb: (String) -> Unit = { r ->
+                    reasoningBuilder.append(r)
+                    onEvent(AgentEvent("reasoning", r))
+                }
+                val onParseErrorCb: (String, String) -> Unit = { cls, data ->
+                    AgentLogger.log(
+                        "ERR",
+                        "SSE 单行 JSON 解析失败：$cls，行：${data.take(150)}"
+                    )
+                }
+                toolCalls = if (isAnthropic) {
+                    AnthropicCompat.parseSseStream(
+                        readLine = { source.readUtf8Line() },
+                        onContent = onContentCb,
+                        onReasoning = onReasoningCb,
+                        onParseError = onParseErrorCb
+                    )
+                } else {
+                    parseSseStream(
+                        readLine = { source.readUtf8Line() },
+                        onContent = onContentCb,
+                        onReasoning = onReasoningCb,
+                        onParseError = onParseErrorCb
+                    )
+                }
             }
         } catch (e: CancellationException) {
             throw e

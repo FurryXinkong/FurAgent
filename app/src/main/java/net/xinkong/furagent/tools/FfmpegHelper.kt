@@ -1,45 +1,54 @@
 package net.xinkong.furagent.tools
 
-import com.arthenica.ffmpegkit.FFmpegKit
-import com.arthenica.ffmpegkit.FFmpegSession
-import com.arthenica.ffmpegkit.FFprobeKit
-import com.arthenica.ffmpegkit.ReturnCode
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import net.xinkong.furagent.core.AgentLogger
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.time.Duration.Companion.milliseconds
 
 /**
- * FFmpeg 执行引擎（保守版）。
+ * FFmpeg 执行引擎（外部二进制版）。
+ *
+ * 内置 ffmpeg-kit 已移除（APK 不再打包 native 库，体积和维护成本都不划算）。
+ * 现在统一调用设备上已有的 ffmpeg / ffprobe 可执行文件：
+ *   - 优先用 [ffmpegPath] / [ffprobePath] 指定的路径（用户可在设置里配）
+ *   - 否则在常见目录里找（/system/bin、/data/local/tmp、Termux 的 usr/bin 等）
  *
  * 设计原则：
- *  - 不使用 async + Statistics 回调，避免 fork 之间 API 差异导致崩溃
- *  - 捕获 Throwable，把 UnsatisfiedLinkError / NoClassDefFoundError 都变成错误字符串
- *  - 所有 native 调用前先检查 isAvailable()，失败时立即返回而不是崩溃
+ *  - 所有外部进程调用都捕获 Throwable，失败变成错误字符串而不是崩溃
  *  - 同步阻塞调用放在 Dispatchers.IO 上，不卡主线程
- *
- * 用 kotlinx.coroutines.sync.Semaphore.withPermit 挂起等待，不阻塞 IO 线程。
- *
- * 原实现用同步 `FFmpegKit.executeWithArguments`，导致
- * `timeoutSeconds` 参数从头到尾没被用过——用户设 60s 也得等 FFmpeg 自己跑完。
- * 现在改成 `executeWithArgumentsAsync` + `CompletableDeferred` + `withTimeoutOrNull`，
- * 超时后 `FFmpegKit.cancel(sessionId)` 强制终止。
+ *  - 用 Semaphore 限制并发，避免同时跑多个重编码把手机烤了
+ *  - 超时用 Process.destroyForcibly() 强制终止
  */
 object FfmpegHelper {
 
     private val semaphore = Semaphore(2)
     private val sessionCounter = AtomicLong(0)
 
-    // miss 有 TTL，避免首次探测失败后永久禁用
-    @Volatile private var availabilityChecked: Boolean? = null
+    /** 用户配置的 ffmpeg 路径（空串 = 自动探测）。由设置页写入。 */
+    @Volatile var ffmpegPath: String = ""
+
+    /** 用户配置的 ffprobe 路径（空串 = 自动探测）。 */
+    @Volatile var ffprobePath: String = ""
+
+    /** 自动探测的候选目录。 */
+    private val SEARCH_DIRS = listOf(
+        "/system/bin",
+        "/system/xbin",
+        "/vendor/bin",
+        "/data/local/tmp",
+        "/data/data/com.termux/files/usr/bin",
+        "/sdcard/FurAgent/bin"
+    )
+
+    // 探测结果缓存，miss 有 TTL，避免首次失败后永久禁用
+    @Volatile private var ffmpegResolved: String? = null
+    @Volatile private var ffprobeResolved: String? = null
     @Volatile private var availabilityMissAt: Long = 0L
     private const val AVAILABILITY_MISS_TTL_MS = 30_000L
 
@@ -58,116 +67,134 @@ object FfmpegHelper {
     var totalDurationMs: Long = 0
         private set
 
+    /** 解析 ffmpeg 可执行文件路径，找不到返回 null。 */
+    private fun resolveFfmpeg(): String? {
+        ffmpegPath.trim().takeIf { it.isNotBlank() }?.let { p ->
+            if (File(p).canExecute()) return p
+        }
+        ffmpegResolved?.let { if (File(it).canExecute()) return it }
+        for (dir in SEARCH_DIRS) {
+            val f = File(dir, "ffmpeg")
+            if (f.canExecute()) {
+                ffmpegResolved = f.absolutePath
+                return f.absolutePath
+            }
+        }
+        return null
+    }
+
+    /** 解析 ffprobe 可执行文件路径，找不到返回 null。 */
+    private fun resolveFfprobe(): String? {
+        ffprobePath.trim().takeIf { it.isNotBlank() }?.let { p ->
+            if (File(p).canExecute()) return p
+        }
+        ffprobeResolved?.let { if (File(it).canExecute()) return it }
+        for (dir in SEARCH_DIRS) {
+            val f = File(dir, "ffprobe")
+            if (f.canExecute()) {
+                ffprobeResolved = f.absolutePath
+                return f.absolutePath
+            }
+        }
+        return null
+    }
+
     fun isAvailable(): Boolean {
-        availabilityChecked?.let { return it }
         val now = System.currentTimeMillis()
         if (availabilityMissAt > 0 && now - availabilityMissAt < AVAILABILITY_MISS_TTL_MS) {
             return false
         }
-        val ok = try {
-            val session = FFmpegKit.execute("-version")
-            ReturnCode.isSuccess(session.returnCode)
-        } catch (t: Throwable) {
-            AgentLogger.log(
-                "ERR",
-                "FFmpeg 不可用：${t.javaClass.simpleName}: ${t.message}"
-            )
-            false
-        }
-        if (ok) {
-            availabilityChecked = true
-        } else {
-            availabilityMissAt = now
-        }
-        AgentLogger.log("SYS", "FFmpeg 可用性检查：$ok")
+        val bin = resolveFfmpeg()
+        val ok = bin != null
+        if (!ok) availabilityMissAt = now
+        AgentLogger.log("SYS", "FFmpeg 可用性检查：$ok（路径：${bin ?: "未找到"}）")
         return ok
     }
 
+    /** 当前使用的 ffmpeg 路径，供 UI 展示。 */
+    fun currentFfmpegPath(): String = resolveFfmpeg() ?: ""
+
+    /** 当前使用的 ffprobe 路径，供 UI 展示。 */
+    fun currentFfprobePath(): String = resolveFfprobe() ?: ""
+
     /**
-     * 执行一次 FFmpeg。到 [timeoutSeconds] 还没完成则强制 cancel。
-     *
-     * 原实现是 `FFmpegKit.executeWithArguments(args)` 同步阻塞，
-     * timeoutSeconds 完全没用。现在：
-     *   1. `executeWithArgumentsAsync` 立即返回一个 session
-     *   2. callback 里 complete 一个 CompletableDeferred
-     *   3. 主协程 `withTimeoutOrNull` 等 deferred
-     *   4. 超时 → `FFmpegKit.cancel(session.sessionId)` → 返回失败
+     * 执行一次 FFmpeg。到 [timeoutSeconds] 还没完成则强制 kill。
      */
     suspend fun execute(
         args: Array<String>,
         timeoutSeconds: Int = 600
     ): FfmpegResult = withContext(Dispatchers.IO) {
-        if (!isAvailable()) {
-            return@withContext FfmpegResult(
+        val bin = resolveFfmpeg()
+            ?: return@withContext FfmpegResult(
                 false,
-                "FFmpeg 不可用：native 库未加载成功。请确认 APK 里包含 arm64-v8a 的 libffmpegkit.so"
+                "FFmpeg 不可用：未找到 ffmpeg 可执行文件。\n" +
+                        "请在设置里指定 ffmpeg 路径，或把 ffmpeg 放到 /data/local/tmp 等目录。"
             )
-        }
 
         val safeTimeout = timeoutSeconds.coerceIn(1, 24 * 3600)
 
-        // 挂起等待配额，不阻塞 IO 线程
         semaphore.withPermit {
             val startTime = System.currentTimeMillis()
-            val completed = CompletableDeferred<FFmpegSession>()
-
             AgentLogger.log("FFMPEG", "开始：${args.joinToString(" ").take(500)}")
 
-            val session: FFmpegSession? = try {
-                FFmpegKit.executeWithArgumentsAsync(
-                    args,
-                    { s ->
-                        if (!completed.isCompleted) completed.complete(s)
-                    },
-                    null,   // logCallback
-                    null    // statisticsCallback
-                )
+            val process = try {
+                ProcessBuilder(listOf(bin) + args.toList())
+                    .redirectErrorStream(true)
+                    .start()
             } catch (t: Throwable) {
                 val elapsed = System.currentTimeMillis() - startTime
                 AgentLogger.log(
                     "ERR",
-                    "FFmpeg 启动崩溃：${t.javaClass.name}: ${t.message}\n" +
-                            t.stackTrace.take(8).joinToString("\n") { "  at $it" }
+                    "FFmpeg 启动失败：${t.javaClass.name}: ${t.message}"
                 )
                 return@withPermit FfmpegResult(
                     false,
-                    "执行崩溃：${t.javaClass.simpleName}: ${t.message ?: "未知错误"}",
+                    "启动失败：${t.javaClass.simpleName}: ${t.message ?: "未知错误"}",
                     elapsed
                 )
             }
 
-            sessionCounter.incrementAndGet()
+            val sid = sessionCounter.incrementAndGet()
 
-            val sid: Long = try { session!!.sessionId } catch (_: Throwable) { 0L }
+            // 后台读输出，避免管道缓冲区满导致进程阻塞
+            val outputBuf = StringBuilder()
+            val reader = Thread {
+                try {
+                    process.inputStream.bufferedReader().use { r ->
+                        val chunk = CharArray(4096)
+                        while (true) {
+                            val n = r.read(chunk)
+                            if (n <= 0) break
+                            synchronized(outputBuf) {
+                                // 只保留尾部，避免长任务把内存吃满
+                                outputBuf.append(chunk, 0, n)
+                                if (outputBuf.length > 200_000) {
+                                    outputBuf.delete(0, outputBuf.length - 100_000)
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Throwable) { }
+            }
+            reader.isDaemon = true
+            reader.start()
 
-            // 等完成或超时
-            val completedSession = try {
-                withTimeoutOrNull((safeTimeout * 1000L).milliseconds) { completed.await() }
+            val finished = try {
+                process.waitFor(safeTimeout.toLong(), TimeUnit.SECONDS)
             } catch (t: Throwable) {
-                // withTimeoutOrNull 本身不该抛，但 callback 里如果抛了会传播到这里
-                val elapsed = System.currentTimeMillis() - startTime
-                AgentLogger.log(
-                    "ERR",
-                    "FFmpeg 等待异常：${t.javaClass.simpleName}: ${t.message}"
-                )
-                null
+                AgentLogger.log("ERR", "FFmpeg 等待异常：${t.javaClass.simpleName}: ${t.message}")
+                false
             }
 
-            if (completedSession == null) {
-                // 超时（或等待异常）→ 强制 cancel
-                if (sid > 0) {
-                    try {
-                        FFmpegKit.cancel(sid)
-                        AgentLogger.log("FFMPEG", "已发送 cancel（sessionId=$sid）")
-                    } catch (t: Throwable) {
-                        AgentLogger.log(
-                            "ERR",
-                            "cancel 失败（sessionId=$sid）：${t.javaClass.simpleName}: ${t.message}"
-                        )
-                    }
+            val elapsed = System.currentTimeMillis() - startTime
+
+            if (!finished) {
+                try {
+                    process.destroyForcibly()
+                    AgentLogger.log("FFMPEG", "执行超时（${safeTimeout}s），已强制终止")
+                } catch (t: Throwable) {
+                    AgentLogger.log("ERR", "强制终止失败：${t.javaClass.simpleName}: ${t.message}")
                 }
-                val elapsed = System.currentTimeMillis() - startTime
-                AgentLogger.log("FFMPEG", "执行超时（${safeTimeout}s），已强制终止")
                 return@withPermit FfmpegResult(
                     false,
                     "执行超时（${safeTimeout}s），已强制终止",
@@ -176,22 +203,16 @@ object FfmpegHelper {
                 )
             }
 
-            val elapsed = System.currentTimeMillis() - startTime
-            val rc = completedSession.returnCode
-            val success = ReturnCode.isSuccess(rc)
+            val exitCode = try { process.exitValue() } catch (_: Throwable) { -1 }
+            val success = exitCode == 0
+            val logs = synchronized(outputBuf) { outputBuf.toString() }
 
             val output = if (success) {
                 "成功"
             } else {
-                val logs = try { completedSession.allLogsAsString ?: "" } catch (_: Throwable) { "" }
-                val failStack = try { completedSession.failStackTrace ?: "" } catch (_: Throwable) { "" }
                 buildString {
-                    append("失败（返回码 ${rc?.value ?: -1}）\n")
+                    append("失败（返回码 $exitCode）\n")
                     append(logs.takeLast(2500))
-                    if (failStack.isNotBlank()) {
-                        append("\n调用栈：")
-                        append(failStack.take(500))
-                    }
                 }
             }
 
@@ -212,30 +233,33 @@ object FfmpegHelper {
         }
     }
 
-    /** 取消所有正在运行的会话。 */
+    /**
+     * 取消所有正在运行的会话。
+     *
+     * 外部进程模式下没有全局 session 表，这里只做日志占位。
+     * 真正的终止由 [execute] 内部的超时 destroyForcibly 负责。
+     */
     fun cancelAll() {
-        try {
-            FFmpegKit.cancel()
-            AgentLogger.log("FFMPEG", "已取消全部会话")
-        } catch (t: Throwable) {
-            AgentLogger.log("ERR", "取消 FFmpeg 失败：${t.javaClass.simpleName}: ${t.message}")
-        }
+        AgentLogger.log("FFMPEG", "cancelAll：外部进程模式无全局会话表，依赖超时终止")
     }
 
-    // 媒体信息探测（用 ffprobe 输出 JSON，绕开 StreamInformation）
+    // 媒体信息探测（用 ffprobe 输出 JSON）
 
     suspend fun probeRawJson(path: String): String = withContext(Dispatchers.IO) {
-        if (!isAvailable()) {
-            return@withContext """{"error":"FFmpeg native 库未加载"}"""
-        }
+        val bin = resolveFfprobe()
+            ?: return@withContext """{"error":"未找到 ffprobe 可执行文件"}"""
         try {
             if (!File(path).exists()) {
                 return@withContext """{"error":"文件不存在"}"""
             }
-            val safePath = path.replace("\"", "\\\"")
-            val cmd = "-v quiet -print_format json -show_format -show_streams \"$safePath\""
-            val session = FFprobeKit.execute(cmd)
-            val output = session.allLogsAsString ?: ""
+            val process = ProcessBuilder(
+                bin, "-v", "quiet", "-print_format", "json",
+                "-show_format", "-show_streams", path
+            ).redirectErrorStream(true).start()
+
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor(60, TimeUnit.SECONDS)
+
             if (output.isBlank()) {
                 return@withContext """{"error":"ffprobe 无输出"}"""
             }
@@ -361,63 +385,54 @@ object FfmpegHelper {
 
     // 能力查询
 
-    suspend fun version(): String = withContext(Dispatchers.IO) {
-        if (!isAvailable()) return@withContext "FFmpeg native 库未加载"
+    /** 跑一次 ffmpeg 并返回输出（用于 -version / -codecs 等查询）。 */
+    private suspend fun runForOutput(args: Array<String>): String = withContext(Dispatchers.IO) {
+        val bin = resolveFfmpeg() ?: return@withContext "FFmpeg 不可用：未找到 ffmpeg 可执行文件"
         try {
-            val session = FFmpegKit.execute("-version")
-            val logs = session.allLogsAsString ?: ""
-            logs.lines().take(6).joinToString("\n")
+            val process = ProcessBuilder(listOf(bin) + args.toList())
+                .redirectErrorStream(true)
+                .start()
+            val out = process.inputStream.bufferedReader().use { it.readText() }
+            process.waitFor(30, TimeUnit.SECONDS)
+            out
         } catch (t: Throwable) {
-            "获取版本失败：${t.javaClass.simpleName}: ${t.message}"
+            "执行失败：${t.javaClass.simpleName}: ${t.message}"
         }
     }
 
-    suspend fun listCodecs(filter: String = ""): String = withContext(Dispatchers.IO) {
-        if (!isAvailable()) return@withContext "FFmpeg native 库未加载"
-        try {
-            val session = FFmpegKit.executeWithArguments(arrayOf("-codecs"))
-            val logs = session.allLogsAsString ?: ""
-            if (filter.isBlank()) {
-                logs.take(8000)
-            } else {
-                logs.lines().filter { line ->
-                    when (filter.lowercase()) {
-                        "video" -> line.startsWith(" V")
-                        "audio" -> line.startsWith(" A")
-                        "subtitle" -> line.startsWith(" S")
-                        else -> true
-                    }
-                }.take(300).joinToString("\n")
-            }
-        } catch (t: Throwable) {
-            "获取编解码器列表失败：${t.javaClass.simpleName}: ${t.message}"
-        }
+    suspend fun version(): String {
+        val out = runForOutput(arrayOf("-version"))
+        return out.lines().take(6).joinToString("\n")
     }
 
-    suspend fun listFormats(): String = withContext(Dispatchers.IO) {
-        if (!isAvailable()) return@withContext "FFmpeg native 库未加载"
-        try {
-            val session = FFmpegKit.executeWithArguments(arrayOf("-formats"))
-            val logs = session.allLogsAsString ?: ""
+    suspend fun listCodecs(filter: String = ""): String {
+        val logs = runForOutput(arrayOf("-codecs"))
+        return if (filter.isBlank()) {
+            logs.take(8000)
+        } else {
             logs.lines().filter { line ->
-                line.startsWith(" D") || line.startsWith("  E") || line.startsWith(" DE")
+                when (filter.lowercase()) {
+                    "video" -> line.startsWith(" V")
+                    "audio" -> line.startsWith(" A")
+                    "subtitle" -> line.startsWith(" S")
+                    else -> true
+                }
             }.take(300).joinToString("\n")
-        } catch (t: Throwable) {
-            "获取格式列表失败：${t.javaClass.simpleName}: ${t.message}"
         }
     }
 
-    suspend fun listHwAccels(): String = withContext(Dispatchers.IO) {
-        if (!isAvailable()) return@withContext "FFmpeg native 库未加载"
-        try {
-            val session = FFmpegKit.executeWithArguments(arrayOf("-hwaccels"))
-            val logs = session.allLogsAsString ?: ""
-            val lines = logs.lines().filter {
-                it.isNotBlank() && !it.startsWith("Hardware") && !it.startsWith("ffmpeg")
-            }
-            if (lines.isEmpty()) "无硬件加速支持" else lines.joinToString("\n")
-        } catch (t: Throwable) {
-            "获取硬件加速列表失败：${t.javaClass.simpleName}: ${t.message}"
+    suspend fun listFormats(): String {
+        val logs = runForOutput(arrayOf("-formats"))
+        return logs.lines().filter { line ->
+            line.startsWith(" D") || line.startsWith("  E") || line.startsWith(" DE")
+        }.take(300).joinToString("\n")
+    }
+
+    suspend fun listHwAccels(): String {
+        val logs = runForOutput(arrayOf("-hwaccels"))
+        val lines = logs.lines().filter {
+            it.isNotBlank() && !it.startsWith("Hardware") && !it.startsWith("ffmpeg")
         }
+        return if (lines.isEmpty()) "无硬件加速支持" else lines.joinToString("\n")
     }
 }

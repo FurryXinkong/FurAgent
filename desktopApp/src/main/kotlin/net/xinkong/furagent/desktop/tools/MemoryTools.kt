@@ -48,7 +48,11 @@ object MemoryTools {
 
     private fun doRecall(args: JSONObject): ToolResult {
         val query = args.optString("query", "").trim()
-        val list = if (query.isBlank()) MemoryStore.list() else MemoryStore.search(query)
+        // 只返回已启用的记忆：用户在记忆页关掉的条目，AI 不该看到。
+        // 之前直接调 MemoryStore.list()/search() 没过滤 enabled，
+        // 导致「关掉」的记忆照样被 AI 读出来，等于开关失效。
+        val list = (if (query.isBlank()) MemoryStore.list() else MemoryStore.search(query))
+            .filter { it.enabled }
         if (list.isEmpty()) return ToolResult.ok("暂无相关记忆")
         val sb = StringBuilder("找到 ${list.size} 条记忆：\n")
         list.take(30).forEach { sb.append("- ${it.content}\n") }
@@ -56,7 +60,7 @@ object MemoryTools {
     }
 
     private fun doList(): ToolResult {
-        val list = MemoryStore.list()
+        val list = MemoryStore.list().filter { it.enabled }
         if (list.isEmpty()) return ToolResult.ok("暂无记忆")
         val sb = StringBuilder("共 ${list.size} 条记忆：\n\n")
         list.forEachIndexed { i, m ->

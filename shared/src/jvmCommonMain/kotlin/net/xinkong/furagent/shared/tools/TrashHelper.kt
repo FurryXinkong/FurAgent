@@ -3,7 +3,6 @@ package net.xinkong.furagent.shared.tools
 import net.xinkong.furagent.shared.util.DateFormats
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 
 /**
@@ -100,7 +99,17 @@ object TrashHelper {
                         return TrashResult(false, message = "移入回收站失败（复制不完整，源文件未动）")
                     }
 
-                    src.deleteRecursively()
+                    // deleteRecursively 失败返回 false 不抛异常，之前不检查 → 回收站有副本、源文件还在，
+                    // 用户以为删了。现在返回失败，并在 message 里说明。
+                    if (!src.deleteRecursively()) {
+                        return TrashResult(
+                            false,
+                            message = "源文件删除失败，回收站已有副本：${dest.absolutePath}"
+                        )
+                    }
+                    // else 分支作为 try 表达式的值必须非空；上面的提前 return 覆盖了失败路径，
+                    // 走到这里说明删除成功。
+                    true
                 }
             } catch (e: Exception) {
                 return TrashResult(false, message = "移入回收站失败：${e.message}")

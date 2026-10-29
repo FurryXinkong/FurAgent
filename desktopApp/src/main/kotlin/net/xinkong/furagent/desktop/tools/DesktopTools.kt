@@ -623,7 +623,7 @@ object DesktopTools {
             val initial = existing.messages + DesktopMessage(role = "user", content = task, timestamp = now)
 
             SubSessionProgress.start(reuseId, title)
-            subSessionScope.launch {
+            val job = subSessionScope.launch {
                 // sessionId 通过协程上下文传递（见 SessionContext.kt），
                 // 已删除全局 CurrentTaskSession 变量。runTurn 内部
                 // withContext(SessionIdElement(reuseId))，所有工具执行、
@@ -680,6 +680,9 @@ object DesktopTools {
                     )
                 }
             }
+            // 注册到 subSessionJobs 供 sub_session(op=stop) 使用。
+            // 之前复用分支没注册，stop 找不到 job 返回"不在运行中"，但子会话实际在跑。
+            subSessionJobs[reuseId] = job
 
             return ToolResult.ok(
                 "SUB_SESSION:$reuseId\n标题：↳ $title\n" +
@@ -882,10 +885,11 @@ object DesktopTools {
                 if (id.isBlank()) return ToolResult.fail("op=stop 需要 id 参数")
                 val job = subSessionJobs[id]
                     ?: return ToolResult.fail("子会话 $id 不在运行中（可能已完成，可用 op=list 查看）")
+                // job.cancel() 会触发子会话 finally 里的 SubSessionProgress.finish 和
+                // subSessionActive.decrementAndGet()。这里不要再调，否则 double-decrement
+                // 会让并行上限失效（用户点一次"停止"后 AI 就能无限派发并行子代理烧钱）。
                 job.cancel()
                 subSessionJobs.remove(id)
-                SubSessionProgress.finish(id)
-                subSessionActive.decrementAndGet()
                 ToolResult.ok("已终止子会话 $id。")
             }
             else -> ToolResult.fail("op 取值为 status / list / result / stop")
@@ -1183,7 +1187,15 @@ object DesktopTools {
         if (command.isBlank()) return ToolResult.fail("未提供 command")
         val timeout = args.optInt("timeout", 30).coerceIn(1, 300)
         val grepFilter = args.optString("grep_filter", "").trim()
-        val filterRegex = if (grepFilter.isNotBlank()) Regex(grepFilter, RegexOption.IGNORE_CASE) else null
+        // 非法正则要给出明确错误，否则会被 doExecute 的兜底 catch 变成
+        // "执行异常：PatternSyntaxException..."，用户/AI 不好定位。
+        val filterRegex = if (grepFilter.isNotBlank()) {
+            try {
+                Regex(grepFilter, RegexOption.IGNORE_CASE)
+            } catch (e: Exception) {
+                return ToolResult.fail("grep_filter 正则非法：${e.message}")
+            }
+        } else null
 
         detectDestructiveCommand(command)?.let { return ToolResult.fail(it) }
 
@@ -1208,8 +1220,12 @@ object DesktopTools {
             val cwd = if (cwdStr.isBlank()) null else host.resolvePath(cwdStr)?.let { File(it) }
 
             var process: Process? = null
+            // pb.start() 之前 registerCancel 已经挂上了，但此时 process == null，取消是 no-op。
+            // 用户在 start 之前点击停止时，用这个标志在 start 完成后立即 destroy 进程。
+            val cancelledBeforeStart = java.util.concurrent.atomic.AtomicBoolean(false)
 
             TaskRuntime.registerCancel(taskId) {
+                cancelledBeforeStart.set(true)
                 val p = process
                 if (p != null) {
                     try {
@@ -1244,6 +1260,18 @@ object DesktopTools {
 
                 val p = pb.start()
                 process = p
+
+                // 检查"用户在 start 之前取消"的情况
+                if (cancelledBeforeStart.get()) {
+                    try {
+                        p.toHandle().descendants().toList().forEach {
+                            try { it.destroyForcibly() } catch (_: Exception) { }
+                        }
+                        p.destroyForcibly()
+                    } catch (_: Throwable) { }
+                    TaskRuntime.finishWithCode(taskId, -1, timedOut = false)
+                    return@withContext ToolResult.fail("用户已取消命令执行（进程启动前）")
+                }
 
                 val stdoutSb = StringBuilder()
                 val stderrSb = StringBuilder()

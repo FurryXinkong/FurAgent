@@ -5,7 +5,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 import java.nio.file.Paths
-import java.util.*
 
 /**
  * 桌面端 ToolHost。
@@ -230,6 +229,9 @@ class DesktopToolHost : ToolHost {
 
     override suspend fun textLineCount(path: String): Int =
         ToolCodeNav.textLineCount(path)
+
+    override suspend fun readTailLines(path: String, tailLines: Int): Pair<Int, List<TextLine>>? =
+        ToolCodeNav.readTailLines(path, tailLines)
 
     override suspend fun searchInFiles(
         root: String,

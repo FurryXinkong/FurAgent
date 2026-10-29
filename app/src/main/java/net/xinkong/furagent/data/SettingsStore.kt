@@ -15,23 +15,39 @@ object SettingsStore {
             try {
                 val arr = JSONArray(profilesJson)
                 val list = mutableListOf<ModelProfile>()
+                var skipped = 0
                 for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    list.add(
-                        ModelProfile(
-                            id = o.getString("id"),
-                            name = o.getString("name"),
-                            apiKey = o.optString("apiKey", ""),
-                            baseUrl = o.getString("baseUrl"),
-                            model = o.getString("model"),
-                            isBuiltIn = o.optBoolean("isBuiltIn", false),
-                            supportsDisableThinking = o.optBoolean("supportsDisableThinking", true),
-                            supportsThinking = o.optBoolean("supportsThinking", true),
-                            supportsVision = o.optBoolean("supportsVision", true),
-                            temperature = o.optDouble("temperature", 0.1),
-                            kind = o.optString("kind", "chat").ifBlank { "chat" }
+                    val o = arr.optJSONObject(i)
+                    if (o == null) { skipped++; continue }
+                    // 逐条容错：单个模型配置坏了只跳过该条，不要整段回退默认值
+                    // （用户配置了 10 个模型，其中一个缺字段就全丢是灾难）
+                    try {
+                        list.add(
+                            ModelProfile(
+                                id = o.optString("id", "profile_$i"),
+                                name = o.optString("name", "模型 $i"),
+                                apiKey = o.optString("apiKey", ""),
+                                baseUrl = o.optString("baseUrl", ""),
+                                model = o.optString("model", ""),
+                                isBuiltIn = o.optBoolean("isBuiltIn", false),
+                                supportsDisableThinking = o.optBoolean("supportsDisableThinking", true),
+                                supportsThinking = o.optBoolean("supportsThinking", true),
+                                supportsVision = o.optBoolean("supportsVision", true),
+                                temperature = o.optDouble("temperature", 0.1),
+                                kind = o.optString("kind", "chat").ifBlank { "chat" },
+                                protocol = o.optString("protocol", "openai").ifBlank { "openai" }
+                            )
                         )
-                    )
+                    } catch (e: Exception) {
+                        skipped++
+                        AgentLogger.log(
+                            "ERR",
+                            "profiles[$i] 解析失败，已跳过：${e.javaClass.simpleName}: ${e.message}"
+                        )
+                    }
+                }
+                if (skipped > 0) {
+                    AgentLogger.log("SYS", "已跳过 $skipped 个异常模型配置，保留 ${list.size} 个")
                 }
                 if (list.isEmpty()) defaultModelProfiles() else list
             } catch (e: Exception) {
@@ -99,6 +115,7 @@ object SettingsStore {
                 } else raw
             },
             imageProfileId = prefs.getString("image_profile_id", "") ?: "",
+            summaryProfileId = prefs.getString("summary_profile_id", "") ?: "",
             subAgentProfileId = prefs.getString("sub_agent_profile_id", "") ?: "",
             showTokenBar = prefs.getBoolean("show_token_bar", false),
             showModifiedFiles = prefs.getBoolean("show_modified_files", false),
@@ -125,6 +142,7 @@ object SettingsStore {
                 put("supportsVision", it.supportsVision)
                 put("temperature", it.temperature)
                 put("kind", it.kind)
+                put("protocol", it.protocol)
             })
         }
         prefs.edit {
@@ -154,6 +172,7 @@ object SettingsStore {
                 .putInt("pc_bridge_port", s.pcBridgePort.coerceIn(1, 65535))
                 .putString("pc_receive_dir", s.pcReceiveDir)
                 .putString("image_profile_id", s.imageProfileId)
+                .putString("summary_profile_id", s.summaryProfileId)
                 .putString("sub_agent_profile_id", s.subAgentProfileId)
                 .putBoolean("show_token_bar", s.showTokenBar)
                 .putBoolean("show_modified_files", s.showModifiedFiles)

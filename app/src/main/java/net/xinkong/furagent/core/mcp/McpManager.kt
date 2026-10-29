@@ -1,14 +1,10 @@
 package net.xinkong.furagent.core.mcp
 
 import android.content.Context
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.data.McpConfigStore
 import net.xinkong.furagent.data.McpServerConfig
@@ -55,7 +51,15 @@ object McpManager {
         val configs = McpConfigStore.list(ctx)
         AgentLogger.log("MCP", "启动 ${configs.count { it.enabled }} 个服务器")
         configs.forEach { cfg ->
-            if (cfg.enabled) startServer(cfg)
+            if (!cfg.enabled) return@forEach
+            // Android 无法 spawn 子进程，stdio 传输不支持。
+            // 之前没过滤：从桌面端导入一个 stdio 配置到 Android，每次 connect() 都抛
+            // "Android 端只支持 http / sse"，然后 scheduleReconnect 无限重试（2s→4s→…→30s 一直循环）。
+            if (cfg.transport == "stdio") {
+                AgentLogger.log("MCP", "跳过 stdio 配置（Android 不支持）：${cfg.name}")
+                return@forEach
+            }
+            startServer(cfg)
         }
     }
 

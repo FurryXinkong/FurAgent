@@ -4,6 +4,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
+import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.shared.tools.BackupHelper
 import net.xinkong.furagent.shared.tools.LineDiff
 import java.io.File
@@ -170,7 +171,16 @@ class HistoryStore private constructor(context: Context) :
                 put("backup", oldBytes)
                 put("patch", d.patch)
             }
-            writableDatabase.insert(TABLE, null, cv)
+            val rowId = writableDatabase.insert(TABLE, null, cv)
+            if (rowId < 0L) {
+                // 磁盘满/数据库损坏时 insert 返回 -1，之前静默丢失历史记录。
+                // 用户以为「写前备份」开了，但实际没存。
+                AgentLogger.log(
+                    "ERR",
+                    "历史记录写入失败（insert 返回 -1）：$originalPath（action=$action, size=${newBytes?.size ?: 0}）"
+                )
+                return null
+            }
             BackupHelper.BackupEntry(
                 ts = ts, path = originalPath, backup = "", action = action,
                 size = (newBytes?.size ?: 0).toLong(), patch = "",

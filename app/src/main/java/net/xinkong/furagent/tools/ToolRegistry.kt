@@ -22,6 +22,28 @@ val SDCARD_PATH: String by lazy {
     } catch (_: Exception) { "/sdcard" }
 }
 
+/**
+ * 取一个可写的输出目录，带权限回退。
+ *
+ * 旧实现直接 File(SDCARD_PATH, "FurAgent/xxx")，在 Android 11+ 分区存储
+ * 或用户拒绝存储权限时，mkdirs() 静默返回 false，后续写入抛
+ * FileNotFoundException，报错信息完全看不出是权限问题。
+ *
+ * 回退顺序：
+ *   1. {SDCARD}/FurAgent/{sub}   外部存储（用户可见，首选）
+ *   2. {app 私有}/FurAgent/{sub} 应用专属目录（无需任何权限，一定可写）
+ *
+ * @param context 用于拿私有目录
+ * @param sub 子目录名，如 "images" / "exports" / "temp"
+ */
+fun outputDir(context: android.content.Context, sub: String): java.io.File {
+    val external = java.io.File(SDCARD_PATH, "FurAgent/$sub")
+    if (external.isDirectory || external.mkdirs()) return external
+    val fallback = java.io.File(context.filesDir, "FurAgent/$sub")
+    fallback.mkdirs()
+    return fallback
+}
+
 private val PRIVATE_TOOL_DISPLAY_NAMES: Map<String, String> = mapOf(
     "app" to "应用",
     "device" to "设备",
@@ -1088,10 +1110,11 @@ object ToolRegistry {
                 if (id.isBlank()) return "失败：op=stop 需要 id 参数"
                 val job = subSessionJobs[id]
                     ?: return "失败：子会话 $id 不在运行中（可能已完成，可用 op=list 查看）"
+                // job.cancel() 会触发子会话 finally 里的 SubSessionProgress.finish 和
+                // subSessionActive.decrementAndGet()。这里不要再调，否则 double-decrement
+                // 会让并行上限失效（用户点一次"停止"后 AI 就能无限派发并行子代理烧钱）。
                 job.cancel()
                 subSessionJobs.remove(id)
-                SubSessionProgress.finish(id)
-                subSessionActive.decrementAndGet()
                 AgentLogger.log("TOOL", "AI 主动终止子会话 subId=$id")
                 "已终止子会话 $id。"
             }

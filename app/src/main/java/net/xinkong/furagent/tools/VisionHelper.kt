@@ -1,16 +1,14 @@
 package net.xinkong.furagent.tools
 
-import net.xinkong.furagent.shared.util.DateFormats
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
 import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.shared.util.DateFormats
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
 import java.util.concurrent.ConcurrentLinkedQueue
 
 object VisionHelper {
@@ -152,14 +150,13 @@ object VisionHelper {
         }
     }
 
-    fun screenshotDir(): File {
-        val dir = File(SDCARD_PATH, "FurAgent/screenshots")
-        if (!dir.exists()) dir.mkdirs()
-        return dir
+    fun screenshotDir(context: android.content.Context): File {
+        // 用 outputDir 而非直接 File(SDCARD_PATH, ...)：无存储权限时自动回退到 app 私有目录
+        return outputDir(context, "screenshots")
     }
 
-    fun newScreenshotPath(): String {
+    fun newScreenshotPath(context: android.content.Context): String {
         val ts = DateFormats.formatFileTs()
-        return File(screenshotDir(), "screenshot_$ts.png").absolutePath
+        return File(screenshotDir(context), "screenshot_$ts.png").absolutePath
     }
 }

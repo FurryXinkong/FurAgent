@@ -1,7 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
-import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,23 +10,20 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import net.xinkong.furagent.data.*
 import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.ui.*
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import androidx.compose.runtime.rememberCoroutineScope
+import net.xinkong.furagent.ui.theme.AppRadius
 
 /**
  * 高级设置 —— 整屏页面。
@@ -67,6 +63,23 @@ fun AdvancedSettingsPage(
         uri?.let {
             scope.launch(Dispatchers.IO) {
                 try {
+                    // 上限 50MB：备份文件含 base64 图片时会很大。不加限制时
+                    // readText() 进内存（Java 字符串 2 字节/字符）+ 后续
+                    // JSONObject(text) 再解析一次，峰值可达文件大小 ×2，
+                    // 中端机（4GB RAM）直接 OOM。
+                    val size = try {
+                        val afd = context.contentResolver.openAssetFileDescriptor(it, "r")
+                        val len = afd?.length ?: -1L
+                        afd?.close()
+                        len
+                    } catch (_: Exception) { -1L }
+                    if (size > 50L * 1024 * 1024) {
+                        notifyToast(
+                            context,
+                            "备份文件过大（${size / 1024 / 1024}MB），上限 50MB"
+                        )
+                        return@launch
+                    }
                     val inputStream = context.contentResolver.openInputStream(it)
                     val text = inputStream?.bufferedReader()?.use { reader -> reader.readText() }
                     if (text.isNullOrBlank()) {

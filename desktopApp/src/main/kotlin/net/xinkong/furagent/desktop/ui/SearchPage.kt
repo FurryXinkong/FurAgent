@@ -1,3 +1,5 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
+
 package net.xinkong.furagent.desktop.ui
 
 import androidx.compose.foundation.BorderStroke
@@ -29,6 +31,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import net.xinkong.furagent.desktop.data.DesktopSessionStore
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.shared.icons.Icons
@@ -58,16 +62,23 @@ fun SearchPage(
     var selectedIndex by remember { mutableIntStateOf(0) }
     val focusRequester = remember { FocusRequester() }
 
-    // 搜索
-    LaunchedEffect(query) {
-        if (query.isBlank()) {
-            results = emptyList()
-            return@LaunchedEffect
-        }
-        results = with(kotlinx.coroutines.Dispatchers.IO) {
-            searchAll(query, maxResults = 200)
-        }
-        selectedIndex = 0
+    // 搜索 加 300ms debounce：每次按键触发全量扫描（SessionStore.list() + 逐个 load 读 JSON），
+    // 多会话时 100~300ms 一次，用户连打三个字就是 3 次。debounce 后只有停顿 300ms 才触发。
+    // collectLatest 保证新 query 到来时取消上一次未完成的搜索。
+    LaunchedEffect(Unit) {
+        snapshotFlow { query }
+            .debounce(300)
+            .collectLatest { q ->
+                if (q.isBlank()) {
+                    results = emptyList()
+                    selectedIndex = 0
+                    return@collectLatest
+                }
+                results = with(kotlinx.coroutines.Dispatchers.IO) {
+                    searchAll(q, maxResults = 200)
+                }
+                selectedIndex = 0
+            }
     }
 
     LaunchedEffect(Unit) {

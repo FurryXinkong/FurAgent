@@ -1,12 +1,12 @@
 package net.xinkong.furagent.shared.tools
 
-import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import net.xinkong.furagent.shared.util.DateFormats
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -22,18 +22,134 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import kotlin.math.acos
-import kotlin.math.asin
-import kotlin.math.atan
-import kotlin.math.cos
-import kotlin.math.exp
-import kotlin.math.ln
-import kotlin.math.log10
-import kotlin.math.pow
-import kotlin.math.sin
-import kotlin.math.sqrt
-import kotlin.math.tan
+import kotlin.Any
+import kotlin.ArithmeticException
+import kotlin.Array
+import kotlin.Boolean
+import kotlin.Comparator
+import kotlin.Double
+import kotlin.Exception
+import kotlin.Float
+import kotlin.IllegalArgumentException
+import kotlin.Int
+import kotlin.IntArray
+import kotlin.Long
+import kotlin.String
+import kotlin.Triple
+import kotlin.apply
+import kotlin.collections.LinkedHashMap
+import kotlin.collections.List
+import kotlin.collections.MutableList
+import kotlin.collections.asSequence
+import kotlin.collections.component1
+import kotlin.collections.component2
+import kotlin.collections.contains
+import kotlin.collections.copyOfRange
+import kotlin.collections.filter
+import kotlin.collections.first
+import kotlin.collections.forEach
+import kotlin.collections.forEachIndexed
+import kotlin.collections.getOrNull
+import kotlin.collections.getOrPut
+import kotlin.collections.indices
+import kotlin.collections.isEmpty
+import kotlin.collections.joinToString
+import kotlin.collections.last
+import kotlin.collections.lastOrNull
+import kotlin.collections.map
+import kotlin.collections.mapNotNull
+import kotlin.collections.mapOf
+import kotlin.collections.minus
+import kotlin.collections.mutableListOf
+import kotlin.collections.plus
+import kotlin.collections.random
+import kotlin.collections.setOf
+import kotlin.collections.sorted
+import kotlin.collections.sortedByDescending
+import kotlin.collections.sortedWith
+import kotlin.collections.sum
+import kotlin.collections.sumOf
+import kotlin.collections.take
+import kotlin.collections.toByteArray
+import kotlin.collections.toList
+import kotlin.compareTo
+import kotlin.getValue
+import kotlin.isInfinite
+import kotlin.isNaN
+import kotlin.lazy
+import kotlin.let
+import kotlin.math.*
+import kotlin.minus
+import kotlin.plus
+import kotlin.ranges.coerceAtLeast
+import kotlin.ranges.coerceIn
+import kotlin.ranges.contains
+import kotlin.ranges.random
+import kotlin.ranges.rangeTo
+import kotlin.ranges.step
+import kotlin.ranges.until
+import kotlin.repeat
+import kotlin.sequences.asSequence
+import kotlin.sequences.contains
+import kotlin.sequences.count
+import kotlin.sequences.forEach
+import kotlin.sequences.joinToString
+import kotlin.sequences.minus
+import kotlin.sequences.plus
+import kotlin.sequences.take
+import kotlin.sequences.toList
+import kotlin.takeIf
+import kotlin.text.Charsets
+import kotlin.text.Regex
+import kotlin.text.RegexOption
+import kotlin.text.StringBuilder
+import kotlin.text.any
+import kotlin.text.append
+import kotlin.text.asSequence
+import kotlin.text.buildString
+import kotlin.text.compareTo
+import kotlin.text.contains
+import kotlin.text.count
+import kotlin.text.endsWith
+import kotlin.text.format
+import kotlin.text.ifEmpty
+import kotlin.text.isBlank
+import kotlin.text.isDigit
+import kotlin.text.isEmpty
+import kotlin.text.isLetter
+import kotlin.text.isLetterOrDigit
+import kotlin.text.isNotBlank
+import kotlin.text.isWhitespace
+import kotlin.text.iterator
+import kotlin.text.lineSequence
+import kotlin.text.lowercase
+import kotlin.text.padStart
+import kotlin.text.plus
+import kotlin.text.random
+import kotlin.text.repeat
+import kotlin.text.replace
+import kotlin.text.split
+import kotlin.text.startsWith
+import kotlin.text.substring
+import kotlin.text.substringAfterLast
+import kotlin.text.toByteArray
+import kotlin.text.toDouble
+import kotlin.text.toDoubleOrNull
+import kotlin.text.toInt
+import kotlin.text.toIntOrNull
+import kotlin.text.toList
+import kotlin.text.toLong
+import kotlin.text.toLongOrNull
+import kotlin.text.toString
+import kotlin.text.trim
+import kotlin.text.trimEnd
+import kotlin.text.trimStart
+import kotlin.text.uppercase
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.times
+import kotlin.to
+import kotlin.toList
+import kotlin.toString
 
 object CommonTools {
 
@@ -785,9 +901,25 @@ object CommonTools {
         var totalReplacements = 0
         val details = StringBuilder()
 
+        // glob 改成 Regex 匹配，之前 "*" -> "" 加 contains 会误匹配 foo.kt.bak。
+        // 与 ToolCodeNav.buildNameMatcher 语义一致。
+        val globRegex: Regex? = if (glob.isBlank() || glob == "*") null else {
+            val sb = StringBuilder()
+            for (c in glob) {
+                when (c) {
+                    '*' -> sb.append(".*")
+                    '?' -> sb.append('.')
+                    '.' -> sb.append("\\.")
+                    else -> if (c.isLetterOrDigit() || c == '_' || c == '-') sb.append(c)
+                    else sb.append(Regex.escape(c.toString()))
+                }
+            }
+            try { Regex("^$sb$", RegexOption.IGNORE_CASE) } catch (_: Exception) { null }
+        }
+
         try {
             java.io.File(dir).walkTopDown().maxDepth(15).forEach { f ->
-                if (f.isFile && (glob == "*" || f.name.contains(glob.replace("*", ""), ignoreCase = true))) {
+                if (f.isFile && (globRegex == null || globRegex.matches(f.name))) {
                     try {
                         val text = f.readText(Charsets.UTF_8)
                         val matchCount = regex.findAll(text).count()
@@ -1192,11 +1324,16 @@ object CommonTools {
             sorted.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.then(comparator))
         }
 
-        for ((name, isDirectory, size1) in sorted) {
+        for (entry in sorted) {
+            val name = entry.name
+            val isDirectory = entry.isDirectory
+            val size1 = entry.size
             val type = if (isDirectory) "[目录]" else "[文件]"
             val size = if (isDirectory) "" else " (${host.formatSize(size1)})"
+            // 之前 File(name) 用的是文件名不是绝对路径，lastModified 读的是 cwd 同名文件，
+            // 时间列几乎总是错的。必须用 absolutePath。
             val time = java.text.SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
-                .format(java.util.Date(java.io.File(name).lastModified()))
+                .format(java.util.Date(java.io.File(entry.absolutePath).lastModified()))
             sb.append("$type $name$size  [$time]\n")
         }
         return ToolResult.ok(sb.toString().trim())
@@ -1386,11 +1523,11 @@ object CommonTools {
                 ToolResult.ok(b64)
             }
             "tail" -> {
-                val total = host.textLineCount(path)
-                if (total <= 0) return ToolResult.fail("文件为空或读取失败")
                 val tailLines = args.optInt("tail_lines", 100).coerceIn(1, 2000)
-                val start = (total - tailLines).coerceAtLeast(1)
-                val lines = host.readTextLines(path, start, tailLines) ?: return ToolResult.fail("读取失败")
+                // 反向读：只读尾部字节，不再「先数行数再从头跳到 start」读两遍
+                val (total, lines) = host.readTailLines(path, tailLines)
+                    ?: return ToolResult.fail("文件为空或读取失败")
+                if (total <= 0) return ToolResult.fail("文件为空或读取失败")
                 val sb = StringBuilder()
                 sb.append("文件：$path\n")
                 sb.append("读取最后 $tailLines 行（原文件共 $total 行）\n\n")
@@ -1484,8 +1621,14 @@ object CommonTools {
                     continue
                 }
                 val success = if (app) {
-                    val existing = host.readTextFile(pRes) ?: ""
-                    host.writeTextFile(pRes, existing + c)
+                    // 大文件 append 不应全量读进内存。ToolHost 接口没有 appendTextFile，
+                    // 这里直接用 File.appendText 追加（宿主层不需要改动）。
+                    try {
+                        val f = java.io.File(pRes)
+                        f.parentFile?.mkdirs()
+                        f.appendText(c, Charsets.UTF_8)
+                        true
+                    } catch (_: Exception) { false }
                 } else {
                     host.writeTextFile(pRes, c)
                 }

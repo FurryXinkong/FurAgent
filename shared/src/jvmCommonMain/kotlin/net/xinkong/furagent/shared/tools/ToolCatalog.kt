@@ -191,6 +191,4 @@ data class CatalogTool(
     val displayName: String,
     val description: String,
     val paramsSchema: String,
-    /** 目录里显示用的短描述（≤80 字符，无换行）。 */
-    val brief: String = description.take(80).replace("\n", " ").trim()
 )

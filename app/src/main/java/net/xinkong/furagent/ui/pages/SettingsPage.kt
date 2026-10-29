@@ -5,9 +5,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -27,17 +25,23 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.core.httpClient
 import net.xinkong.furagent.core.testModelConnection
 import net.xinkong.furagent.data.AppSettings
 import net.xinkong.furagent.data.ModelProfile
 import net.xinkong.furagent.data.SettingsStore
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.update.UpdateChecker
+import net.xinkong.furagent.shared.util.ApiUrlResolver
+import net.xinkong.furagent.shared.util.ModelDiscovery
 import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.*
 import net.xinkong.furagent.ui.theme.AppRadius
+import okhttp3.Request
 import java.util.*
 
 /**
@@ -54,7 +58,8 @@ val HIDDEN_GROUPS: List<Pair<String, String>> = listOf(
     "security" to "安全确认",
     "image" to "图片压缩",
     "notification" to "通知与语音",
-    "new_features" to "新功能"
+    // 该分组现在只剩「写前备份与回档」一个开关，改名「备份」更准确。
+    "new_features" to "备份"
 )
 
 /**
@@ -92,6 +97,11 @@ fun SettingsPage(
     }
     val prefs = remember { context.getSharedPreferences("FurAgentPrefs", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
+
+    // 模型自动发现：保存裸 base 后探测 /models，弹窗让用户确认批量添加
+    var discovering by remember { mutableStateOf(false) }
+    var discoveryResult by remember { mutableStateOf<ModelDiscovery.Result?>(null) }
+    var discoverySource by remember { mutableStateOf<ModelProfile?>(null) }
     var turnsInput by remember { mutableStateOf(maxTurns.toString()) }
     var local by remember { mutableStateOf(settings) }
     // 用 local.hiddenSettings 判断分组可见性（quickSave 会更新 local）
@@ -152,6 +162,36 @@ fun SettingsPage(
                     currentProfileId = newProfile.id
                 ))
                 showAddModel = false
+                // 只填了裸 base（如 https://api.xiaomimimo.com/v1）时，
+                // 自动探测模型列表，弹窗让用户批量添加
+                if (ApiUrlResolver.isBareBase(newProfile.baseUrl)) {
+                    discovering = true
+                    scope.launch {
+                        val r = ModelDiscovery.discover(
+                            baseUrl = newProfile.baseUrl,
+                            protocol = newProfile.protocol,
+                            apiKey = newProfile.apiKey
+                        ) { url, headers ->
+                            val req = Request.Builder().url(url).get().apply {
+                                headers.forEach { (k, v) -> addHeader(k, v) }
+                            }.build()
+                            httpClient.newCall(req).execute().use { resp ->
+                                resp.code to resp.body.string()
+                            }
+                        }
+                        discovering = false
+                        if (r.ok) {
+                            discoveryResult = r
+                            discoverySource = newProfile
+                        } else {
+                            // 探测失败也要告诉用户，否则看起来像「什么都没发生」
+                            notifyToast(
+                                context,
+                                "自动探测失败（${r.error}）。请手动填写模型名称。"
+                            )
+                        }
+                    }
+                }
             }
         )
     }
@@ -170,6 +210,82 @@ fun SettingsPage(
                     imageProfileId = newProfile.id
                 ))
                 showAddImageModel = false
+            }
+        )
+    }
+
+    // 模型自动发现结果弹窗
+    discoveryResult?.let { result ->
+        val src = discoverySource
+        // 过滤掉语音/嵌入等非对话模型
+        val chatModels = result.modelIds.filter { !ModelDiscovery.isNonChatModel(it) }
+        AlertDialog(
+            onDismissRequest = { discoveryResult = null; discoverySource = null },
+            shape = RoundedCornerShape(AppRadius.DIALOG),
+            containerColor = MaterialTheme.colorScheme.surface,
+            title = { Text("识别到 ${chatModels.size} 个模型") },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 360.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        "探测地址：${result.probeUrl}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "是否把这些模型全部添加到模型列表？",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    chatModels.forEach { mid ->
+                        Text(
+                            "· $mid",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (src != null && chatModels.isNotEmpty()) {
+                        val provider = ModelDiscovery.hostOf(src.baseUrl)
+                        val chatEndpoint = ApiUrlResolver.toChatEndpoint(src.baseUrl, src.protocol)
+                        val newProfiles = chatModels.map { mid ->
+                            ModelProfile(
+                                id = UUID.randomUUID().toString(),
+                                name = if (provider.isBlank()) mid else "$provider · $mid",
+                                apiKey = src.apiKey,
+                                baseUrl = chatEndpoint,
+                                model = mid,
+                                isBuiltIn = false,
+                                protocol = src.protocol
+                            )
+                        }
+                        // 去掉刚才手动加的那个空模型（model 为空或重复）
+                        val cleaned = local.profiles.filter { it.id != src.id }
+                        quickSave(local.copy(
+                            profiles = cleaned + newProfiles,
+                            currentProfileId = newProfiles.first().id
+                        ))
+                    }
+                    discoveryResult = null
+                    discoverySource = null
+                }) { Text("全部添加") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    discoveryResult = null
+                    discoverySource = null
+                }) { Text("取消") }
             }
         )
     }
@@ -340,27 +456,34 @@ fun SettingsPage(
 
                 // ============ 模型 ============
                 if (isVisible("model")) {
-                item { PocoGroupTitle("模型") }
-                items(local.profiles, key = { it.id }) { profile ->
+                // 按 kind 分组：对话模型 / 文生图模型。
+                // 旧实现平铺所有 profile，生图模型混在对话模型里，用户分不清。
+                val chatProfiles = local.profiles.filter { it.kind != "image" }
+                val imageProfiles = local.profiles.filter { it.kind == "image" }
+
+                item { PocoGroupTitle("对话模型") }
+                items(chatProfiles, key = { it.id }) { profile ->
                     ModelProfileCard(
                         profile = profile,
-                        isCurrent = profile.kind != "image" && profile.id == local.currentProfileId,
+                        isCurrent = profile.id == local.currentProfileId,
+                        isImageSelected = false,
                         expanded = expandedProfileId == profile.id,
                         testing = testingProfileId == profile.id,
                         onToggleExpand = {
                             expandedProfileId = if (expandedProfileId == profile.id) null else profile.id
                         },
-                        onSetCurrent = {
-                            if (profile.kind != "image") {
-                                quickSave(local.copy(currentProfileId = profile.id))
-                            }
-                        },
+                        onSetCurrent = { quickSave(local.copy(currentProfileId = profile.id)) },
+                        onSetImage = null,
                         onEdit = { editingProfile = profile },
                         onDelete = { pendingDeleteProfileId = profile.id },
                         onTest = {
                             testingProfileId = profile.id
                             scope.launch {
-                                val err = testModelConnection(profile)
+                                // testModelConnection 内部是 httpClient.execute() 阻塞调用，
+                                // connectTimeout 30s，在 Main dispatcher 上会卡 UI 30 秒。
+                                val err = withContext(Dispatchers.IO) {
+                                    testModelConnection(profile)
+                                }
                                 testingProfileId = null
                                 testResultOk = err == null
                                 testResultText = err ?: "OK"
@@ -368,114 +491,77 @@ fun SettingsPage(
                         }
                     )
                 }
-                item { AddModelButton(onClick = { showAddModel = true }) }
+                item { AddModelButton(text = "添加对话模型", onClick = { showAddModel = true }) }
+
+                // 文生图模型单独一组：卡片上直接「设为生图模型」，不再另设下拉框
+                item { PocoGroupTitle("文生图模型") }
+                if (imageProfiles.isEmpty()) {
+                    item {
+                        PocoCard {
+                            Text(
+                                "还没有文生图模型。添加后 AI 才能生图。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
+                    }
+                }
+                items(imageProfiles, key = { it.id }) { profile ->
+                    ModelProfileCard(
+                        profile = profile,
+                        isCurrent = false,
+                        isImageSelected = profile.id == local.imageProfileId,
+                        expanded = expandedProfileId == profile.id,
+                        testing = testingProfileId == profile.id,
+                        onToggleExpand = {
+                            expandedProfileId = if (expandedProfileId == profile.id) null else profile.id
+                        },
+                        onSetCurrent = { },
+                        onSetImage = {
+                            // 再点一次已选中的 → 取消选择（不启用生图）
+                            val newId = if (local.imageProfileId == profile.id) "" else profile.id
+                            quickSave(local.copy(imageProfileId = newId))
+                        },
+                        onEdit = { editingProfile = profile },
+                        onDelete = { pendingDeleteProfileId = profile.id },
+                        onTest = {
+                            testingProfileId = profile.id
+                            scope.launch {
+                                val err = withContext(Dispatchers.IO) {
+                                    testModelConnection(profile)
+                                }
+                                testingProfileId = null
+                                testResultOk = err == null
+                                testResultText = err ?: "OK"
+                            }
+                        }
+                    )
+                }
                 item { AddModelButton(text = "添加文生图模型", onClick = { showAddImageModel = true }) }
                 item { Spacer(Modifier.height(8.dp)) }
 
-                // ============ 文生图模型选择 ============
+                // ============ 会话摘要 / 子代理模型选择 ============
                 item {
                     PocoCard {
                         Column(modifier = Modifier.padding(16.dp)) {
-                            Text(
-                                "文生图模型",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface
+                            ModelPickerRow(
+                                title = "会话摘要模型",
+                                desc = "每天首次打开时，用该模型把历史会话压成一句标签存入记忆。不选则不启用。",
+                                profiles = chatProfiles,
+                                selectedId = local.summaryProfileId,
+                                emptyLabel = "不启用",
+                                onSelect = { quickSave(local.copy(summaryProfileId = it)) }
                             )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "选中后，AI 生图走该模型（只能生图，不参与对话）。不选则不启用生图。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(10.dp))
-                            var imageMenuOpen by remember { mutableStateOf(false) }
-                            val imageName = local.profiles
-                                .firstOrNull { it.id == local.imageProfileId && it.kind == "image" }?.name
-                                ?: "不启用"
-                            Box {
-                                OutlinedButton(
-                                    onClick = { imageMenuOpen = true },
-                                    shape = RoundedCornerShape(AppRadius.SM)
-                                ) {
-                                    Text(imageName)
-                                    Icon(
-                                        Icons.Default.KeyboardArrowDown,
-                                        contentDescription = null
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = imageMenuOpen,
-                                    onDismissRequest = { imageMenuOpen = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("不启用") },
-                                        onClick = {
-                                            imageMenuOpen = false
-                                            quickSave(local.copy(imageProfileId = ""))
-                                        }
-                                    )
-                                    local.profiles.filter { it.kind == "image" }.forEach { p ->
-                                        DropdownMenuItem(
-                                            text = { Text(p.name.ifBlank { "未命名" }) },
-                                            onClick = {
-                                                imageMenuOpen = false
-                                                quickSave(local.copy(imageProfileId = p.id))
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-
                             Spacer(Modifier.height(16.dp))
-                            Text(
-                                "子代理模型",
-                                style = MaterialTheme.typography.bodyLarge,
-                                color = MaterialTheme.colorScheme.onSurface
+                            ModelPickerRow(
+                                title = "子代理模型",
+                                desc = "AI 派发子代理（run_sub_session）时用该模型。",
+                                profiles = chatProfiles,
+                                selectedId = local.subAgentProfileId,
+                                emptyLabel = "跟随主模型",
+                                onSelect = { quickSave(local.copy(subAgentProfileId = it)) }
                             )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                "AI 派发子代理（run_sub_session）时用该模型。",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(10.dp))
-                            var subAgentMenuOpen by remember { mutableStateOf(false) }
-                            val subAgentName = local.profiles
-                                .firstOrNull { it.id == local.subAgentProfileId && it.kind != "image" }?.name
-                                ?: "跟随主模型"
-                            Box {
-                                OutlinedButton(
-                                    onClick = { subAgentMenuOpen = true },
-                                    shape = RoundedCornerShape(AppRadius.SM)
-                                ) {
-                                    Text(subAgentName)
-                                    Icon(
-                                        Icons.Default.KeyboardArrowDown,
-                                        contentDescription = null
-                                    )
-                                }
-                                DropdownMenu(
-                                    expanded = subAgentMenuOpen,
-                                    onDismissRequest = { subAgentMenuOpen = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text("跟随主模型") },
-                                        onClick = {
-                                            subAgentMenuOpen = false
-                                            quickSave(local.copy(subAgentProfileId = ""))
-                                        }
-                                    )
-                                    local.profiles.filter { it.kind != "image" }.forEach { p ->
-                                        DropdownMenuItem(
-                                            text = { Text(p.name.ifBlank { "未命名" }) },
-                                            onClick = {
-                                                subAgentMenuOpen = false
-                                                quickSave(local.copy(subAgentProfileId = p.id))
-                                            }
-                                        )
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -1047,16 +1133,20 @@ private fun AddModelButton(text: String = "添加自定义模型", onClick: () -
 private fun ModelProfileCard(
     profile: ModelProfile,
     isCurrent: Boolean,
+    /** 文生图模型是否被选为当前生图模型（仅 kind=="image" 时有意义）。 */
+    isImageSelected: Boolean,
     expanded: Boolean,
     testing: Boolean,
     onToggleExpand: () -> Unit,
     onSetCurrent: () -> Unit,
+    /** 设为生图模型； 表示该卡片不提供此操作（对话模型）。 */
+    onSetImage: (() -> Unit)?,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     onTest: () -> Unit
 ) {
     // 批次 22 UI 收口 用 PocoCard(selectedBorder) 替代「外层 Box 描边 + 内层 PocoCard」双层结构。
-    PocoCard(selectedBorder = isCurrent) {
+    PocoCard(selectedBorder = isCurrent || isImageSelected) {
         Column(
             modifier = Modifier
                 .padding(12.dp)
@@ -1072,9 +1162,12 @@ private fun ModelProfileCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 RadioButton(
-                    selected = isCurrent,
-                    onClick = onSetCurrent,
-                    enabled = profile.kind != "image",
+                    selected = isCurrent || isImageSelected,
+                    onClick = {
+                        // 对话模型 → 设为当前对话模型；生图模型 → 切换生图选中状态
+                        if (onSetImage != null) onSetImage() else onSetCurrent()
+                    },
+                    enabled = true,
                     colors = RadioButtonDefaults.colors(
                         selectedColor = MaterialTheme.colorScheme.primary
                     )
@@ -1109,6 +1202,7 @@ private fun ModelProfileCard(
                         when {
                             profile.apiKey.isBlank() -> "未配置 API Key"
                             isCurrent -> "当前使用中"
+                            isImageSelected -> "当前生图模型"
                             else -> "已配置"
                         },
                         style = MaterialTheme.typography.bodySmall,
@@ -1148,23 +1242,6 @@ private fun ModelProfileCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     OutlinedButton(
-                        onClick = onTest,
-                        enabled = !testing,
-                        shape = RoundedCornerShape(AppRadius.SM),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        if (testing) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("测试中")
-                        } else {
-                            Text("测试连接")
-                        }
-                    }
-                    OutlinedButton(
                         onClick = onEdit,
                         shape = RoundedCornerShape(AppRadius.SM),
                         modifier = Modifier.weight(1f)
@@ -1177,6 +1254,70 @@ private fun ModelProfileCard(
                         ),
                         modifier = Modifier.weight(1f)
                     ) { Text("删除") }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 模型选择行：左侧标题 + 说明，右侧下拉按钮。
+ *
+ * 会话摘要模型 / 子代理模型共用这个组件，避免两段几乎一样的代码。
+ * [emptyLabel] 是「不选」时的显示文案（如「不启用」「跟随主模型」）。
+ */
+@Composable
+private fun ModelPickerRow(
+    title: String,
+    desc: String,
+    profiles: List<ModelProfile>,
+    selectedId: String,
+    emptyLabel: String,
+    onSelect: (String) -> Unit
+) {
+    var menuOpen by remember { mutableStateOf(false) }
+    val selectedName = profiles.firstOrNull { it.id == selectedId }?.name
+        ?: emptyLabel
+    Column {
+        Text(
+            title,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            desc,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(10.dp))
+        Box {
+            OutlinedButton(
+                onClick = { menuOpen = true },
+                shape = RoundedCornerShape(AppRadius.SM)
+            ) {
+                Text(selectedName)
+                Icon(Icons.Default.KeyboardArrowDown, contentDescription = null)
+            }
+            DropdownMenu(
+                expanded = menuOpen,
+                onDismissRequest = { menuOpen = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text(emptyLabel) },
+                    onClick = {
+                        menuOpen = false
+                        onSelect("")
+                    }
+                )
+                profiles.forEach { p ->
+                    DropdownMenuItem(
+                        text = { Text(p.name.ifBlank { "未命名" }) },
+                        onClick = {
+                            menuOpen = false
+                            onSelect(p.id)
+                        }
+                    )
                 }
             }
         }

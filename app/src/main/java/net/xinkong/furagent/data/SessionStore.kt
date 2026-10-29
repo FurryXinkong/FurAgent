@@ -349,6 +349,24 @@ object SessionStore {
     }
 
     /**
+     * 请求把待写会话落盘，不阻塞调用方。
+     *
+     * 用于 `onPause` 这类不能阻塞的场景：只投递任务到后台 HandlerThread，
+     * 不等待完成。进程被杀时最多丢 500ms 内的修改，比 ANR 风险更好。
+     *
+     * 进程即将退出（onDestroy）时仍应用 `flushPending` 阻塞等待完成。
+     */
+    fun requestFlush(context: Context) {
+        if (pendingSessionSaves.isEmpty()) return
+        sessionWriteHandler.post {
+            try {
+                doWriteSessionsNow(context)
+            } catch (_: Throwable) {
+            }
+        }
+    }
+
+    /**
      * 关闭后台写盘线程。MainActivity.onDestroy 调用。
      *
      * quitSafely 会等队列里已入队的消息执行完再退出，pending 的写盘不会丢。

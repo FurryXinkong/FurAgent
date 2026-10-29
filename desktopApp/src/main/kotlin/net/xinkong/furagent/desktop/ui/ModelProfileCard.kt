@@ -7,7 +7,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,8 +20,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.xinkong.furagent.desktop.data.BUILTIN_MODEL_PRESETS
 import net.xinkong.furagent.desktop.data.DesktopModelProfile
-import net.xinkong.furagent.desktop.data.DesktopSettings
 import net.xinkong.furagent.desktop.ui.theme.Radius
+import net.xinkong.furagent.shared.icons.Icons
 
 /**
  * 模型配置卡片组件（从 SettingsPage.kt 拆分）。
@@ -35,16 +34,22 @@ import net.xinkong.furagent.desktop.ui.theme.Radius
 fun ModelProfileCard(
     profile: DesktopModelProfile,
     isCurrent: Boolean,
+    /** 文生图模型是否被选为当前生图模型（仅 kind=="image" 时有意义）。 */
+    isImageSelected: Boolean = false,
     onSetCurrent: () -> Unit,
+    /** 设为生图模型； 表示该卡片不提供此操作（对话模型）。 */
+    onSetImage: (() -> Unit)? = null,
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
 
+    val selected = isCurrent || isImageSelected
+
     val bg by animateColorAsState(
         targetValue = when {
-            isCurrent -> AccentSoft()
+            selected -> AccentSoft()
             hovered -> CardHoverColor()
             else -> CardStrongColor()
         },
@@ -52,7 +57,7 @@ fun ModelProfileCard(
         label = "modelCardBg"
     )
     val borderColor by animateColorAsState(
-        targetValue = if (isCurrent) AccentColor().copy(alpha = 0.5f) else BorderColor(),
+        targetValue = if (selected) AccentColor().copy(alpha = 0.5f) else BorderColor(),
         animationSpec = tween(140),
         label = "modelCardBorder"
     )
@@ -66,7 +71,7 @@ fun ModelProfileCard(
             .clickable(
                 interactionSource = interaction,
                 indication = null,
-                onClick = onSetCurrent
+                onClick = { if (onSetImage != null) onSetImage() else onSetCurrent() }
             )
     ) {
         Row(
@@ -74,9 +79,9 @@ fun ModelProfileCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             RadioButton(
-                selected = isCurrent,
-                onClick = onSetCurrent,
-                enabled = profile.kind != "image",
+                selected = selected,
+                onClick = { if (onSetImage != null) onSetImage() else onSetCurrent() },
+                enabled = true,
                 colors = RadioButtonDefaults.colors(selectedColor = AccentColor())
             )
             Spacer(Modifier.width(4.dp))
@@ -99,6 +104,21 @@ fun ModelProfileCard(
                         ) {
                             Text(
                                 "使用中",
+                                fontSize = 9.sp,
+                                color = AccentColor(),
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    }
+                    if (isImageSelected) {
+                        Spacer(Modifier.width(6.dp))
+                        Box(
+                            Modifier.clip(RoundedCornerShape(Radius.XS))
+                                .background(AccentColor().copy(alpha = 0.18f))
+                                .padding(horizontal = 5.dp, vertical = 1.dp)
+                        ) {
+                            Text(
+                                "生图中",
                                 fontSize = 9.sp,
                                 color = AccentColor(),
                                 fontWeight = FontWeight.Medium
@@ -179,6 +199,7 @@ fun EditModelProfileDialog(
     var presencePenalty by remember { mutableStateOf(initial.presencePenalty.toFloat()) }
     var frequencyPenalty by remember { mutableStateOf(initial.frequencyPenalty.toFloat()) }
     var selectedPresetId by remember { mutableStateOf<String?>(null) }
+    var protocol by remember { mutableStateOf(initial.protocol.ifBlank { "openai" }) }
     val isImageModel = initial.kind == "image"
 
     GlassDialog(
@@ -226,7 +247,35 @@ fun EditModelProfileDialog(
 
                     Spacer(Modifier.height(4.dp))
                     GlassTextField(name, { name = it }, label = "显示名称", placeholder = "例如：DeepSeek")
-                    GlassTextField(baseUrl, { baseUrl = it }, label = "Base URL", placeholder = "https://.../v1/chat/completions")
+                    GlassTextField(baseUrl, { baseUrl = it }, label = "Base URL", placeholder = "https://api.xiaomimimo.com/v1")
+                    // 协议选择：同一个服务商可能同时提供两种兼容协议
+                    Column(Modifier.fillMaxWidth()) {
+                        Text("API 协议", fontSize = 13.sp, color = TextPrimary())
+                        Text(
+                            "OpenAI 走 /chat/completions，Anthropic 走 /v1/messages。" +
+                                    "只填到 /v1 这类版本号会自动补全路径。",
+                            fontSize = 11.sp, color = TextSecondary()
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("openai" to "OpenAI 格式", "anthropic" to "Anthropic 格式")
+                                .forEach { (value, label) ->
+                                    val selected = protocol == value
+                                    TextButton(
+                                        onClick = { protocol = value },
+                                        colors = if (selected) {
+                                            ButtonDefaults.textButtonColors(
+                                                contentColor = AccentColor()
+                                            )
+                                        } else {
+                                            ButtonDefaults.textButtonColors(
+                                                contentColor = TextSecondary()
+                                            )
+                                        }
+                                    ) { Text(if (selected) "✓ $label" else label) }
+                                }
+                        }
+                    }
                     GlassTextField(model, { model = it }, label = "模型名", placeholder = "deepseek-chat")
                     GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...")
                     GlassSwitchRow(
@@ -311,7 +360,8 @@ fun EditModelProfileDialog(
         actions = {
             TextButton(onClick = onDismiss) { Text("取消", color = TextSecondary()) }
             TextButton(onClick = {
-                if (name.isNotBlank() && baseUrl.isNotBlank() && model.isNotBlank()) {
+                // 模型名允许为空：只填裸 base 时保存后会自动探测 /models
+                if (name.isNotBlank() && baseUrl.isNotBlank()) {
                     onConfirm(
                         initial.copy(
                             name = name.trim(), baseUrl = baseUrl.trim(),
@@ -319,11 +369,11 @@ fun EditModelProfileDialog(
                             supportsThinking = supportsThinking,
                             supportsVision = supportsVision,
                             temperature = temperature.toDouble(),
-                            presencePenalty = presencePenalty.toDouble(),
                             frequencyPenalty = frequencyPenalty.toDouble(),
-                            kind = initial.kind
+                            kind = initial.kind,
+                            protocol = protocol
                         )
-                    )
+                        )
                 }
             }) { Text("保存", color = AccentColor(), fontWeight = FontWeight.SemiBold) }
         }

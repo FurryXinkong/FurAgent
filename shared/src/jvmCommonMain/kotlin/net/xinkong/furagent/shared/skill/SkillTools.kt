@@ -85,7 +85,7 @@ object SkillTools {
                         paramsSchema = meta.paramsSchema()
                     )
                 }
-        } catch (e: Throwable) {
+        } catch (e: Exception) {
             net.xinkong.furagent.shared.tools.ToolLogger.log(
                 "Skill",
                 "dynamicTools 失败（Python 未就绪？）：${e.javaClass.simpleName}: ${e.message}"
