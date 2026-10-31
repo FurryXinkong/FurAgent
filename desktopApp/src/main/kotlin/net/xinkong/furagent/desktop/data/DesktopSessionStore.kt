@@ -15,7 +15,43 @@ import kotlin.time.Duration.Companion.milliseconds
 
 object DesktopSessionStore {
 
-    private val RE_ILLEGAL_FN = Regex("""[\\/:*?"<>|]""")
+    /**
+     * 文件名非法字符。
+     *
+     * 旧正则 `[\\/:*?"<>|]` 只覆盖了 Windows 的保留符号，漏了控制字符：
+     * 会话标题里带 Tab / 换行（从日志、代码块里截出来的标题很常见）时，
+     * 生成的文件名含 \t，Windows 直接报「文件名、目录名或卷标语法不正确」。
+     *
+     * 这里把 0x00-0x1F 全部控制字符也纳入替换范围。
+     */
+    private val RE_ILLEGAL_FN = Regex("[\\/:*?\"<>|\\x00-\\x1F]")
+
+    /** Windows 保留设备名，不能作为文件名（不区分大小写，带扩展名也不行）。 */
+    private val WINDOWS_RESERVED = setOf(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    )
+
+    /**
+     * 把任意标题转成 Windows 下合法的文件名主干。
+     *
+     * 处理：非法字符/控制字符 → 下划线；去掉首尾空白和结尾的点；
+     * 保留设备名加前缀；超长截断（给时间戳和扩展名留余量）。
+     */
+    private fun sanitizeFileName(raw: String, maxLen: Int = 80): String {
+        var s = raw.replace(RE_ILLEGAL_FN, "_")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            // Windows 不允许文件名以点或空格结尾
+            .trimEnd('.', ' ')
+        if (s.isBlank()) s = "未命名会话"
+        if (s.length > maxLen) s = s.take(maxLen).trimEnd('.', ' ')
+        if (s.isBlank()) s = "未命名会话"
+        // CON.md 这类也是非法的，加下划线前缀避开
+        if (s.substringBefore('.').uppercase() in WINDOWS_RESERVED) s = "_$s"
+        return s
+    }
 
     private const val MAX_EXPORT_IMAGE_BYTES = 5L * 1024 * 1024
 
@@ -358,7 +394,7 @@ object DesktopSessionStore {
 
     fun exportMarkdown(session: DesktopSession, hideToolMessages: Boolean = false): File? {
         return try {
-            val safeTitle = session.title.replace(RE_ILLEGAL_FN, "_")
+            val safeTitle = sanitizeFileName(session.title)
             val ts = DateFormats.formatFileTs()
             val file = File(exportsDir(), "${safeTitle}_$ts.md")
             val content = net.xinkong.furagent.shared.data.SessionCodec.sessionToMarkdown(

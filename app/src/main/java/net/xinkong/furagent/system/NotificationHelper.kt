@@ -18,6 +18,15 @@ object NotificationHelper {
     private const val DOWNLOAD_ID_BASE = 2003
 
     /**
+     * 更新包安装通知的独立 ID。
+     *
+     * 旧实现复用 DOWNLOAD_ID_BASE（2003），而 acquireDownloadSlot 也从 2003 起自增，
+     * 应用内更新下载 + 任意一个普通文件下载同时进行时会互相覆盖通知。
+     * 用 2999 避开下载槽位（通常最多到 2010 左右）。
+     */
+    private const val APK_INSTALL_ID = 2999
+
+    /**
      * 下载进度通知的槽位分配器。
      *
      * 每个下载任务占一个独立通知 ID，避免并行下载时互相覆盖进度条。
@@ -385,7 +394,7 @@ object NotificationHelper {
             }
             val pi = PendingIntent.getActivity(
                 context,
-                DOWNLOAD_ID_BASE,
+                APK_INSTALL_ID,
                 installIntent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
@@ -398,7 +407,7 @@ object NotificationHelper {
                 .setContentIntent(pi)
             try {
                 NotificationManagerCompat.from(context)
-                    .notify(DOWNLOAD_ID_BASE, builder.build())
+                    .notify(APK_INSTALL_ID, builder.build())
             } catch (_: SecurityException) { }
         } catch (e: Exception) {
             AgentLogger.log(

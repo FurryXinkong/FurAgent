@@ -59,13 +59,18 @@ object FfmpegHelper {
         val sessionId: Long = 0
     )
 
-    @Volatile
-    var totalExecutions: Long = 0
-        private set
+    /**
+     * 累计执行次数 / 总耗时。
+     *
+     * 旧实现是 `@Volatile var` + `++` / `+=`，不是原子操作：
+     * 两个 ffmpeg 并发完成时（Semaphore 允许 2 个），读-改-写会互相覆盖，
+     * 统计值偏小。改用 AtomicLong。
+     */
+    private val totalExecutionsCounter = AtomicLong(0)
+    private val totalDurationCounter = AtomicLong(0)
 
-    @Volatile
-    var totalDurationMs: Long = 0
-        private set
+    val totalExecutions: Long get() = totalExecutionsCounter.get()
+    val totalDurationMs: Long get() = totalDurationCounter.get()
 
     /** 解析 ffmpeg 可执行文件路径，找不到返回 null。 */
     private fun resolveFfmpeg(): String? {
@@ -221,8 +226,8 @@ object FfmpegHelper {
                 "结束：${if (success) "成功" else "失败"}，耗时 ${elapsed}ms"
             )
 
-            totalExecutions++
-            totalDurationMs += elapsed
+            totalExecutionsCounter.incrementAndGet()
+            totalDurationCounter.addAndGet(elapsed)
 
             FfmpegResult(
                 success = success,
@@ -258,7 +263,12 @@ object FfmpegHelper {
             ).redirectErrorStream(true).start()
 
             val output = process.inputStream.bufferedReader().use { it.readText() }
-            process.waitFor(60, TimeUnit.SECONDS)
+            // 旧实现没检查 waitFor 返回值：超时后进程还在跑，readText 已经返回，
+            // 进程变成孤儿一直占着 CPU。这里超时必须强制终止。
+            if (!process.waitFor(60, TimeUnit.SECONDS)) {
+                try { process.destroyForcibly() } catch (_: Throwable) { }
+                return@withContext """{"error":"ffprobe 超时（60s），已强制终止"}"""
+            }
 
             if (output.isBlank()) {
                 return@withContext """{"error":"ffprobe 无输出"}"""

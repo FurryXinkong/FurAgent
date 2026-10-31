@@ -72,13 +72,23 @@ object DesktopConfirmation {
         return approved
     }
 
-    /** UI 层调用，回传用户选择。只完成队首，并推进到下一个。 */
+    /**
+     * UI 层调用，回传用户选择。只完成队首，并推进到下一个。
+     *
+     * 超时边界：request 的 withTimeoutOrNull 超时后会自己把 entry 从队列移除，
+     * 但若 resolve 恰好也在同一时刻执行，removeFirstOrNull 可能拿到的是
+     * 下一个 entry（或 null）。这里在锁内完成「移除 + complete」，
+     * 并检查 deferred 是否还 active，避免给已超时的请求补一个迟到的结果。
+     */
     fun resolve(approved: Boolean) {
         val head = synchronized(lock) {
             val h = queue.removeFirstOrNull()
             if (h != null) publishHeadLocked()
             h
         }
-        head?.deferred?.complete(approved)
+        // 已超时/已取消的 deferred 不再 complete，避免调用方拿到两次结果
+        if (head != null && head.deferred.isActive) {
+            head.deferred.complete(approved)
+        }
     }
 }

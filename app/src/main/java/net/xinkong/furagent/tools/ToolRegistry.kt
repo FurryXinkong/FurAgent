@@ -44,7 +44,21 @@ fun outputDir(context: android.content.Context, sub: String): java.io.File {
     return fallback
 }
 
-private val PRIVATE_TOOL_DISPLAY_NAMES: Map<String, String> = mapOf(
+    /**
+     * displayName() 里硬编码的特殊工具名。
+     *
+     * 必须与 findToolNameByDisplay() 共用同一张表：
+     * 之前 displayName() 里写 if (name == "pytool") return "自定义脚本"，
+     * findToolNameByDisplay() 里又手写一遍 when 分支，两处容易漂移，
+     * 一旦漂移历史回放就会把中文名当工具名发给 API。
+     */
+    private val SPECIAL_DISPLAY_NAMES: Map<String, String> = mapOf(
+        "pytool" to "自定义脚本",
+        "python" to "执行 Python 代码",
+        "history" to "修改历史"
+    )
+
+    private val PRIVATE_TOOL_DISPLAY_NAMES: Map<String, String> = mapOf(
     "app" to "应用",
     "device" to "设备",
     "calendar" to "日程",
@@ -542,9 +556,7 @@ object ToolRegistry {
     fun displayName(name: String): String {
         CommonToolSchemas.DISPLAY_NAMES[name]?.let { return it }
         PRIVATE_TOOL_DISPLAY_NAMES[name]?.let { return it }
-        if (name == "pytool") return "自定义脚本"
-        if (name == "python") return "执行 Python 代码"
-        if (name == "history") return "修改历史"
+        SPECIAL_DISPLAY_NAMES[name]?.let { return it }
         if (net.xinkong.furagent.shared.skill.SkillTools.isDynamicTool(name)) {
             return "脚本：${name.removePrefix(net.xinkong.furagent.shared.skill.SkillStore.TOOL_PREFIX)}"
         }
@@ -570,6 +582,17 @@ object ToolRegistry {
     }
 
     fun findToolNameByDisplay(display: String): String? {
+        // 特殊工具：displayName() 里硬编码返回，没有进 DISPLAY_NAMES / PRIVATE_TOOL_DISPLAY_NAMES。
+        // 历史回放时反查不到，会把中文显示名塞进 tool_calls[].function.name，
+        // 下一轮 API 请求里工具名不存在，模型 400 或工具被忽略。
+        // 现在 displayName() 和本方法共用 SPECIAL_DISPLAY_NAMES 一张表，不会再漂移。
+        SPECIAL_DISPLAY_NAMES.forEach { (name, dn) ->
+            if (dn == display) return name
+        }
+        // 动态脚本工具 pytool_<name> 的 displayName 是「脚本：<name>」
+        if (display.startsWith("脚本：")) {
+            return "pytool_" + display.removePrefix("脚本：").trim()
+        }
         CommonToolSchemas.DISPLAY_NAMES.forEach { (name, dn) ->
             if (dn == display) return name
         }
@@ -652,6 +675,62 @@ object ToolRegistry {
         settings: AppSettings,
         context: Context
     ): String {
+        // 批量写入：write_file 的 schema 明说推荐用 files 数组一次性写多个文件。
+        // 旧实现只确认顶层 path，CommonTools.execute 走 filesArr 分支写 b/c/d，
+        // 用户批准了 a.txt 实际改了 b.txt/c.txt —— 确认机制被绕过。
+        val filesArr = args.optJSONArray("files")
+        if (filesArr != null && filesArr.length() > 0) {
+            val paths = mutableListOf<String>()
+            for (i in 0 until filesArr.length()) {
+                val f = filesArr.optJSONObject(i) ?: continue
+                val p = f.optString("path", "").trim()
+                if (p.isBlank()) continue
+                val resolved = host.resolvePath(p)
+                    ?: return "失败：路径不允许访问：$p"
+                paths.add(resolved)
+            }
+            if (paths.isEmpty()) return "失败：files 数组为空或都缺少 path"
+
+            val isSubSession = kotlinx.coroutines.currentCoroutineContext()[
+                kotlinx.coroutines.CoroutineName
+            ]?.name == ConfirmationBroker.SUBSESSION_COROUTINE_NAME
+
+            if (settings.requireConfirmWrite && !isSubSession) {
+                val list = paths.joinToString("\n") { "· $it" }
+                val approved = ConfirmationBroker.request(
+                    "批量写入文件确认",
+                    "AI 请求写入 ${paths.size} 个文件：\n$list\n\n是否允许？"
+                )
+                if (!approved) return "用户已拒绝写入操作，文件未改动"
+            }
+
+            // 写前备份：执行前把所有已存在文件的当前内容记入历史
+            if (settings.fileBackupEnabled) {
+                val backupDir = BackupHelper.backupDirFor(host.trashDir())
+                if (backupDir != null) {
+                    val store = HistoryStore.getInstance(context)
+                    paths.forEach { resolved ->
+                        val f = java.io.File(resolved)
+                        if (f.exists()) {
+                            val oldBytes = try { f.readBytes() } catch (_: Exception) { null }
+                            if (oldBytes != null) {
+                                store.recordEdit(
+                                    backupDir, resolved, "write",
+                                    oldBytes, null, "write_file",
+                                    sessionId = currentSessionId()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            val r = CommonTools.execute("write_file", args, host)
+                ?: return "失败：内部错误，CommonTools 未处理 write_file"
+            return if (r.success) r.output else "失败：${r.output}"
+        }
+
+        // 单文件：原逻辑
         val pathStr = args.optString("path", "").trim()
         if (pathStr.isBlank()) return "失败：未提供 path"
 

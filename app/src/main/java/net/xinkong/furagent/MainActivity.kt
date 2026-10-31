@@ -765,7 +765,9 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         val idx = sessionList.indexOfFirst { it.id == id }
         sessionList = if (idx >= 0) {
             sessionList.toMutableList().apply {
-                set(idx, SessionMeta(id, title, currentSessionCreatedAt, now, chatHistory.size))
+                // parentId 兜底：persist 重造 SessionMeta 时不能丢 parentId，
+            // 否则子会话在主列表 filter { it.parentId == null } 也拦不住，会混进主列表。
+            set(idx, SessionMeta(id, title, currentSessionCreatedAt, now, chatHistory.size, existing?.parentId))
             }
         } else {
             // 新会话首次保存，fallback 到完整读取
@@ -1340,6 +1342,15 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
     }
     var userScrolledUp by remember { mutableStateOf(false) }
+    // 切会话时重置滚动锁：旧实现 userScrolledUp 是 remember 的，不随 currentSessionId 变。
+    // 用户在看 A 的历史（userScrolledUp=true），切到 B 后因为用户没上滑过但
+    // userScrolledUp 还是 true，自动滚动永远不触发，看到的是 B 中间的旧位置。
+    LaunchedEffect(currentSessionId) {
+        userScrolledUp = false
+        // 等列表重组 + 布局稳定后再滚，避免 scrollToItem 越界
+        delay(100.milliseconds)
+        try { listState.scrollToItem(Int.MAX_VALUE) } catch (_: Exception) { }
+    }
     // 删掉无效的 programmaticScroll：scrollToItem 是 suspend 且同步完成，
     // 而 snapshotFlow 的 collect 是异步的，等到 collect 执行时标志早已复位，拦不住任何东西。
     LaunchedEffect(listState) {
@@ -2265,6 +2276,15 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column {
+                                // ── 分层配色（ChatGPT 式）────────────────────────
+                                // 上：输入区，不透明底色（surface），文字直接坐在上面
+                                // 下：工具行，另一层底色（surfaceContainerHigh），视觉上「下沉」
+                                // 两层之间用 1px 分隔线，避免颜色接近时糊成一片
+                                // 外层 Surface 仍保留半透明玻璃感，但内部两层是不透明的，
+                                // 这样文字对比度稳定，不会因为背景渐变而忽明忽暗。
+                                val inputAreaBg = MaterialTheme.colorScheme.surface
+                                val toolRowBg = MaterialTheme.colorScheme.surfaceContainerHigh
+                                val layerDivider = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f)
                                 AnimatedVisibility(
                                     visible = autoChatMode,
                                     enter = expandVertically(tween(180)) + fadeIn(tween(150)),
@@ -2440,10 +2460,13 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         maxLines = 8,
                                         modifier = Modifier
                                             .fillMaxWidth()
-                                            .heightIn(min = 46.dp, max = 100.dp),
+                                            .heightIn(min = 46.dp, max = 100.dp)
+                                            // 输入区不透明底色：与下方工具行形成两层
+                                            .background(inputAreaBg),
                                         shape = RoundedCornerShape(AppRadius.XL),
                                         colors = OutlinedTextFieldDefaults.colors(
-                                            // 永不变色：聚焦/未聚焦都是透明，直接坐在外层玻璃容器上
+                                            // 永不变色：聚焦/未聚焦都是透明，
+                                            // 底色由外层 .background(inputAreaBg) 提供
                                             focusedContainerColor = Color.Transparent,
                                             unfocusedContainerColor = Color.Transparent,
                                             focusedBorderColor = Color.Transparent,
@@ -2452,9 +2475,17 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         )
                                     )
 
+                                        // 两层之间的分隔线
+                                        HorizontalDivider(
+                                            thickness = 1.dp,
+                                            color = layerDivider
+                                        )
+
                                         // 底部工具行：左 chip，右按钮
+                                        // 独立底色（toolRowBg），与上方输入区区分开
                                         Row(
                                             Modifier.fillMaxWidth()
+                                                .background(toolRowBg)
                                                 .padding(start = 10.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
@@ -2679,6 +2710,29 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             currentPage = null
                         },
                         onDelete = { id -> pendingDeleteSessionId = id },
+                        onDeleteBatch = { ids ->
+                            scope.launch {
+                                withContext(Dispatchers.IO) {
+                                    if (ids.contains(currentSessionId)) {
+                                        AgentRunner.cancel(context)
+                                    }
+                                    ids.forEach { id -> SessionStore.delete(context, id) }
+                                    SessionSummarizer.pruneState(context)
+                                }
+                                sessionList = SessionStore.list(context).filter { it.parentId == null }
+                                if (ids.contains(currentSessionId)) {
+                                    val next = sessionList.firstOrNull()
+                                    if (next != null) {
+                                        currentSessionId = next.id
+                                        val loaded = SessionStore.load(context, next.id)
+                                        chatHistory = loaded?.messages ?: emptyList()
+                                        currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
+                                    } else {
+                                        startNewSession()
+                                    }
+                                }
+                            }
+                        },
                         onRename = { id -> renamingSession = id },
                         onExport = { id -> exportSessionId = id },
                         onDuplicate = { id -> duplicateSession(id) },

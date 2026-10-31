@@ -131,7 +131,8 @@ object ToolCategory {
     fun categorize(name: String): String = when (name) {
         // 文件
         "list_files", "read_file", "write_file", "hash", "grep",
-        "file_op", "zip", "base64", "delete_file", "download_file" -> "file"
+        "file_op", "zip", "base64", "delete_file", "download_file",
+        "history" -> "file"
 
         // 系统
         "time", "calculate", "convert", "statistics", "text", "json",
@@ -164,10 +165,14 @@ object ToolCategory {
         // 代码
         "code_edit" -> "code"
 
-        // 脚本
-        "skill" -> "skill"
+        // 脚本（pytool 是常驻管理，python 是临时执行；项目里没有叫 skill 的工具）
+        "pytool", "python", "skill" -> "skill"
 
         // MCP 动态工具
-        else -> if (name.startsWith("mcp__")) "mcp" else "other"
+        else -> when {
+            name.startsWith("mcp__") -> "mcp"
+            name.startsWith("pytool_") -> "skill"
+            else -> "other"
+        }
     }
 }

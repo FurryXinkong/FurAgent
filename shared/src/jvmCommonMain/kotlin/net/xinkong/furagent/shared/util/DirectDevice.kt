@@ -73,6 +73,17 @@ object DirectDeviceCodec {
         if (parts.size == 2) {
             val host = parts[0]
             val second = parts[1]
+            // 短码是 6 位 hex，可能纯数字（如 "123456"）。
+            // 6 位纯数字不可能是端口（端口最大 65535 是 5 位），优先按短码处理。
+            if (second.length == 6 && second.all { it.isDigit() }) {
+                return DirectDevice(
+                    id = UUID.randomUUID().toString(),
+                    name = defaultName.ifBlank { host },
+                    host = host,
+                    port = DEFAULT_PORT,
+                    token = second
+                )
+            }
             // 第二段是纯数字 → 视为 host:port，缺少 code（拒绝）
             // 第二段是短码 → host:code
             if (second.toIntOrNull() != null) return null

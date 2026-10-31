@@ -119,7 +119,7 @@ object ToolCatalog {
         val zhWhole = zh.any { it.contains(q) || q.contains(it) }
         val zhTerm = zh.any { k -> terms.any { tm -> tm.isNotEmpty() && k.contains(tm) } }
 
-        return when {
+        val exact = when {
             name == q -> 100
             name.contains(q) -> 60
             zh.any { it.equals(q, ignoreCase = true) } -> 58
@@ -132,6 +132,44 @@ object ToolCatalog {
             terms.any { it.length >= 2 && desc.contains(it) } -> 15
             else -> 0
         }
+        if (exact > 0) return exact
+
+        // 模糊兑底：子串全不中时，用编辑距离算名字相似度。
+        // 之前输错一个字母（read_fil / code_edti）就 0 分，模型只能盲猜重试。
+        // 阈值：名字长度 <= 6 允许 1 处差异，更长允许 2 处。
+        val maxDist = if (name.length <= 6) 1 else 2
+        val d = editDistance(name, q)
+        if (d <= maxDist) return 35 - d * 5
+
+        // 每个 term 单独算一次，取最好的（应对 "read file" 这种带空格的）
+        var best = 0
+        for (tm in terms) {
+            if (tm.length < 3) continue
+            val td = editDistance(name, tm)
+            val tMax = if (name.length <= 6) 1 else 2
+            if (td <= tMax) best = maxOf(best, 30 - td * 5)
+        }
+        return best
+    }
+
+    /** 编辑距离（Levenshtein），用于工具名模糊匹配。 */
+    fun editDistancePublic(a: String, b: String): Int = editDistance(a.lowercase(), b.lowercase())
+
+    private fun editDistance(a: String, b: String): Int {
+        if (a == b) return 0
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+        var prev = IntArray(b.length + 1) { it }
+        var cur = IntArray(b.length + 1)
+        for (i in 1..a.length) {
+            cur[0] = i
+            for (j in 1..b.length) {
+                val cost = if (a[i - 1] == b[j - 1]) 0 else 1
+                cur[j] = minOf(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost)
+            }
+            val t = prev; prev = cur; cur = t
+        }
+        return prev[b.length]
     }
 
     /**
@@ -166,9 +204,10 @@ object ToolCatalog {
             arr.put(JSONObject().apply {
                 put("name", t.name)
                 put("category", ToolCategory.categorize(t.name))
-                // token 优化 description 从 400 降到 200 字符，
-                // 且不再重复输出 displayName（模型用 name 调用，displayName 无用）。
-                put("description", t.description.take(200))
+                // 描述只给前 80 字符：搜索结果只是「候选列表」，
+                // 模型看名字就能判断要不要用，详细说明在 tool_load 里。
+                // 之前 200 字符 × 5 个 = 1000 字符，纯浪费。
+                put("description", t.description.take(80))
                 put("parameters", try {
                     JSONObject(t.paramsSchema)
                 } catch (_: Exception) {

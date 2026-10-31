@@ -180,7 +180,6 @@ object PythonTools {
      *
      * 返回 null 表示安全；非 null 是拒绝文案。
      */
-
     private val DESTRUCTIVE_PYTHON_PATTERNS = listOf(
         Regex("""shutil\.rmtree"""),
         Regex("""os\.remove"""),
@@ -190,8 +189,8 @@ object PythonTools {
         Regex("""pathlib.*\.unlink"""),
         Regex("""pathlib.*\.rmdir"""),
         Regex("""\.unlink\("""),
-        Regex("""subprocess.*(rm|del|rmdir|rd)"""),
-        Regex("""os\.system\s*\(\s*['"]\s*(rm|del|rmdir|rd)""")
+        Regex("""subprocess.*\b(rm|del|rmdir|rd)\b"""),
+        Regex("""os\.system\s*\(\s*['"]\s*(rm|del|rmdir|rd)\b""")
     )
 
     private fun detectDestructivePython(code: String): String? {

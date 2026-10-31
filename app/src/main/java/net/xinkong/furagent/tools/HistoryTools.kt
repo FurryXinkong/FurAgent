@@ -4,13 +4,9 @@ import android.content.Context
 import net.xinkong.furagent.core.ConfirmationBroker
 import net.xinkong.furagent.data.HistoryStore
 import net.xinkong.furagent.shared.util.DateFormats
-import net.xinkong.furagent.shared.tools.BackupHelper
-import net.xinkong.furagent.shared.tools.ToolResult
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
 /**
  * 修改历史（内置 git）——与桌面端 HistoryTools 同能力。
@@ -53,7 +49,9 @@ object HistoryTools {
         val pathFilter = args.optString("path", "").trim()
         val limit = args.optInt("limit", 30).coerceIn(1, 200)
         val scope = args.optString("scope", "session").trim().ifBlank { "session" }
-        val currentSession = ToolRegistry.CurrentTaskSession.id
+        // 用协程上下文里的 sessionId 而非废弃的全局 CurrentTaskSession：
+        // Activity 重建时该值为空，scope=session 会退化成「全部会话」。
+        val currentSession = ToolRegistry.currentSessionId()
         val store = HistoryStore.getInstance(context)
 
         val all = store.listHistory(backupDir, 500)

@@ -17,7 +17,33 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 object SessionStore {
 
-    private val RE_ILLEGAL_FN = Regex("""[\\/:*?"<>|]""")
+    /**
+     * 文件名非法字符。
+     *
+     * 旧正则 `[\\/:*?"<>|]` 漏了控制字符：会话标题里带 Tab / 换行时，
+     * 生成的文件名含 \t，写入直接失败。这里把 0x00-0x1F 也纳入替换。
+     */
+    private val RE_ILLEGAL_FN = Regex("[\\/:*?\"<>|\\x00-\\x1F]")
+
+    /** Windows 保留设备名（导出到 SD 卡后拷到电脑上会踩）。 */
+    private val WINDOWS_RESERVED = setOf(
+        "CON", "PRN", "AUX", "NUL",
+        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+    )
+
+    /** 把任意标题转成合法文件名主干（与桌面端 DesktopSessionStore 同口径）。 */
+    private fun sanitizeFileName(raw: String, maxLen: Int = 80): String {
+        var s = raw.replace(RE_ILLEGAL_FN, "_")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+            .trimEnd('.', ' ')
+        if (s.isBlank()) s = "未命名会话"
+        if (s.length > maxLen) s = s.take(maxLen).trimEnd('.', ' ')
+        if (s.isBlank()) s = "未命名会话"
+        if (s.substringBefore('.').uppercase() in WINDOWS_RESERVED) s = "_$s"
+        return s
+    }
     private const val DIR_NAME = "sessions"
     private const val INDEX_FILE = "index.json"
 
@@ -733,7 +759,7 @@ object SessionStore {
         return try {
             val exportDir = File(SDCARD_PATH, "FurAgent/exports")
             if (!exportDir.exists()) exportDir.mkdirs()
-            val safeTitle = session.title.replace(RE_ILLEGAL_FN, "_")
+            val safeTitle = sanitizeFileName(session.title)
             val ts = DateFormats.formatFileTs()
             val file = File(exportDir, "${safeTitle}_$ts.md")
             val content = net.xinkong.furagent.shared.data.SessionCodec.sessionToMarkdown(

@@ -72,8 +72,8 @@ object CommonToolSchemas {
         ToolSpec(
             name = "read_file",
             displayName = "读取文件",
-            description = "读取文件内容。mode=text（默认）返回文本；传 offset/limit 按行区间读并带行号。要看日志最后几行，直接用：read_file(path=\"xxx.log\", mode=\"tail\", tail_lines=100)，无需计算 offset。要看多个文件，用 paths=[\"a.txt\", \"b.txt\"]。mode=base64 返回 base64；mode=hex 返回十六进制。",
-            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"},"description":"批量读多个文件。与 path 二选一"},"mode":{"type":"string","enum":["text","base64","hex","tail"]},"offset":{"type":"integer","description":"起始行号，1 起"},"limit":{"type":"integer","description":"最多读多少行"},"tail_lines":{"type":"integer","description":"mode=tail 时的行数，默认 100"},"length":{"type":"integer","description":"mode=hex 时显示的字节数"}},"required":[]}"""
+            description = "读文件。mode=text 全文；outline 结构骨架（大文件首选）；tail 末尾 N 行；base64/hex 二进制。paths 批量读。max_bytes 控制落盘阈值，不传=无限制。",
+            paramsSchema = """{"type":"object","properties":{"path":{"type":"string"},"paths":{"type":"array","items":{"type":"string"},"description":"批量读多个文件。与 path 二选一"},"mode":{"type":"string","enum":["text","outline","base64","hex","tail"],"description":"text=全文（默认）；outline=结构骨架+行号；tail=末尾 N 行；base64/hex=二进制"},"offset":{"type":"integer","description":"起始行号，1 起"},"limit":{"type":"integer","description":"最多读多少行"},"tail_lines":{"type":"integer","description":"mode=tail 时的行数，默认 100"},"length":{"type":"integer","description":"mode=hex 时显示的字节数"},"max_bytes":{"type":"integer","description":"结果超过该字节数就落盘。不传或传 0 = 无限制，全文直接返回"}},"required":[]}"""
         ),
 
         // 10. 写入文件

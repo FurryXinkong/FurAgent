@@ -13,8 +13,14 @@ object ShizukuHelper {
 
     const val PERMISSION_REQUEST_CODE = 1001
 
-    @Volatile
-    private var permissionDeferred: CompletableDeferred<Boolean>? = null
+    /**
+     * 并行请求保护：按 permission 名做 key。
+     *
+     * 旧实现是单个 `permissionDeferred` 变量，两个工具同时请求不同权限时，
+     * 后到的会覆盖先到的，先到的那个协程永远等不到结果（只能等 60s 超时）。
+     */
+    private val pendingPermissions =
+        java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
 
     fun isAvailable(): Boolean {
         return try { Shizuku.pingBinder() } catch (_: Exception) { false }
@@ -31,13 +37,20 @@ object ShizukuHelper {
         if (!isAvailable()) return false
         if (hasPermission()) return true
 
+        // 同一个权限并发请求时复用同一个 deferred，避免重复弹系统授权框
+        val key = "shizuku"
         val deferred = CompletableDeferred<Boolean>()
-        permissionDeferred = deferred
+        val existing = pendingPermissions.putIfAbsent(key, deferred)
+        if (existing != null) {
+            // 已有请求在等，直接等它的结果
+            return withTimeoutOrNull(60_000L.milliseconds) { existing.await() } ?: false
+        }
 
         val listener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
             if (requestCode == PERMISSION_REQUEST_CODE) {
-                permissionDeferred?.complete(grantResult == PackageManager.PERMISSION_GRANTED)
-                permissionDeferred = null
+                pendingPermissions.remove(key)?.complete(
+                    grantResult == PackageManager.PERMISSION_GRANTED
+                )
             }
         }
 
@@ -49,6 +62,8 @@ object ShizukuHelper {
             AgentLogger.log("ERR", "Shizuku 权限请求失败：${e.message}")
             false
         } finally {
+            // 超时/异常路径下也要清掉，否则后续请求会一直等一个已死的 deferred
+            pendingPermissions.remove(key)
             try { Shizuku.removeRequestPermissionResultListener(listener) } catch (_: Exception) { }
         }
     }

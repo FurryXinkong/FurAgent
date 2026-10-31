@@ -50,7 +50,9 @@ object TempCleaner {
         "furagent_sys.ps1",
         "furagent_speak.ps1",
         "furagent_cond.ps1",
-        "furagent_tts_probe.ps1"
+        "furagent_tts_probe.ps1",
+        // Chaquopy / 桌面端共用的固定解析脚本，程序运行时依赖，删了会直接报错
+        "_skill_parser.py"
     )
 
     data class Result(
@@ -60,7 +62,6 @@ object TempCleaner {
         val errors: Int
     ) {
         fun summary(): String {
-            if (deleted == 0 && errors == 0) return "没有需要清理的临时文件"
             val size = formatSize(freedBytes)
             val sb = StringBuilder("已清理 $deleted 个临时文件，释放 $size")
             if (skipped > 0) sb.append("；跳过 $skipped 个（非程序生成或未到期）")

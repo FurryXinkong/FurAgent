@@ -170,13 +170,26 @@ object NativeFilePicker {
             )
             pb.redirectErrorStream(false)
             val proc = pb.start()
-            val out = proc.inputStream.bufferedReader(Charsets.UTF_8).readText()
-            val finished = proc.waitFor(10, TimeUnit.MINUTES)
+            // 旧实现先 readText() 再 waitFor(10 分钟)：
+            // 用户走开不点对话框时，PowerShell 进程会占着 10 分钟。
+            // 改成后台线程读输出 + 主线程等待，超时 5 分钟强制终止。
+            val outRef = java.util.concurrent.atomic.AtomicReference<String>("")
+            val reader = Thread {
+                try {
+                    outRef.set(proc.inputStream.bufferedReader(Charsets.UTF_8).readText())
+                } catch (_: Throwable) { }
+            }
+            reader.isDaemon = true
+            reader.start()
+
+            val finished = proc.waitFor(5, TimeUnit.MINUTES)
             if (!finished) {
-                proc.destroyForcibly()
+                try { proc.destroyForcibly() } catch (_: Throwable) { }
+                DesktopLoggerHolder.log("NativeFilePicker 超时（5 分钟），已强制终止")
                 return null
             }
-            out
+            try { reader.join(1000) } catch (_: Throwable) { }
+            outRef.get()
         } catch (e: Exception) {
             DesktopLoggerHolder.log("NativeFilePicker 执行失败：${e.javaClass.simpleName}: ${e.message}")
             null

@@ -22,134 +22,19 @@ import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import kotlin.Any
-import kotlin.ArithmeticException
-import kotlin.Array
-import kotlin.Boolean
-import kotlin.Comparator
-import kotlin.Double
-import kotlin.Exception
-import kotlin.Float
-import kotlin.IllegalArgumentException
-import kotlin.Int
-import kotlin.IntArray
-import kotlin.Long
-import kotlin.String
-import kotlin.Triple
-import kotlin.apply
-import kotlin.collections.LinkedHashMap
-import kotlin.collections.List
-import kotlin.collections.MutableList
-import kotlin.collections.asSequence
-import kotlin.collections.component1
-import kotlin.collections.component2
-import kotlin.collections.contains
-import kotlin.collections.copyOfRange
-import kotlin.collections.filter
-import kotlin.collections.first
-import kotlin.collections.forEach
-import kotlin.collections.forEachIndexed
-import kotlin.collections.getOrNull
-import kotlin.collections.getOrPut
-import kotlin.collections.indices
-import kotlin.collections.isEmpty
-import kotlin.collections.joinToString
-import kotlin.collections.last
-import kotlin.collections.lastOrNull
-import kotlin.collections.map
-import kotlin.collections.mapNotNull
-import kotlin.collections.mapOf
 import kotlin.collections.minus
-import kotlin.collections.mutableListOf
 import kotlin.collections.plus
-import kotlin.collections.random
-import kotlin.collections.setOf
-import kotlin.collections.sorted
-import kotlin.collections.sortedByDescending
-import kotlin.collections.sortedWith
-import kotlin.collections.sum
-import kotlin.collections.sumOf
-import kotlin.collections.take
-import kotlin.collections.toByteArray
 import kotlin.collections.toList
-import kotlin.compareTo
-import kotlin.getValue
-import kotlin.isInfinite
-import kotlin.isNaN
-import kotlin.lazy
-import kotlin.let
 import kotlin.math.*
 import kotlin.minus
 import kotlin.plus
-import kotlin.ranges.coerceAtLeast
-import kotlin.ranges.coerceIn
-import kotlin.ranges.contains
-import kotlin.ranges.random
-import kotlin.ranges.rangeTo
-import kotlin.ranges.step
-import kotlin.ranges.until
-import kotlin.repeat
-import kotlin.sequences.asSequence
-import kotlin.sequences.contains
-import kotlin.sequences.count
-import kotlin.sequences.forEach
-import kotlin.sequences.joinToString
 import kotlin.sequences.minus
 import kotlin.sequences.plus
-import kotlin.sequences.take
 import kotlin.sequences.toList
-import kotlin.takeIf
-import kotlin.text.Charsets
-import kotlin.text.Regex
-import kotlin.text.RegexOption
-import kotlin.text.StringBuilder
-import kotlin.text.any
-import kotlin.text.append
-import kotlin.text.asSequence
-import kotlin.text.buildString
-import kotlin.text.compareTo
-import kotlin.text.contains
-import kotlin.text.count
-import kotlin.text.endsWith
-import kotlin.text.format
-import kotlin.text.ifEmpty
-import kotlin.text.isBlank
-import kotlin.text.isDigit
-import kotlin.text.isEmpty
-import kotlin.text.isLetter
-import kotlin.text.isLetterOrDigit
-import kotlin.text.isNotBlank
-import kotlin.text.isWhitespace
-import kotlin.text.iterator
-import kotlin.text.lineSequence
-import kotlin.text.lowercase
-import kotlin.text.padStart
 import kotlin.text.plus
-import kotlin.text.random
-import kotlin.text.repeat
-import kotlin.text.replace
-import kotlin.text.split
-import kotlin.text.startsWith
-import kotlin.text.substring
-import kotlin.text.substringAfterLast
-import kotlin.text.toByteArray
-import kotlin.text.toDouble
-import kotlin.text.toDoubleOrNull
-import kotlin.text.toInt
-import kotlin.text.toIntOrNull
 import kotlin.text.toList
-import kotlin.text.toLong
-import kotlin.text.toLongOrNull
-import kotlin.text.toString
-import kotlin.text.trim
-import kotlin.text.trimEnd
-import kotlin.text.trimStart
-import kotlin.text.uppercase
 import kotlin.time.Duration.Companion.milliseconds
-import kotlin.times
-import kotlin.to
 import kotlin.toList
-import kotlin.toString
 
 object CommonTools {
 
@@ -157,15 +42,17 @@ object CommonTools {
     private const val MAX_TEXT_FILE_SIZE = 1L * 1024 * 1024
     private const val MAX_SLEEP_MS = 300_000L
 
-    private const val SPILL_THRESHOLD_BYTES = 16 * 1024
-    private const val SPILL_PREVIEW_LINES = 30
+    private const val SPILL_THRESHOLD_BYTES = 64 * 1024
+    private const val SPILL_PREVIEW_LINES = 200
 
     private val SPILL_TOOLS = setOf(
         "grep", "list_files", "read_file",
         "execute_command", "web", "pytool_ds_web",
         "ui", "sub_session", "run_sub_session",
         "view_image", "screenshot", "document",
-        "history", "apps", "system", "http_request"
+        // Android 上真正的大列表工具是 app / device（不是 apps / system）；
+        // history 是 HistoryTools 入口，CommonTools.execute 返回 null，走不到 maybeSpill。
+        "app", "device", "http_request"
     )
 
     private fun isSpillTool(name: String): Boolean =
@@ -226,18 +113,50 @@ object CommonTools {
             val rawPath = args.optString("path", "")
             if (SPILL_FILE_MARKER.containsMatchIn(rawPath)) return result
         }
+        // 任何工具读 temp 下的落盘文件都不再二次落盘。
+        // 否则会出现套娃：read_file 读 tool_xxx.txt → 又超阈值 → 又落盘成
+        // tool_read_file_yyy.txt，模型照着提示读，永远读不到正文。
+        run {
+            val p = args.optString("path", "")
+            if (p.isNotEmpty() && SPILL_FILE_MARKER.containsMatchIn(p)) return result
+            val ps = args.optJSONArray("paths")
+            if (ps != null && ps.length() > 0) {
+                var allSpill = true
+                for (i in 0 until ps.length()) {
+                    if (!SPILL_FILE_MARKER.containsMatchIn(ps.optString(i, ""))) {
+                        allSpill = false
+                        break
+                    }
+                }
+                if (allSpill) return result
+            }
+        }
 
         val text = result.output
-        if (text.length > SPILL_THRESHOLD_BYTES) {
+        // max_bytes 显式控制落盘阈值：
+        //   不传（或传 0 / 负数）→ 无限制，永不落盘，全文直接返回
+        //   传了正数 → 超过该字节数才落盘
+        // 之前是写死 64KB，模型无法控制，大文件永远只能看到前 200 行。
+        val maxBytes = args.optInt("max_bytes", 0)
+        if (maxBytes <= 0) return result
+        if (text.length > maxBytes) {
             // 直接落盘
-        } else if (text.length * 4 <= SPILL_THRESHOLD_BYTES) {
+        } else if (text.length * 4 <= maxBytes) {
             return result
         } else {
-            if (text.toByteArray(Charsets.UTF_8).size <= SPILL_THRESHOLD_BYTES) return result
+            if (text.toByteArray(Charsets.UTF_8).size <= maxBytes) return result
         }
 
         return try {
-            val dir = host.resolvePath("~/.furagent/temp") ?: return result
+            // 优先用 host 提供的 temp 目录（trashDir 的上一级），避免 Android 上 "~"
+            // 展开成 /sdcard 导致落到 /sdcard/.furagent/temp（隐藏目录用户看不见，
+            // 且 allowedPaths 收紧后 resolvePath 会失败）。
+            val trashDir = host.trashDir()
+            val dir = if (trashDir != null) {
+                File(trashDir).parentFile?.absolutePath
+            } else {
+                host.resolvePath("~/.furagent/temp")
+            } ?: return result
             val stamp = DateFormats.formatFileTs()
             val filePath = "$dir/tool_${toolName}_$stamp.txt"
             if (!host.ensureParentDir(filePath)) return result
@@ -251,7 +170,7 @@ object CommonTools {
                 append("【结果过大，已落盘】共 $totalLines 行 / ${totalKb}KB，")
                 append("上下文只保留前 $SPILL_PREVIEW_LINES 行。\n")
                 append("要看全文：read_file(path=\"$filePath\", offset=1, limit=200)\n")
-                append("（该文件在 ~/.furagent/temp/ 下，可随时删除）\n")
+                append("要直接拿全文：重调原工具并传 max_bytes=0（无限制）\n")
                 append("---- 前 $SPILL_PREVIEW_LINES 行预览 ----\n")
                 append(preview)
             }
@@ -1010,7 +929,8 @@ object CommonTools {
         val m = linesA.size
         val n = linesB.size
 
-        val MAX_DIFF_LINES = 5000
+        // 5000 行时 O(m×n) 需要 ~100MB，Android 中端机可能 OOM；降到 2000。
+        val MAX_DIFF_LINES = 2000
         if (m > MAX_DIFF_LINES || n > MAX_DIFF_LINES) {
             return ToolResult.fail(
                 "文本过大（${m} 行 vs ${n} 行），LCS 算法需要 O(m×n) 内存。" +
@@ -1199,7 +1119,7 @@ object CommonTools {
             return try {
                 val digest = MessageDigest.getInstance(algorithmName)
                 val hex = digest.digest(text.toByteArray(Charsets.UTF_8))
-                    .joinToString("") { "%02x".format(it) }
+                    .joinToString("") { "%02x".format(it.toInt() and 0xFF) }
                 ToolResult.ok("$algo(\"$text\") = $hex")
             } catch (e: Exception) {
                 ToolResult.fail("${e.message}")
@@ -1212,7 +1132,7 @@ object CommonTools {
         return try {
             val bytes = host.readBytes(path) ?: return ToolResult.fail("读取失败")
             val digest = MessageDigest.getInstance(algorithmName)
-            val hex = digest.digest(bytes).joinToString("") { "%02x".format(it) }
+            val hex = digest.digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xFF) }
             val fileName = path.substringAfterLast('/').substringAfterLast('\\')
             ToolResult.ok("$algo($fileName) = $hex\n（${host.formatSize(bytes.size.toLong())}）")
         } catch (e: Exception) {
@@ -1266,9 +1186,10 @@ object CommonTools {
 
         val mode = if (args.has("mode")) {
             args.optString("mode", "name").trim().lowercase(Locale.ROOT)
-        } else if (keyword.isNotBlank()) {
-            "content"
         } else {
+            // 与 schema / 描述对齐：不传 mode 默认按文件名搜。
+            // 旧实现「给了 keyword 就按内容搜」与文档不一致，AI 传 keyword
+            // 想找文件时会去搜所有文件内容，几乎必然搜不到。
             "name"
         }
 
@@ -1456,6 +1377,10 @@ object CommonTools {
             val sb = StringBuilder()
             var okCount = 0
             var failCount = 0
+            // 批量 outline 时总长度可能很大（10 个文件 × 40 行骨架），
+            // 超过阈值就自动降级：每个文件只给前 20 个声明。
+            val isOutline = args.optString("mode", "text").lowercase(Locale.ROOT) == "outline"
+            val outlineCap = if (pathsArr.length() > 5) 20 else Int.MAX_VALUE
             for (i in 0 until pathsArr.length()) {
                 val p = pathsArr.optString(i, "").trim()
                 if (p.isBlank()) continue
@@ -1471,7 +1396,24 @@ object CommonTools {
                 if (one.success) okCount++ else failCount++
                 sb.append("\n========== [").append(i + 1).append('/').append(pathsArr.length())
                     .append("] ").append(p).append(" ==========\n")
-                sb.append(one.output).append('\n')
+                var body = one.output
+                if (isOutline && outlineCap != Int.MAX_VALUE) {
+                    // 只保留前 outlineCap 个「L数字」开头的声明行
+                    val kept = mutableListOf<String>()
+                    var declCount = 0
+                    for (ln in body.lineSequence()) {
+                        if (ln.trimStart().startsWith("L") && ln.contains("  ")) {
+                            if (declCount >= outlineCap) continue
+                            declCount++
+                        }
+                        kept.add(ln)
+                    }
+                    body = kept.joinToString("\n")
+                    if (declCount >= outlineCap) {
+                        body += "\n（已截断，只显示前 $outlineCap 个声明。单独读该文件看完整骨架）"
+                    }
+                }
+                sb.append(body).append('\n')
             }
             sb.append("\n========== 共 ").append(pathsArr.length())
                 .append(" 个文件：成功 ").append(okCount).append("，失败 ").append(failCount)
@@ -1512,6 +1454,20 @@ object CommonTools {
                         if (content.endsWith("\n")) 0 else 1
                 val lineInfo = if (total > 0) "\n行数：$total" else ""
                 ToolResult.ok("文件：$path\n大小：${host.formatSize(size)}$lineInfo\n内容：\n$content")
+            }
+            "outline" -> {
+                // 只返回结构骨架：类/函数/顶层声明 + 行号。
+                // 大文件（几千行）先看骨架再按行号读具体实现，
+                // 比直接读全文省一个数量级的 token。
+                val size = host.fileSize(path)
+                if (size > MAX_TEXT_FILE_SIZE) {
+                    return ToolResult.fail(
+                        "文件过大（${host.formatSize(size)}），outline 也需先读入内存。" +
+                                "请用 offset/limit 分页读。"
+                    )
+                }
+                val content = host.readTextFile(path) ?: return ToolResult.fail("读取失败")
+                return buildOutline(path, content, size, host)
             }
             "base64" -> {
                 val size = host.fileSize(path)
@@ -1558,8 +1514,119 @@ object CommonTools {
                 }
                 ToolResult.ok(sb.toString())
             }
-            else -> ToolResult.fail("mode 只能是 text / base64 / hex / tail")
+            else -> ToolResult.fail("mode 只能是 text / outline / base64 / hex / tail")
         }
+    }
+
+    // ── 结构骨架提取 ────────────────────────────────────────────
+
+    /** 各语言的结构声明正则。只抓顶层或类内一级（缩进 ≤ 4 空格）。 */
+    private val OUTLINE_PATTERNS: Map<String, List<Pair<String, Regex>>> = mapOf(
+        // 注意：所有正则必须以 ^\\s* 开头。
+        // 之前是 ^ 直接接修饰符，结果类内成员（缩进 4 空格）全部匹配不上，
+        // outline 对 Kotlin 文件只能返回 1 行 class 声明，完全没用。
+        ".kt" to listOf(
+            "class" to Regex("^\\s*(?:@\\w+\\s+)*(?:public |private |internal |protected |abstract |open |sealed |data |enum |annotation |value )*(?:class|interface|object|enum class)\\s+(\\w+)"),
+            "fun" to Regex("^\\s*(?:@\\w+\\s+)*(?:public |private |internal |protected |suspend |inline |operator |override |open |abstract )*fun\\s+(?:<[^>]+>\\s*)?(\\w+)"),
+            "val" to Regex("^\\s*(?:public |private |internal |protected |const |override )*(?:val|var)\\s+(\\w+)"),
+            "typealias" to Regex("^\\s*(?:public |private |internal )*typealias\\s+(\\w+)")
+        ),
+        ".java" to listOf(
+            "class" to Regex("^\\s*(?:public |private |protected |abstract |final |static )*(?:class|interface|enum|record)\\s+(\\w+)"),
+            "method" to Regex("^\\s*(?:public |private |protected |static |final |synchronized |abstract )*[\\w<>\\[\\],\\s\\.]+\\s+(\\w+)\\s*\\([^;]*\\)\\s*(?:throws [\\w,\\s]+)?\\{\\s*$")
+        ),
+        ".py" to listOf(
+            "class" to Regex("^\\s*class\\s+(\\w+)"),
+            "def" to Regex("^\\s*(?:async\\s+)?def\\s+(\\w+)")
+        ),
+        ".js" to listOf(
+            "func" to Regex("^\\s*(?:export\\s+)?(?:async\\s+)?function\\s+(\\w+)"),
+            "class" to Regex("^\\s*(?:export\\s+)?class\\s+(\\w+)"),
+            "const" to Regex("^\\s*(?:export\\s+)?const\\s+(\\w+)\\s*=")
+        ),
+        ".ts" to listOf(
+            "func" to Regex("^\\s*(?:export\\s+)?(?:async\\s+)?function\\s+(\\w+)"),
+            "class" to Regex("^\\s*(?:export\\s+)?(?:abstract\\s+)?class\\s+(\\w+)"),
+            "interface" to Regex("^\\s*(?:export\\s+)?interface\\s+(\\w+)"),
+            "const" to Regex("^\\s*(?:export\\s+)?const\\s+(\\w+)\\s*=")
+        )
+    )
+
+    /**
+     * 从文件内容提取结构骨架。
+     *
+     * 返回格式：
+     *   文件：xxx.kt
+     *   大小：80KB / 共 2108 行
+     *   L57    fun EmptyStatePlaceholder
+     *   L119   fun ChatBubble
+     *   ...
+     *   —— 共 36 个声明。用 offset/limit 读具体实现
+     */
+    private fun buildOutline(
+        path: String,
+        content: String,
+        size: Long,
+        host: ToolHost
+    ): ToolResult {
+        val lines = content.split('\n')
+        val total = lines.size
+        val ext = "." + path.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        val patterns = OUTLINE_PATTERNS[ext]
+
+        val sb = StringBuilder()
+        sb.append("文件：$path\n")
+        sb.append("大小：${host.formatSize(size)} / 共 $total 行\n\n")
+
+        if (patterns == null) {
+            // 未知语言：退化成「非空非注释行」抽样，最多 200 条
+            var count = 0
+            lines.forEachIndexed { idx, ln ->
+                val s = ln.trim()
+                if (s.isNotEmpty() && !s.startsWith("//") && !s.startsWith("#") &&
+                    !s.startsWith("*") && !s.startsWith("/*") && count < 200
+                ) {
+                    sb.append("L").append(idx + 1).append("  ").append(s.take(100)).append('\n')
+                    count++
+                }
+            }
+            if (count == 0) sb.append("（未识别到结构声明）\n")
+            else sb.append("\n—— 共 $count 条（未知语言，按非空行抽样）。用 offset/limit 读具体实现")
+            return ToolResult.ok(sb.toString())
+        }
+
+        var hits = 0
+        lines.forEachIndexed { idx, ln ->
+            // 缩进超过 8 空格视为嵌套内部，跳过。
+            //
+            // 之前是 > 4，结果把「类内一级成员」全跳过了：
+            //   class Foo {          <- 缩进 0，能抓到
+            //       fun bar() {      <- 缩进 4，被跳过（bug）
+            //           val x = 1    <- 缩进 8，应该跳过
+            //       }
+            //   }
+            // 改成 > 8 后，类内一级成员能抓到，函数体内部仍然跳过。
+            val indent = ln.length - ln.trimStart().length
+            if (indent > 8) return@forEachIndexed
+            for ((kind, pat) in patterns) {
+                val m = pat.find(ln)
+                if (m != null) {
+                    sb.append("L").append(idx + 1).append("  ")
+                    // 缩进 1-8 空格的是类内成员，加个缩进标记方便看层级
+                    if (indent > 0) sb.append("  ")
+                    sb.append(kind).append(' ').append(m.groupValues[1]).append('\n')
+                    hits++
+                    break
+                }
+            }
+        }
+
+        if (hits == 0) {
+            sb.append("（未识别到结构声明，建议用 mode=text 或 offset/limit 读）")
+        } else {
+            sb.append("\n—— 共 $hits 个声明。用 offset/limit 读具体实现")
+        }
+        return ToolResult.ok(sb.toString())
     }
 
     private suspend fun readFileRange(

@@ -21,7 +21,6 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,16 +38,17 @@ import androidx.core.content.edit
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import net.xinkong.furagent.core.AgentLogger
 import kotlinx.coroutines.flow.debounce
+import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.AgentRunner
 import net.xinkong.furagent.data.*
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.system.notifyToast
-import net.xinkong.furagent.ui.WorkProcessItemList
 import net.xinkong.furagent.ui.ChipSurface
 import net.xinkong.furagent.ui.ImageViewerDialog
-import net.xinkong.furagent.ui.theme.FurAgentTheme
+import net.xinkong.furagent.ui.WorkProcessItemList
 import net.xinkong.furagent.ui.theme.AppRadius
+import net.xinkong.furagent.ui.theme.FurAgentTheme
 import java.util.*
 
 /**
@@ -253,16 +253,25 @@ private fun FloatingChatScreen(onDismiss: () -> Unit) {
             prefs = prefs,
             settings = settings,
             onFinish = { finalHistory ->
-                // 保存 AI 回复到会话
+                // 保存 AI 回复到会话。保护用户手动重命名的标题：
+                // MainActivity.persist 有 titleLocked 保护，这里没有——
+                // 用户在主页重命名后去悬浮窗发一句话，标题会被 generateTitle 覆盖。
                 val cur = SessionStore.load(context, sessionId)
+                val title = when {
+                    cur?.titleLocked == true -> cur.title
+                    cur?.title?.startsWith("↳") == true -> cur.title
+                    else -> SessionStore.generateTitle(finalHistory)
+                }
                 SessionStore.save(
                     context,
                     Session(
                         id = sessionId,
-                        title = SessionStore.generateTitle(finalHistory),
+                        title = title,
                         createdAt = cur?.createdAt ?: System.currentTimeMillis(),
                         updatedAt = System.currentTimeMillis(),
-                        messages = finalHistory
+                        messages = finalHistory,
+                        parentId = cur?.parentId,
+                        titleLocked = cur?.titleLocked
                     )
                 )
             }

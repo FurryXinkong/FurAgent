@@ -56,6 +56,10 @@ object MemoryTools {
         if (list.isEmpty()) return ToolResult.ok("暂无相关记忆")
         val sb = StringBuilder("找到 ${list.size} 条记忆：\n")
         list.take(30).forEach { sb.append("- ${it.content}\n") }
+        // 明确告诉用户和 AI 被截断了，否则 100 条只显示 30 条，双方都不知道
+        if (list.size > 30) {
+            sb.append("\n（还有 ${list.size - 30} 条未显示，可缩小 query 范围）\n")
+        }
         return ToolResult.ok(sb.toString())
     }
 

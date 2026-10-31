@@ -11,7 +11,7 @@ import javax.imageio.ImageIO
 /**
  * 应用图标。
  *
- * 图标文件在 `desktopApp/src/main/resources/icon.png`（512×512 RGBA）。
+ * 图标文件在 `desktopApp/src/main/resources/icon.ico`（多尺寸 ICO，含 256×256）。
  *
  * 两套接口：
  *  - [painter]：给 Compose 的 Window(icon = ...) 用

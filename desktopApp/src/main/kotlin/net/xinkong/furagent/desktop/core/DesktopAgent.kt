@@ -84,6 +84,19 @@ object DesktopAgent {
     private const val TOOL_FAILURE_STREAK_LIMIT = 3
 
     /**
+     * 重复调用拦截阈值。
+     *
+     * 与 TOOL_FAILURE_STREAK_LIMIT 的区别：
+     *   - 失败计数只看「失败」的结果，成功但无进展的重复拦不住；
+     *   - 重复计数不看成败，同签名连续 N 次就拦。
+     *
+     * 真实案例：模型把 code_edit 的 files 参数写成顶层 path，
+     * 每次都被 schema 拒（返回「未提供 files」），但模型不换方式，
+     * 机械重试十几次，每次都要重发完整上下文。
+     */
+    private const val TOOL_REPEAT_LIMIT = 3
+
+    /**
      * API 请求最大重试次数（429 / 5xx / 网络异常）。
      * 提到类级别是因为错误展示处也要用到（告诉用户“已重试 N 次”）。
      */
@@ -186,6 +199,11 @@ object DesktopAgent {
         // 失败计数 同一工具同一参数连续失败 3 次则中断（与手机端 Agent.kt 一致）。
         // 签名忽略翻页/数量类参数，避免模型只改 limit/offset 就绕过计数。
         val toolFailureStreak = mutableMapOf<String, Int>()
+        // 重复调用计数：同签名连续出现次数（不看成败）。
+        // 与 toolFailureStreak 分开维护：失败计数在成功时清零，
+        // 而重复计数只在「签名变了」时清零。
+        val toolRepeatStreak = mutableMapOf<String, Int>()
+        var lastToolSig: String? = null
 
         val maxLoops = (maxLoopsOverride ?: settings.maxToolCallLoops).coerceAtLeast(1)
 
@@ -471,7 +489,10 @@ object DesktopAgent {
                     onThinking("正在执行工具：${friendlyName(acc.name)}")
                     DesktopLogger.info("Agent", "调用工具（串行）：${acc.name}")
                     val startMs = System.currentTimeMillis()
-                    val r = runOneTool(acc.name, argsJson, settings, loadedToolNames)
+                    val r = runOneTool(acc.name, argsJson, settings, loadedToolNames, toolRepeatStreak, lastToolSig)
+                    lastToolSig = try {
+                        toolSignature(acc.name, JSONObject(argsJson.ifBlank { "{}" }))
+                    } catch (_: Exception) { null }
                     reportToolResult(idx, r, System.currentTimeMillis() - startMs)
                 }
             } else {
@@ -494,7 +515,7 @@ object DesktopAgent {
                             onThinking("正在执行工具：${friendlyName(acc.name)}")
                             val startMs = System.currentTimeMillis()
                             val r = try {
-                                runOneTool(acc.name, acc.arguments.toString(), settings, loadedToolNames)
+                                runOneTool(acc.name, acc.arguments.toString(), settings, loadedToolNames, toolRepeatStreak, lastToolSig)
                             } catch (ce: CancellationException) {
                                 throw ce
                             } catch (t: Throwable) {
@@ -799,7 +820,11 @@ object DesktopAgent {
                             put("tool_call_id", callId)
                             put("content", resultMsg.content)
                         })
-                        i += 2
+                        // 并行 tool_call 时历史是 [A_call, B_call, C_call, B_result, A_result, C_result]
+                        // 这种错开顺序。旧实现 i += 2 假设 tool_call 后面紧跟自己的 result，
+                        // 处理 A_call 找到 A_result 后跳到 C_call，B_call 和 B_result 被完全丢弃。
+                        // 改成 i += 1：tool_result 由下面 "tool_result" -> i += 1 分支单独跳过。
+                        i += 1
                     } else {
                         messages.put(JSONObject().apply {
                             put("role", "tool")
@@ -1065,8 +1090,44 @@ object DesktopAgent {
         name: String,
         argsJson: String,
         settings: DesktopSettings,
-        loadedToolNames: MutableSet<String>
+        loadedToolNames: MutableSet<String>,
+        repeatStreak: MutableMap<String, Int>? = null,
+        lastSig: String? = null
     ): ToolResult {
+        // 重复调用拦截：同签名连续 N 次直接不执行，返回纠正提示。
+        //
+        // 为什么放在最前面：模型卡死循环时，每次重试都是完整的一轮
+        // （重发全部历史 + 等模型生成），成本极高。在入口就拦掉，
+        // 只花一次 tool 消息的钱。
+        if (repeatStreak != null) {
+            val sig = try {
+                toolSignature(name, JSONObject(argsJson.ifBlank { "{}" }))
+            } catch (_: Exception) {
+                "$name|$argsJson"
+            }
+            val prev = repeatStreak[sig] ?: 0
+            val streak = prev + 1
+            repeatStreak[sig] = streak
+            // 签名变了，其他签名的计数清零（只关心「连续」）
+            if (lastSig != null && lastSig != sig) {
+                repeatStreak.keys.retainAll { it == sig }
+            }
+            if (streak > TOOL_REPEAT_LIMIT) {
+                DesktopLogger.warn(
+                    "Agent",
+                    "工具 $name 同参数已重复 $streak 次，已拦截（签名：${sig.take(80)}）"
+                )
+                return ToolResult.fail(
+                    "【已拦截】你已连续 ${streak - 1} 次用完全相同的参数调用「$name」，" +
+                            "结果没有变化，再试一次也不会不同。\n\n" +
+                            "必须换一种方式，例如：\n" +
+                            "1. 检查参数名/结构是否写错（对照工具 schema 逐字核对）\n" +
+                            "2. 换一个工具完成同样的事\n" +
+                            "3. 先读文件/搜索确认现状，再决定怎么改\n" +
+                            "4. 如果确实无法推进，直接告诉用户卡在哪里，不要继续重试"
+                )
+            }
+        }
         return when (name) {
             // 元工具拦截：本地处理，不进 DesktopTools
             "tool_search" -> {

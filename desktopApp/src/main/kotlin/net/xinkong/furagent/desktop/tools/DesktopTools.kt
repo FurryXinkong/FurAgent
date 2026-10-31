@@ -322,7 +322,21 @@ object DesktopTools {
         }
 
         val tool = getCatalogTools().firstOrNull { it.name == trimmed }
-            ?: return "失败：未找到工具 $trimmed。可以先调用 tool_search 查看可用工具。"
+            ?: run {
+                // 名字输错时给候选，而不是直接死。
+                // 之前只做精确匹配，输错一个字母就「未找到」，模型只能重新 tool_search。
+                val cands = getCatalogTools()
+                    .map { it.name to ToolCatalog.editDistancePublic(it.name, trimmed) }
+                    .filter { it.second <= 2 }
+                    .sortedBy { it.second }
+                    .take(3)
+                    .map { it.first }
+                if (cands.isEmpty()) {
+                    return "失败：未找到工具 $trimmed。可以先调用 tool_search 查看可用工具。"
+                }
+                return "失败：未找到工具 $trimmed。你是不是想用：${cands.joinToString(" / ")}？\n" +
+                        "直接重调 tool_load(name=\"${cands.first()}\") 即可。"
+            }
 
         return ToolCatalog.renderToolDetail(tool)
     }
@@ -1014,6 +1028,64 @@ object DesktopTools {
     // write_file 确认
 
     private suspend fun confirmThenWrite(args: JSONObject): ToolResult {
+        val settings = DesktopSettingsHolder.current
+
+        // 批量写入：write_file 的 schema 明说推荐用 files 数组一次性写多个文件。
+        // 旧实现只确认顶层 path，CommonTools.execute 走 filesArr 分支写 b/c/d，
+        // 用户批准了 a.txt 实际改了 b.txt/c.txt —— 确认机制被绕过。
+        val filesArr = args.optJSONArray("files")
+        if (filesArr != null && filesArr.length() > 0) {
+            val paths = mutableListOf<String>()
+            for (i in 0 until filesArr.length()) {
+                val f = filesArr.optJSONObject(i) ?: continue
+                val p = f.optString("path", "").trim()
+                if (p.isBlank()) continue
+                val resolved = host.resolvePath(p)
+                    ?: return ToolResult.fail("无法解析路径：$p")
+                paths.add(resolved)
+            }
+            if (paths.isEmpty()) return ToolResult.fail("files 数组为空或都缺少 path")
+
+            if (settings.requireConfirmWrite) {
+                val list = paths.joinToString("\n") { "· $it" }
+                val approved = DesktopConfirmation.request(
+                    "批量写入文件确认",
+                    "AI 请求写入 ${paths.size} 个文件：\n$list\n\n是否允许？"
+                )
+                if (!approved) return ToolResult.fail("用户已拒绝写入操作，文件未改动")
+            }
+
+            val oldMap = LinkedHashMap<String, ByteArray?>()
+            if (settings.fileBackupEnabled) {
+                paths.forEach { resolved ->
+                    val f = File(resolved)
+                    oldMap[resolved] = try {
+                        if (f.exists()) f.readBytes() else null
+                    } catch (_: Exception) { null }
+                }
+            }
+
+            val result = CommonTools.execute("write_file", args, host)
+                ?: ToolResult.fail("通用工具未处理")
+
+            if (settings.fileBackupEnabled && result.success) {
+                BackupHelper.backupDirFor(host.trashDir())?.let { dir ->
+                    oldMap.forEach { (resolved, oldBytes) ->
+                        val newBytes = try {
+                            val f = File(resolved)
+                            if (f.exists()) f.readBytes() else null
+                        } catch (_: Exception) { null }
+                        HistoryStore.recordEdit(
+                            dir, resolved, "write", oldBytes, newBytes, "write_file",
+                            sessionId = currentSessionId()
+                        )
+                    }
+                }
+            }
+            return result
+        }
+
+        // 单文件：原逻辑
         val pathStr = args.optString("path", "").trim()
         if (pathStr.isBlank()) return ToolResult.fail("未提供 path")
         val resolved = host.resolvePath(pathStr)
@@ -1024,7 +1096,6 @@ object DesktopTools {
         val data = args.optString("data", "")
         val append = args.optBoolean("append", false)
 
-        val settings = DesktopSettingsHolder.current
         if (settings.requireConfirmWrite) {
             val preview = when (mode) {
                 "base64" -> "（base64 数据 ${data.length} 字符）"
@@ -1319,9 +1390,13 @@ object DesktopTools {
                         } catch (_: Throwable) { }
                     }
                     TaskRuntime.finishWithCode(taskId, -1, timedOut = true)
+                    // takeLast 而不是 take：命令跑了很久才超时，前面 3000 字符
+                    // 通常是启动日志（BUILD STARTING... 之类），真正的错误在末尾。
+                    val tail = stdoutSb.toString()
+                    val tailText = if (tail.length > 3000) tail.takeLast(3000) else tail
                     return@withContext ToolResult.fail(
                         "命令执行超时（${timeout}秒），已强制终止\n\n" +
-                                "已收到的输出：\n" + stdoutSb.toString().take(3000)
+                                "已收到的输出（末尾 3000 字符）：\n" + tailText
                     )
                 }
 

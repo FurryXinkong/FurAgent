@@ -27,7 +27,9 @@ fun applyStreamingGradient(
     // 原来 fadeChars = 5 时，字符从 0.15 → 1.0 只跨 5 个字符，
     // 每 32ms 新增一个字符，5 字符 = 160ms 走完，视觉上像"一格一格跳"。
     // 延长到 14 字符后，每字符从最淡到不透明约 450ms，明显更平滑。
-    val fade = fadeChars.coerceAtLeast(1)
+    // fade 不能超过 content 长度：短文本（刚吐出 3 个字）时整段都在渐变区，
+    // 所有字符 alpha 都 < 1.0，看上去「几乎完全透明」。
+    val fade = fadeChars.coerceAtMost(content.length).coerceAtLeast(1)
     val gradientStart = (content.length - fade).coerceAtLeast(0)
 
     return buildAnnotatedString {

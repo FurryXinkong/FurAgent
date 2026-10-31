@@ -49,6 +49,7 @@ object CodeEditTools {
                     "【强制】一次调用必须把所有要改的文件、所有要改的地方全部放进 files 数组，禁止拆成多次调用。" +
                     "每多拆一次调用，就要重发一遍完整上下文，token 成本成倍增加；能一轮改完就必须一轮改完。" +
                     "files 是数组，每项含 path 和 edits；edits 是数组，每项含 old（原文锚点）和 new（替换后）。" +
+                    "【单文件快捷方式】只改一个文件时，可直接传顶层 {\"path\":\"...\",\"edits\":[...]}，不用包 files 数组。" +
                     "每个 old 必须在文件中恰好出现 1 次，否则该文件整体拒绝（不会部分修改）。" +
                     "【按行号改】已知行号时优先用 {\"line_start\":起行,\"line_end\":止行,\"new\":\"替换后\"}（1起、含两端），" +
                     "不需要手抄原文锚点——从 read_file / list_files 拿到的行号可直接用，不会因错一个字符整批回滚。" +
@@ -65,7 +66,7 @@ object CodeEditTools {
                     "返回内容包含每个改动点的 unified diff（@@ -原行 +新行 @@ 与前后行），可直接自检，不用再读回文件。" +
                     "锚点找不到时会返回最相似位置、前后上下文，以及【逐字符差异】（直接告诉你差在缩进还是内容），据此修正后重试。" +
                     "只做编辑，不做编译 / 语法检查 / 格式化。",
-            paramsSchema = """{"type":"object","properties":{"files":{"type":"array","description":"要修改的文件列表","items":{"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"create":{"type":"boolean","description":"true 表示新建文件，此时 edits 只放 1 项，old 留空，new 为整个文件内容"},"edits":{"type":"array","description":"改动列表","items":{"type":"object","properties":{"old":{"type":"string","description":"原文锚点，必须逐字符匹配（含缩进），且在文件中恰好出现 1 次"},"new":{"type":"string","description":"替换后的内容"},"delete_start":{"type":"integer","description":"按行号删除的起始行（1 起，含）。与 delete_end 配对使用，此时不要填 old/new/line_*"},"delete_end":{"type":"integer","description":"按行号删除的结束行（1 起，含）。与 delete_start 配对使用"},"line_start":{"type":"integer","description":"[推荐] 按行号替换的起始行（1 起，含）。不需要 old 锚点，直接用 read_file 拿到的行号"},"line_end":{"type":"integer","description":"按行号替换的结束行（1 起，含）。缺省等于 line_start；使用 line_start 时不需要填 old"},"insert_before_line":{"type":"integer","description":"在指定行之前插入 new（1 起），原行不动"},"insert_after_line":{"type":"integer","description":"在指定行之后插入 new（1 起），原行不动"}},"additionalProperties":false}}},"required":["path","edits"],"additionalProperties":false}},"verify":{"type":"array","description":"应用后校验","items":{"type":"object","properties":{"type":{"type":"string","enum":["contains","not_contains"]},"path":{"type":"string"},"text":{"type":"string"}},"required":["type","path","text"],"additionalProperties":false}},"diff":{"type":"boolean","description":"是否返回 diff，默认 true"}},"required":["files"],"additionalProperties":false}"""
+            paramsSchema = """{"type":"object","properties":{"files":{"type":"array","description":"要修改的文件列表（推荐）。与顶层 path+edits 二选一","items":{"type":"object","properties":{"path":{"type":"string","description":"文件路径"},"create":{"type":"boolean","description":"true 表示新建文件，此时 edits 只放 1 项，old 留空，new 为整个文件内容"},"edits":{"type":"array","description":"改动列表","items":{"type":"object","properties":{"old":{"type":"string","description":"原文锚点，必须逐字符匹配（含缩进），且在文件中恰好出现 1 次"},"new":{"type":"string","description":"替换后的内容"},"delete_start":{"type":"integer","description":"按行号删除的起始行（1 起，含）。与 delete_end 配对使用，此时不要填 old/new/line_*"},"delete_end":{"type":"integer","description":"按行号删除的结束行（1 起，含）。与 delete_start 配对使用"},"line_start":{"type":"integer","description":"[推荐] 按行号替换的起始行（1 起，含）。不需要 old 锚点，直接用 read_file 拿到的行号"},"line_end":{"type":"integer","description":"按行号替换的结束行（1 起，含）。缺省等于 line_start；使用 line_start 时不需要填 old"},"insert_before_line":{"type":"integer","description":"在指定行之前插入 new（1 起），原行不动"},"insert_after_line":{"type":"integer","description":"在指定行之后插入 new（1 起），原行不动"}},"additionalProperties":false}}},"required":["path","edits"],"additionalProperties":false}},"path":{"type":"string","description":"[单文件快捷方式] 只改一个文件时可直接传顶层 path + edits，不用包 files 数组"},"create":{"type":"boolean","description":"[单文件快捷方式] 配合顶层 path 使用"},"edits":{"type":"array","description":"[单文件快捷方式] 配合顶层 path 使用，结构同 files[].edits","items":{"type":"object","properties":{"old":{"type":"string"},"new":{"type":"string"},"delete_start":{"type":"integer"},"delete_end":{"type":"integer"},"line_start":{"type":"integer"},"line_end":{"type":"integer"},"insert_before_line":{"type":"integer"},"insert_after_line":{"type":"integer"}},"additionalProperties":false}},"verify":{"type":"array","description":"应用后校验","items":{"type":"object","properties":{"type":{"type":"string","enum":["contains","not_contains"]},"path":{"type":"string"},"text":{"type":"string"}},"required":["type","path","text"],"additionalProperties":false}},"diff":{"type":"boolean","description":"是否返回 diff，默认 true"}},"additionalProperties":false}"""
         )
     )
 
@@ -173,6 +174,43 @@ object CodeEditTools {
     private fun fromLf(text: String, ending: LineEnding): String =
         if (ending == LineEnding.LF) text else text.replace("\n", ending.seq)
 
+    /**
+     * 把 LF 版本的编辑结果转回原文件的行尾风格。
+     *
+     * 关键：只对发生变化的行应用主行尾，未修改的行保留原行尾。
+     * 行数变化时（多行替换 / 删除 / 插入）无法逐行对比，退回全文转换。
+     */
+    private fun restoreLineEndings(
+        original: String,
+        workingLf: String,
+        ending: LineEnding
+    ): String {
+        val origLines = original.split("\n")   // 每行末尾可能带 \r
+        val newLines = workingLf.split("\n")   // 纯 LF
+
+        // 行数变化：无法精确追踪，全文用主行尾
+        if (origLines.size != newLines.size) {
+            return fromLf(workingLf, ending)
+        }
+
+        val sb = StringBuilder(workingLf.length + newLines.size)
+        for (i in newLines.indices) {
+            val origLine = origLines[i]
+            val newLine = newLines[i]
+            val origContent = origLine.removeSuffix("\r")
+            if (origContent == newLine) {
+                // 未修改：保留原行尾
+                sb.append(origLine)
+            } else {
+                // 已修改：用主行尾
+                sb.append(newLine)
+                if (ending == LineEnding.CRLF) sb.append('\r')
+            }
+            if (i != newLines.lastIndex) sb.append('\n')
+        }
+        return sb.toString()
+    }
+
     private const val BOM = "\uFEFF"
 
     /** 读取文件，剥离 UTF-8 BOM，返回 (正文, 是否含 BOM)。 */
@@ -194,7 +232,7 @@ object CodeEditTools {
      * 思路：取锚点首行，在文件里按相似度找最像的几行，
      * 每处附上前后 contextLines 行原文，并标出锚点自身的前若干行。
      */
-    private fun anchorFailureHint(workingText: String, old: String, contextLines: Int = 15): String {
+    private fun anchorFailureHint(workingText: String, old: String, contextLines: Int = 2): String {
         val oldLinesRaw = old.split('\n')
         val oldLines = oldLinesRaw.map { it.trim() }.filter { it.isNotEmpty() }
         if (oldLines.isEmpty()) return "    （锚点为空）"
@@ -231,6 +269,8 @@ object CodeEditTools {
             sb.append("      A").append((i + 1).toString().padStart(3)).append("| ").append(l.take(120)).append('\n')
         }
 
+        // 候选只给行号 + 前后 contextLines 行（默认 2）。
+        // 之前固定 15 行，3 个候选就是 90 行输出，模型只需要知道「重复在哪几行」。
         sb.append("\n    ═══════ 文件里最相似的 ").append(minOf(top.size, 3))
             .append(" 处（每处附前后 ").append(contextLines).append(" 行原文）═══════\n")
 
@@ -264,6 +304,26 @@ object CodeEditTools {
             }
         }
         return sb.toString()
+    }
+
+    /**
+     * 计算一段文本的括号净变化（{ 和 } 的数量差）。
+     *
+     * 只数花括号，不数圆括号/方括号：
+     *   - 花括号是代码块边界，圈错范围必然导致不平衡
+     *   - 圆括号在字符串、正则、注释里大量出现，误报率高
+     * 字符串和注释里的花括号会被误数，但作为「粗筛」已经够用：
+     * 真正圈对范围时两边净变化相等，不会误报。
+     */
+    private fun bracketDelta(text: String): Int {
+        var delta = 0
+        for (c in text) {
+            when (c) {
+                '{' -> delta++
+                '}' -> delta--
+            }
+        }
+        return delta
     }
 
     /** 把空白字符可见化，便于一眼看出缩进差异。 */
@@ -644,10 +704,29 @@ object CodeEditTools {
                     when (s.mode) {
                         LineMode.REPLACE -> {
                             val removed = lines.subList(s.start - 1, s.end).toList()
+                            // 括号平衡检查：行号替换最常见的致命错误是「只替换了代码块的一部分」，
+                            // 比如想换整个 when 分支却只圈了 3 行，结果把循环体切掉，
+                            // 编译报上百个语法错误，只能从备份恢复重做。
+                            // 这里对比「被删掉的行」和「新写入的行」的括号净变化，
+                            // 不一致就拒绝，让模型自己发现圈错了范围。
+                            val removedText = removed.joinToString("\n")
+                            val removedDelta = bracketDelta(removedText)
+                            val newDelta = bracketDelta(s.newText)
+                            if (removedDelta != newDelta) {
+                                errors.add(
+                                    "$pathStr：行号替换后括号不平衡（L${s.start}-${s.end}）。" +
+                                            "被替换的 L${s.start}-${s.end} 括号净变化 $removedDelta，" +
+                                            "新内容括号净变化 $newDelta。\n" +
+                                            "这通常意味着你只圈了代码块的一部分（比如漏了循环体或分支结尾）。\n" +
+                                            "请检查 line_end 是否覆盖完整代码块，或改用 old 锚点。"
+                                )
+                                opError = true
+                                break
+                            }
                             for (i in s.end - 1 downTo s.start - 1) lines.removeAt(i)
                             lines.addAll(s.start - 1, newLines)
                             appliedEdits.add(
-                                AppliedEdit(removed.joinToString("\n"), s.newText, s.start, s.start)
+                                AppliedEdit(removedText, s.newText, s.start, s.start)
                             )
                         }
                         LineMode.INSERT_BEFORE, LineMode.INSERT_AFTER -> {
@@ -695,8 +774,11 @@ object CodeEditTools {
             }
             if (anchorError) continue
 
-            // 转回原行尾风格
-            val edited = fromLf(working, ending)
+            // 转回原行尾风格：未修改行保留原行尾，仅对修改行应用主行尾。
+            // 旧实现 fromLf(working, ending) 是无差别全文替换，
+            // 混合行尾文件（IDE 改过又被 git 覆盖过很常见）会被每一行都改一遍，
+            // 用户 git diff 看到整个文件都被改，而不是那 3 行。
+            val edited = restoreLineEndings(original, working, ending)
             plans.add(FilePlan(file, original, edited, applied, appliedEdits, false, hasBom))
         }
 

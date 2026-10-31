@@ -4,15 +4,13 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
-import net.xinkong.furagent.desktop.data.ApiKeyResolver
-import net.xinkong.furagent.desktop.data.DesktopSessionStore
-import net.xinkong.furagent.desktop.data.DesktopSettings
-import net.xinkong.furagent.desktop.data.ScheduleStore
-import net.xinkong.furagent.desktop.data.ScheduledTask
+import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.system.DesktopNotifier
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.shared.data.ChatMessage
+import net.xinkong.furagent.shared.util.AnthropicCompat
+import net.xinkong.furagent.shared.util.ApiProtocol
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -312,8 +310,27 @@ object TaskScheduler {
 
         log("run_agent 开始：${prompt.take(100)}")
 
-        val content = try {
-            withContext(Dispatchers.IO) { callAgentModel(keyResult.key, profile.baseUrl, profile.model, profile.temperature, prompt) }
+        // 走完整的 Agent 循环（工具 + 记忆 + 多轮），而不是单次非流式请求。
+        // 旧实现只发一次 chat/completions，AI 无法调工具、看不到记忆，
+        // 定时任务能做的事被锁死在「纯文本问答」。
+        val history = listOf(
+            ChatMessage(role = "user", content = prompt)
+        )
+        val result = try {
+            DesktopAgent.runTurn(
+                settings = settings,
+                history = history,
+                onUpdate = { },
+                onThinking = { },
+                onError = { err -> log("run_agent 错误：$err") },
+                onReasoning = { },
+                onStream = { },
+                onStreamCommit = { },
+                // 定时任务不归属任何会话，避免工具调用写进用户正在看的会话
+                sessionId = "",
+                // 定时任务必须限轮：无人盯着，跑飞了就是纯烧钱
+                maxLoopsOverride = MAX_SCHEDULED_LOOPS
+            )
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -321,6 +338,11 @@ object TaskScheduler {
             DesktopNotifier.notify("AI 任务失败", e.message ?: "未知错误")
             return
         }
+
+        // 取最后一条 assistant 正文作为结果
+        val content = result.lastOrNull {
+            it.role == "assistant" && it.type == "text" && it.content.isNotBlank()
+        }?.content
 
         if (content == null) {
             DesktopNotifier.notify("AI 任务失败", "模型未返回内容")
@@ -358,35 +380,70 @@ object TaskScheduler {
         DesktopNotifier.notify("AI 已回复", content.take(200))
     }
 
-    /** 非流式 chat/completions 调用（与 SessionSummarizer 同套路）。 */
+    /**
+     * 非流式 chat/completions 调用（与 SessionSummarizer 同套路）。
+     *
+     * 保留作为轻量入口（不需要工具/多轮的场景），已支持 Anthropic 协议。
+     */
     private fun callAgentModel(
         apiKey: String,
         baseUrl: String,
         model: String,
         temperature: Double,
-        prompt: String
+        prompt: String,
+        protocol: String = ""
     ): String? {
-        val body = JSONObject().apply {
-            put("model", model)
-            put("messages", JSONArray().apply {
-                put(JSONObject().apply {
-                    put("role", "system")
-                    put("content", "你是一个定时任务助手。根据用户的提示生成简洁的回复。不要使用工具。")
+        val isAnthropic = ApiProtocol.normalize(protocol) == ApiProtocol.ANTHROPIC
+        val systemText = "你是一个定时任务助手。根据用户的提示生成简洁的回复。不要使用工具。"
+
+        val body = if (isAnthropic) {
+            // Anthropic：system 在顶层，消息里不能有 role=system
+            AnthropicCompat.buildRequestBody(
+                model = model,
+                openAiMessages = JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("role", "system")
+                        put("content", systemText)
+                    })
+                    put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", prompt)
+                    })
+                },
+                openAiTools = JSONArray(),
+                temperature = temperature,
+                maxTokens = 1024,
+                stream = false
+            )
+        } else {
+            JSONObject().apply {
+                put("model", model)
+                put("messages", JSONArray().apply {
+                    put(JSONObject().apply {
+                        put("role", "system")
+                        put("content", systemText)
+                    })
+                    put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", prompt)
+                    })
                 })
-                put(JSONObject().apply {
-                    put("role", "user")
-                    put("content", prompt)
-                })
-            })
-            put("stream", false)
-            put("temperature", temperature)
-            put("max_tokens", 1024)
+                put("stream", false)
+                put("temperature", temperature)
+                put("max_tokens", 1024)
+            }
         }
 
-        val request = Request.Builder()
+        val requestBuilder = Request.Builder()
             .url(baseUrl)
             .addHeader("Content-Type", "application/json")
-            .addHeader("Authorization", "Bearer $apiKey")
+        if (isAnthropic) {
+            requestBuilder.addHeader("x-api-key", apiKey)
+            requestBuilder.addHeader("anthropic-version", AnthropicCompat.API_VERSION)
+        } else {
+            requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+        }
+        val request = requestBuilder
             .post(body.toString().toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -395,7 +452,12 @@ object TaskScheduler {
                 log("run_agent API 错误：HTTP ${resp.code}")
                 return null
             }
-            val json = JSONObject(resp.body.string())
+            val raw = resp.body.string()
+            if (isAnthropic) {
+                val (text, _) = AnthropicCompat.parseNonStreamResponse(raw)
+                return text.takeIf { it.isNotBlank() }
+            }
+            val json = JSONObject(raw)
             val msg = json.optJSONArray("choices")?.optJSONObject(0)?.optJSONObject("message")
             val text = msg?.optString("content", "").orEmpty()
             if (text.isNotBlank()) return text
@@ -403,6 +465,14 @@ object TaskScheduler {
             return msg?.optString("reasoning_content", "").orEmpty().takeIf { it.isNotBlank() }
         }
     }
+
+    /**
+     * 定时任务的最大工具循环轮数。
+     *
+     * 定时任务无人盯着，跑飞了就是纯烧钱，所以硬限 8 轮。
+     * 比主会话默认值小得多。
+     */
+    private const val MAX_SCHEDULED_LOOPS = 8
 
     private fun log(msg: String) {
         DesktopLogger.info("TaskScheduler", msg)

@@ -61,16 +61,19 @@ object VisionHelper {
         val file = File(path)
         if (!file.exists() || !file.isFile) return null
         return try {
-            val bytes = if (currentEnabled) {
-                compressToJpeg(file) ?: file.readBytes()
+            // compressToJpeg 返回的永远是 JPEG 字节，MIME 必须用 image/jpeg；
+            // 只有压缩失败走 file.readBytes() 兜底时，才按原扩展名判断 MIME。
+            val compressed = if (currentEnabled) {
+                compressToJpeg(file)
             } else {
                 // 关闭压缩时，仅对大图做硬性降采样，避免 token 爆炸
                 val hardLimit = maxOf(currentMaxDim, 1920)
                 compressToJpeg(file, maxDim = hardLimit, quality = 90)
-                    ?: file.readBytes()
             }
+            val bytes = compressed ?: file.readBytes()
             if (bytes.isEmpty()) return null
-            val mime = if (path.endsWith(".png", ignoreCase = true)) "image/png" else "image/jpeg"
+            val mime = if (compressed != null) "image/jpeg"
+            else if (path.endsWith(".png", ignoreCase = true)) "image/png" else "image/jpeg"
             val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
             "data:$mime;base64,$b64"
         } catch (e: Exception) {

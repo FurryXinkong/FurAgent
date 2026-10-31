@@ -1,10 +1,12 @@
 package net.xinkong.furagent.desktop.core
 
-import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.DesktopLogger
+import net.xinkong.furagent.shared.util.AnthropicCompat
+import net.xinkong.furagent.shared.util.ApiProtocol
+import net.xinkong.furagent.shared.util.DateFormats
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -12,8 +14,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.*
 import java.util.concurrent.TimeUnit
 
 /**
@@ -397,26 +397,58 @@ object SessionSummarizer {
         }
         val apiKey = keyResult.key
         return try {
-            val body = JSONObject().apply {
-                put("model", profile.model)
-                put("messages", JSONArray().apply {
-                    put(JSONObject().apply {
-                        put("role", "user")
-                        put("content", prompt)
+            val isAnthropic =
+                ApiProtocol.normalize(profile.protocol) == ApiProtocol.ANTHROPIC
+
+            val body = if (isAnthropic) {
+                // Anthropic Messages 协议：system 在顶层、消息结构不同，
+                // 由 AnthropicCompat 统一转换。旧实现直接发 OpenAI 格式，
+                // 配 Anthropic 端点时必然 400，摘要功能静默失效。
+                AnthropicCompat.buildRequestBody(
+                    model = profile.model,
+                    openAiMessages = JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", prompt)
+                        })
+                    },
+                    openAiTools = JSONArray(),
+                    temperature = 1.0,
+                    maxTokens = 2000,
+                    stream = false
+                )
+            } else {
+                JSONObject().apply {
+                    put("model", profile.model)
+                    put("messages", JSONArray().apply {
+                        put(JSONObject().apply {
+                            put("role", "user")
+                            put("content", prompt)
+                        })
                     })
-                })
-                put("temperature", 1.0)
-                put("stream", false)
-                // 推理模型会先输出 reasoning_content，max_tokens 太小会被思考吃光
-                put("max_tokens", 2000)
+                    put("temperature", 1.0)
+                    put("stream", false)
+                    // 推理模型会先输出 reasoning_content，max_tokens 太小会被思考吃光
+                    put("max_tokens", 2000)
+                }
             }
             // 按模型能力强制关闭思考（复用 DesktopAgent 的逻辑）
-            DesktopAgent.applyDisableThinking(body, profile)
+            // Anthropic 协议不支持这些字段，跳过
+            if (!isAnthropic) {
+                DesktopAgent.applyDisableThinking(body, profile)
+            }
 
-            val request = Request.Builder()
+            val requestBuilder = Request.Builder()
                 .url(profile.baseUrl)
                 .addHeader("Content-Type", "application/json")
-                .addHeader("Authorization", "Bearer $apiKey")
+            if (isAnthropic) {
+                // Anthropic 用 x-api-key，不是 Bearer
+                requestBuilder.addHeader("x-api-key", apiKey)
+                requestBuilder.addHeader("anthropic-version", AnthropicCompat.API_VERSION)
+            } else {
+                requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+            }
+            val request = requestBuilder
                 .post(body.toString().toRequestBody("application/json".toMediaType()))
                 .build()
 
@@ -427,6 +459,12 @@ object SessionSummarizer {
                     return null
                 }
                 val text = it.body.string()
+                if (isAnthropic) {
+                    // Anthropic 非流式：content 是 block 数组，取所有 text 块拼接
+                    val (content, _) = AnthropicCompat.parseNonStreamResponse(text)
+                    DesktopLogger.debug(TAG, "摘要模型（Anthropic）返回：${content.length}字")
+                    return content.takeIf { c -> c.isNotBlank() }
+                }
                 val o = JSONObject(text)
                 val choice = o.optJSONArray("choices")?.optJSONObject(0)
                 val msg = choice?.optJSONObject("message")

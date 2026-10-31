@@ -19,7 +19,10 @@ object HttpTokenCodec {
             val md = MessageDigest.getInstance("SHA-256")
             val hash = md.digest(token.toByteArray(Charsets.UTF_8))
             val sb = StringBuilder()
-            for (i in 0 until 3) sb.append("%02X".format(hash[i]))
+            // hash[i] 是 Byte，装 Int 时符号扩展：>= 0x80 的字节会输出 FFFFFF85 这种 8 位串。
+            // SHA-256 的三字节里 >= 0x80 概率 7/8，绝大多数用户短码变成 8~24 位，
+            // 被 DirectDeviceCodec.isShortCodeString 的 length in 4..8 拒绝。
+            for (i in 0 until 3) sb.append("%02X".format(hash[i].toInt() and 0xFF))
             sb.toString()
         } catch (_: Exception) {
             ""

@@ -31,7 +31,9 @@ object LineDiff {
      * 中间差异区超过这个行数就不做 LCS（O(n*m) 会吃内存）。
      * 注意：先做公共前后缀裁剪，所以只有「整文件重写」才会碰到这个上限。
      */
-    private const val MAX_LCS_LINES = 4000
+    // 4000 行时 O(n×m) 需要 ~64MB，Android 中端机可能 OOM；降到 2000。
+    // 代码编辑通常只改局部，裁剪前后缀后中间区很小。
+    private const val MAX_LCS_LINES = 2000
 
     /** 上下文行数（patch 里变更前后各保留几行） */
     private const val CONTEXT = 3

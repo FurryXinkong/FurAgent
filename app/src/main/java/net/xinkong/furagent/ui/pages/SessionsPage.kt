@@ -2,41 +2,28 @@
 
 package net.xinkong.furagent.ui.pages
 
-import net.xinkong.furagent.shared.util.DateFormats
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import net.xinkong.furagent.data.SessionMeta
-import net.xinkong.furagent.ui.ApplyBackgroundBlur
-import net.xinkong.furagent.ui.GlassSheen
-import net.xinkong.furagent.ui.PocoCard
-import net.xinkong.furagent.ui.PocoEmptyState
-import net.xinkong.furagent.ui.PocoPageTopBar
-import net.xinkong.furagent.ui.glassPageBg
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.util.DateFormats
+import net.xinkong.furagent.ui.*
 import net.xinkong.furagent.ui.theme.AppRadius
-import java.text.SimpleDateFormat
-import java.util.*
 import kotlin.time.Duration.Companion.milliseconds
 
 /**
@@ -59,7 +46,9 @@ fun SessionsPage(
     onDuplicate: (String) -> Unit,
     onImport: () -> Unit,
     onCreate: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /** 批量删除：selectedIds 一次性交给上层。为 null 时回退到多次调 onDelete（不推荐）。 */
+    onDeleteBatch: ((Set<String>) -> Unit)? = null
 ) {
     ApplyBackgroundBlur(true)
     var searchQuery by remember { mutableStateOf("") }
@@ -99,8 +88,18 @@ fun SessionsPage(
                         // 批量删除按钮
                         IconButton(
                             onClick = {
-                                selectedIds.forEach { onDelete(it) }
-                                selectMode = false; selectedIds = emptySet()
+                                if (selectedIds.isNotEmpty()) {
+                                    if (onDeleteBatch != null) {
+                                        // 一次性交给上层：旧实现 selectedIds.forEach { onDelete(it) }
+                                        // 而 MainActivity 的 onDelete 是 pendingDeleteSessionId = id（单变量），
+                                        // 循环 5 次只留最后一个，只弹一次确认、只删一个。
+                                        onDeleteBatch(selectedIds)
+                                    } else {
+                                        selectedIds.forEach { onDelete(it) }
+                                    }
+                                    selectMode = false
+                                    selectedIds = emptySet()
+                                }
                             },
                             enabled = selectedIds.isNotEmpty()
                         ) {

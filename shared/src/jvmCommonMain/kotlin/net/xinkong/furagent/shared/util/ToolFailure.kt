@@ -23,9 +23,13 @@ fun isToolFailure(result: String): Boolean {
     if (head.contains("bad base-64")) return true
     if (head.contains("执行异常")) return true
     if (head.contains("工具执行异常")) return true
-    if (head.contains("异常：")) return true
-    if (head.contains("权限不足")) return true
-    if (head.contains("操作取消")) return true
+    // 通用词只在首行匹配。工具成功返回的正文（读日志、读代码、读报错文本）
+    // 里也会出现「异常：」「权限不足」等字样，全文 contains 会把成功误判为失败，
+    // 触发「连续失败 3 次中断」。
+    val firstLine = result.lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
+    if (firstLine.startsWith("异常：")) return true
+    if (firstLine.startsWith("权限不足")) return true
+    if (firstLine.startsWith("操作取消")) return true
     return false
 }
 

@@ -1,13 +1,10 @@
 package net.xinkong.furagent.shared.data
 
+import net.xinkong.furagent.shared.util.DateFormats
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-import net.xinkong.furagent.shared.util.DateFormats
-import java.util.UUID
+import java.util.*
 
 /**
  * 会话通用编解码（双端共用）。
@@ -43,10 +40,12 @@ object SessionCodec {
     fun duplicateSession(src: Session): Session {
         val newId = UUID.randomUUID().toString()
         val now = System.currentTimeMillis()
-        val newTitle = when {
-            src.title.endsWith("（副本）") || src.title.endsWith("(副本)") -> src.title
-            src.title.length > 26 -> src.title.take(26) + "…（副本）"
-            else -> "${src.title}（副本）"
+        // 复制副本会话也追加「（副本）」：旧实现 src.title.endsWith("（副本）") 时返回原名，
+        // 复制一个副本得到同名标题，会话列表里出现两个一样的名字。
+        val newTitle = if (src.title.length > 26) {
+            src.title.take(26) + "…（副本）"
+        } else {
+            "${src.title}（副本）"
         }
         return Session(
             id = newId,

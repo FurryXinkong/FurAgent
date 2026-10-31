@@ -33,6 +33,15 @@ object PermissionRequestBroker {
     private var deferred: CompletableDeferred<Boolean>? = null
     private var waitingPermission: String? = null
 
+    /**
+     * 并行请求保护：按 permission 名做 key。
+     *
+     * 旧实现是单个 `deferred` + `waitingPermission` 变量，两个工具同时请求
+     * 不同权限时，后到的会覆盖先到的，先到的协程永远等不到结果（只能等 300s 超时）。
+     */
+    private val pendingMap =
+        java.util.concurrent.ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+
     suspend fun request(
         title: String,
         message: String,
@@ -40,8 +49,11 @@ object PermissionRequestBroker {
         openSettingsAction: (Context) -> Unit
     ): Boolean {
         val d = CompletableDeferred<Boolean>()
-        deferred = d
-        waitingPermission = permission
+        // 同一权限并发请求时复用同一个 deferred，避免重复弹框
+        val existing = pendingMap.putIfAbsent(permission, d)
+        if (existing != null) {
+            return withTimeoutOrNull(300.seconds) { existing.await() } ?: false
+        }
 
         withContext(Dispatchers.Main) {
             _pending = PendingPermission(title, message, permission, openSettingsAction)
@@ -49,9 +61,11 @@ object PermissionRequestBroker {
 
         val result = withTimeoutOrNull(300.seconds) { d.await() } ?: false
 
-        withContext(Dispatchers.Main) { _pending = null }
-        deferred = null
-        waitingPermission = null
+        withContext(Dispatchers.Main) {
+            // 只清自己这个权限的弹框，不要误清其他并行请求的
+            if (_pending?.permission == permission) _pending = null
+        }
+        pendingMap.remove(permission)
         return result
     }
 
@@ -69,22 +83,25 @@ object PermissionRequestBroker {
     }
 
     fun onUserRejected() {
-        deferred?.complete(false)
+        val p = _pending ?: return
+        pendingMap.remove(p.permission)?.complete(false)
         _pending = null
     }
 
     fun onAppResumed(context: Context) {
-        val perm = waitingPermission ?: return
-        val granted = try {
-            androidx.core.content.ContextCompat.checkSelfPermission(context, perm) ==
-                    android.content.pm.PackageManager.PERMISSION_GRANTED
-        } catch (_: Exception) { false }
-        if (granted) {
-            deferred?.complete(true)
-            // 清空状态：否则用户切来 App 多次，后续每次 onResume 都会重复 complete
-            // （第二次起返回 false 无害，但状态应该明确清理）。
-            deferred = null
-            waitingPermission = null
+        // 并行场景下可能有多个权限在等，逐个检查
+        if (pendingMap.isEmpty()) return
+        val granted = mutableListOf<String>()
+        for (perm in pendingMap.keys.toList()) {
+            val ok = try {
+                androidx.core.content.ContextCompat.checkSelfPermission(context, perm) ==
+                        android.content.pm.PackageManager.PERMISSION_GRANTED
+            } catch (_: Exception) { false }
+            if (ok) granted.add(perm)
+        }
+        for (perm in granted) {
+            pendingMap.remove(perm)?.complete(true)
+            if (_pending?.permission == perm) _pending = null
         }
     }
 }

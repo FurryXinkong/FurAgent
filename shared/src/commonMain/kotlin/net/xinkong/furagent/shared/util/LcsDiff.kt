@@ -44,7 +44,10 @@ object LcsDiff {
         for (i in 0 until pre) out.add(Row(oldNo++, a[i], newNo++, b[i], '='))
         val n = midA.size
         val m = midB.size
-        if (n.toLong() * m > 4_000_000L) {
+        // 阈值从 4M 提到 25M：2000×2000 的 diff 在手机上算得动（约 4M 格），
+        // 旧阈值 4M 会让 2000 行的文件直接退化成「全删全加」，diff 完全不可读。
+        // 超过 25M 才退化，避免 OOM。
+        if (n.toLong() * m > 25_000_000L) {
             for (i in 0 until n) out.add(Row(oldNo++, midA[i], null, null, '-'))
             for (j in 0 until m) out.add(Row(null, null, newNo++, midB[j], '+'))
         } else if (n == 0) {

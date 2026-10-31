@@ -99,11 +99,13 @@ interface ToolHost {
      * 返回 null 表示读取失败。
      */
     suspend fun readTailLines(path: String, tailLines: Int): Pair<Int, List<TextLine>>? {
-        val total = textLineCount(path)
-        if (total <= 0) return null
-        val start = (total - tailLines).coerceAtLeast(1)
-        val lines = readTextLines(path, start, tailLines) ?: return null
-        return total to lines
+        // 默认实现读两遍文件（textLineCount + readTextLines），对超大文件性能不可接受。
+        // 两端 Host 都必须用 ToolCodeNav.readTailLines 覆盖。
+        // 显式抛异常，避免未来新 Host 忘覆盖而静默退化。
+        throw NotImplementedError(
+            "ToolHost.readTailLines 必须由宿主实现（默认实现会读两遍文件）。" +
+                "请参考 AndroidToolHost / DesktopToolHost 的 ToolCodeNav.readTailLines。"
+        )
     }
 
     /**

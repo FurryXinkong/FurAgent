@@ -628,17 +628,33 @@ object FfmpegTools {
     private fun parseCommandLine(cmd: String): List<String> =
         net.xinkong.furagent.shared.util.CommandLine.parse(cmd)
 
+    /**
+     * FFmpeg 里不带值的 flag（后面不跟参数）。
+     *
+     * 旧实现维护一个「带值 flag 白名单」反向匹配，任何没列进去的 flag
+     * （-metadata / -to / -g / -bf / -level / -x264-params / -tune /
+     * -maxrate / -bufsize / -threads / -passlogfile / -qscale / -loglevel …）
+     * 都会让 extractOutputPath 把 flag 的值当输出文件，导致输出文件存在时
+     * requireConfirmFfmpegOverwrite 被绕过。
+     * 现在只列不带值的布尔 flag，其余 -xxx 一律视为带值，靠位置关系判断。
+     */
+    private val BOOLEAN_FLAGS = setOf(
+        "-y", "-n", "-nostdin", "-hide_banner", "-stats", "-nostats",
+        "-vn", "-an", "-shortest", "-copyts"
+    )
+
     private fun extractOutputPath(args: List<String>): String? {
-        val knownFlags = setOf(
-            "-i", "-vf", "-af", "-c", "-c:v", "-c:a", "-crf", "-preset",
-            "-b:a", "-b:v", "-ss", "-t", "-map", "-filter_complex", "-filter:a",
-            "-loop", "-ar", "-ac", "-vn", "-an", "-f", "-safe", "-q:v", "-vframes",
-            "-movflags", "-pix_fmt", "-r", "-s", "-stream_loop"
-        )
         for (i in args.indices.reversed()) {
             val a = args[i]
             if (a.startsWith("-")) continue
-            if (i > 0 && args[i - 1] in knownFlags) continue
+            // 前一个参数是带值的 flag（形如 -xxx 且不是布尔 flag），
+            // 当前参数就是它的值，不是输出文件。
+            if (i > 0) {
+                val prev = args[i - 1]
+                if (prev.startsWith("-") && !prev.contains("=") && prev !in BOOLEAN_FLAGS) {
+                    continue
+                }
+            }
             return a
         }
         return null

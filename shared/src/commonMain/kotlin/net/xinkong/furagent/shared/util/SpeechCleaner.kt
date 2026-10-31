@@ -12,7 +12,9 @@ package net.xinkong.furagent.shared.util
 object SpeechCleaner {
 
     private val RE_CODE_BLOCK = Regex("```[\\s\\S]*?```")
-    private val RE_INLINE_CODE = Regex("(`[^`\\n]+`)")
+    // 必须有捕获组：下面 cleanForSpeech 用的是 it.groupValues[1]，
+    // 旧正则外层括号是字面量，无捕获组，groupValues[1] 直接越界抛异常。
+    private val RE_INLINE_CODE = Regex("`([^`\\n]+)`")
     private val RE_IMAGE = Regex("!\\[[^\\]]*]\\([^)]+\\)")
     private val RE_LINK = Regex("\\[([^\\]]+)]\\([^)]+\\)")
     private val RE_BOLD = Regex("\\*\\*([^*]+)\\*\\*")

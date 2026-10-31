@@ -31,6 +31,16 @@ object ClickOverlay {
 
     fun attach(ctx: Context) {
         if (view != null) return
+        // TYPE_ACCESSIBILITY_OVERLAY 必须用 AccessibilityService 自己的 context。
+        // 用 applicationContext 时部分 ROM（MIUI/ColorOS）会抛 BadTokenException，
+        // 因为 overlay 窗口的 token 绑定在 service 上。
+        if (ctx !is android.accessibilityservice.AccessibilityService) {
+            android.util.Log.w(
+                "ClickOverlay",
+                "attach 传入的不是 AccessibilityService（${ctx.javaClass.simpleName}），" +
+                        "TYPE_ACCESSIBILITY_OVERLAY 可能添加失败"
+            )
+        }
         try {
             val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
             val v = RippleView(ctx)
@@ -46,7 +56,27 @@ object ClickOverlay {
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
             }
-            wm.addView(v, p)
+            // 部分 ROM 首次 addView 会失败（窗口 token 还没就绪），重试一次
+            var added = false
+            try {
+                wm.addView(v, p)
+                added = true
+            } catch (e: Exception) {
+                android.util.Log.w("ClickOverlay", "首次 addView 失败，重试：${e.message}")
+                try {
+                    Thread.sleep(50)
+                    wm.addView(v, p)
+                    added = true
+                } catch (e2: Exception) {
+                    android.util.Log.w("ClickOverlay", "重试 addView 仍失败：${e2.message}")
+                }
+            }
+            if (!added) {
+                windowManager = null
+                view = null
+                params = null
+                return
+            }
             windowManager = wm
             view = v
             params = p
