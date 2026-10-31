@@ -45,6 +45,18 @@ object DesktopAgent {
 必须串行：tool_search/tool_load（改 tools 数组）、有依赖的操作。
 改代码用 code_edit 一次提交所有改动（files 可放多文件多处），不要"改一个→看结果→再改下一个"。
 
+【子代理】run_sub_session 是异步的：调用立即返回，不阻塞。结果要用 sub_session(op=result, id=) 取。
+满足以下任一条件，必须派子代理，不要自己查：
+1 需要读 3 个以上文件才能得出结论（如"这个项目怎么实现的"）
+2 需要连续 5 次以上工具调用才能定位（如"编译为什么失败"）
+3 探索性搜索：不确定目标在哪个文件，要反复 grep/glob 试
+4 结论只需一段话，但过程要翻大量代码
+不要用子代理的情况：
+- 已知文件路径，读 1-2 个文件就能答
+- 需要改代码（子代理改完你还要重读验证，反而更贵）
+- 需要和用户来回确认的
+派子代理时 task 必须自包含：写清目标、已知路径、期望返回格式（要求带文件路径+行号+原文片段，便于抽查）。
+
 【路径】~ 主目录；桌面 ~/Desktop；下载 ~/Downloads；文档 ~/Documents；图片 ~/Pictures。
 产出目录（~/.furagent/）：screenshots 截图 / downloads 下载 / images 生成图 / exports 导出 / temp 临时 / logs 日志 / scripts 脚本。
 其它文件操作保持主目录内，系统目录会被拒。
@@ -320,6 +332,7 @@ object DesktopAgent {
             val contentBuilder = StringBuilder()
             val reasoningBuilder = StringBuilder()
             var toolCalls: MutableMap<Int, ToolCallAccumulator> = mutableMapOf()
+            var finishReason = ""
 
             try {
                 // 流式读取放到可取消包装里：
@@ -345,7 +358,7 @@ object DesktopAgent {
                             val onParseErrorCb: (String, String) -> Unit = { cls, data ->
                                 DesktopLogger.warn("Agent", "SSE 单行 JSON 解析失败：$cls，行：${data.take(120)}")
                             }
-                            toolCalls = if (isAnthropic) {
+                            val parsed = if (isAnthropic) {
                                 AnthropicCompat.parseSseStream(
                                     readLine = { source.readUtf8Line() },
                                     onContent = onContentCb,
@@ -360,6 +373,8 @@ object DesktopAgent {
                                     onParseError = onParseErrorCb
                                 )
                             }
+                            toolCalls = parsed.toolCalls
+                            finishReason = parsed.finishReason
                         }
                     } finally {
                         handle?.dispose()
@@ -413,6 +428,41 @@ object DesktopAgent {
                 // 最后一条工作过程会把旧思考一直悬着，越积越长，
                 // 既与已保存的消息重复，又看不到最新的思考。
                 onStreamCommit()
+            }
+
+            // 截断检测：finish_reason=length 或 arguments 不是合法 JSON，
+            // 说明模型输出被 max_tokens 截断，参数是半截的。
+            //
+            // 之前没有这个检查：半截 JSON 传给 JSONObject() 解析失败后
+            // 静默降级成空对象，工具收到空参数，表现为「只执行了一部分」
+            // 或「未提供 path」，而模型完全不知道发生了什么，会反复重试。
+            val truncated = toolCalls.filterValues { acc ->
+                val a = acc.arguments.toString().trim()
+                a.isNotEmpty() && try {
+                    JSONObject(a); false
+                } catch (_: Exception) { true }
+            }
+            if (truncated.isNotEmpty()) {
+                val detail = truncated.entries.joinToString("\n") { (idx, acc) ->
+                    "· ${acc.name.ifBlank { "(未命名)" }}（第 ${idx + 1} 个）：参数 ${acc.arguments.length} 字符，结尾：" +
+                            acc.arguments.toString().takeLast(60).replace('\n', ' ')
+                }
+                DesktopLogger.error(
+                    "Agent",
+                    "工具参数被截断（finish_reason=$finishReason）：${truncated.keys}"
+                )
+                onThinking("")
+                val msg = "输出被截断了，工具参数不完整，已阻止执行。\n\n" +
+                        "原因：${if (finishReason == "length") "达到 max_tokens 上限" else "流意外结束"}\n" +
+                        "受影响：\n$detail\n\n" +
+                        "处理建议：\n" +
+                        "1. 把大文件拆成多次写入（先写骨架，再用 append=true 追加）\n" +
+                        "2. 减少单次输出的代码量\n" +
+                        "3. 到设置里调大该模型的 max_tokens"
+                current = current + DesktopMessage(role = "assistant", content = msg, type = "text")
+                onUpdate(current)
+                onStreamCommit()
+                return@withContext current
             }
 
             // 给每个 tool_call 算一个稳定的 id（三处统一）
@@ -1278,7 +1328,18 @@ object DesktopAgent {
         applyEnableThinking(body, profile.baseUrl, level)
     }
 
+    // 工具调用参数的 UI 展示。
+    //
+    // 安全要求：必须完整展示，不能截断。
+    // 用户需要看到 AI 实际传了什么参数（尤其是 write_file 的 content、
+    // execute_command 的 command），截断等于审计链断裂。
+    //
+    // 之前这里是 raw.take(500)，导致大文件写入时用户只能看到开头一小段，
+    // 无法判断 AI 到底写了什么。
+    //
+    // 解析成功时用 toString(2) 美化（缩进可读）；
+    // 解析失败时原样返回（保留原始字节，便于排查 NUL 等问题）。
     private fun prettyJson(raw: String): String = try {
         JSONObject(raw).toString(2)
-    } catch (_: Exception) { raw.take(500) }
+    } catch (_: Exception) { raw }
 }

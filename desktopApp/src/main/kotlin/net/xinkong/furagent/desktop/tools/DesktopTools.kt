@@ -11,6 +11,7 @@ import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.system.OutputCompressor
 import net.xinkong.furagent.shared.tools.*
+import net.xinkong.furagent.shared.util.sanitizeJsonControlChars
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
@@ -912,7 +913,11 @@ object DesktopTools {
 
     private suspend fun doExecute(name: String, argsJson: String): ToolResult {
         return try {
-            val args = if (argsJson.isBlank()) JSONObject() else JSONObject(argsJson)
+            // 解析前清洗非法控制字符（裸 NUL 等）。
+            // org.json 遇到裸 NUL 会抛 "Unterminated string"，
+            // 导致整个参数对象作废，工具收到空参数。
+            val cleanJson = sanitizeJsonControlChars(argsJson)
+            val args = if (cleanJson.isBlank()) JSONObject() else JSONObject(cleanJson)
 
             // 元工具拦截（在 disabled / vision 检查之前，避免误拦）
             if (name == "tool_search") {

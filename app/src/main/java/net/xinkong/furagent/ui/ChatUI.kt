@@ -208,8 +208,10 @@ private fun SubSessionCard(message: ChatMessage) {
             }
             if (summary.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
+                // 不硬截断：由 maxLines 控制折叠高度，
+                // 避免 take(300) 把长摘要从中间砍断（可能砍掉关键错误信息）。
                 Text(
-                    summary.take(300),
+                    summary,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 3,
@@ -1821,7 +1823,9 @@ private fun looksLikePatch(content: String): Boolean {
  */
 @Composable
 private fun PatchView(patch: String) {
-    val lines = remember(patch) { patch.lines().take(300) }
+    // 不截断：diff 是审计依据，用户需要看到完整改动。
+    // 之前 take(300) 会砍掉大文件的 diff 尾部。
+    val lines = remember(patch) { patch.lines() }
     Column(
         Modifier
             .fillMaxWidth()

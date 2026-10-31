@@ -128,6 +128,18 @@ object Prompts {
 必须串行：tool_search/tool_load（改 tools 数组）、有依赖的操作、FFmpeg 转码。
 file_op(op=edit) 是整文件覆盖；改多文件尽量一条消息发多个 file_op。
 
+【子代理】run_sub_session 是异步的：调用立即返回，不阻塞。结果要用 sub_session(op=result, id=) 取。
+满足以下任一条件，必须派子代理，不要自己查：
+1 需要读 3 个以上文件才能得出结论（如"这个项目怎么实现的"）
+2 需要连续 5 次以上工具调用才能定位（如"编译为什么失败"）
+3 探索性搜索：不确定目标在哪个文件，要反复 grep/glob 试
+4 结论只需一段话，但过程要翻大量代码
+不要用子代理的情况：
+- 已知文件路径，读 1-2 个文件就能答
+- 需要改代码（子代理改完你还要重读验证，反而更贵）
+- 需要和用户来回确认的
+派子代理时 task 必须自包含：写清目标、已知路径、期望返回格式（要求带文件路径+行号+原文片段，便于抽查）。
+
 【路径】别名：sdcard/内部存储/根目录→/sdcard；下载→/sdcard/Download；图片→/sdcard/DCIM；文档→/sdcard/Documents；音乐→/sdcard/Music。
 产出目录（/sdcard/FurAgent/）：downloads 下载 / images 生成图 / media 媒体 / temp 临时 / screenshots 截图 / scripts 脚本（无外部存储权限时回退 App 私有目录）。除非用户指定其它路径。
 
@@ -428,7 +440,9 @@ private fun buildHistoryMessages(
                     val toolName = ToolRegistry.findToolNameByDisplay(firstLine) ?: firstLine
                     val argsJson = try {
                         if (argsPart.isBlank()) "{}"
-                        else JSONObject(argsPart).toString()
+                        // 清洗非法控制字符（裸 NUL 等），否则 org.json 直接抛异常，
+                        // 参数降级成 {}，历史消息里的工具调用参数全丢。
+                        else JSONObject(sanitizeJsonControlChars(argsPart)).toString()
                     } catch (e: Exception) {
                         AgentLogger.log(
                             "ERR",
@@ -767,6 +781,7 @@ suspend fun runAgentLoop(
         val contentBuilder = StringBuilder()
         val reasoningBuilder = StringBuilder()
         var toolCalls: MutableMap<Int, ToolCallAccumulator> = mutableMapOf()
+        var finishReason = ""
 
         try {
             // okhttp 5.x：body 是 non-null，去掉多余的 ?.
@@ -785,7 +800,7 @@ suspend fun runAgentLoop(
                         "SSE 单行 JSON 解析失败：$cls，行：${data.take(150)}"
                     )
                 }
-                toolCalls = if (isAnthropic) {
+                val parsed = if (isAnthropic) {
                     AnthropicCompat.parseSseStream(
                         readLine = { source.readUtf8Line() },
                         onContent = onContentCb,
@@ -800,6 +815,8 @@ suspend fun runAgentLoop(
                         onParseError = onParseErrorCb
                     )
                 }
+                toolCalls = parsed.toolCalls
+                finishReason = parsed.finishReason
             }
         } catch (e: CancellationException) {
             throw e
@@ -855,6 +872,33 @@ suspend fun runAgentLoop(
             onEvent(AgentEvent("reasoning_msg", reasoningBuilder.toString()))
         }
 
+        // 截断检测：arguments 不是合法 JSON 说明输出被 max_tokens 截断。
+        // 之前半截 JSON 解析失败后静默降级成空参数，工具收到空参数，
+        // 表现为「只执行了一部分」，而模型不知道发生了什么会反复重试。
+        val truncated = toolCalls.filterValues { acc ->
+            val a = acc.arguments.toString().trim()
+            a.isNotEmpty() && try {
+                JSONObject(a); false
+            } catch (_: Exception) { true }
+        }
+        if (truncated.isNotEmpty()) {
+            val detail = truncated.entries.joinToString("\n") { (idx, acc) ->
+                "· ${acc.name.ifBlank { "(未命名)" }}（第 ${idx + 1} 个）：参数 ${acc.arguments.length} 字符"
+            }
+            AgentLogger.log("ERR", "工具参数被截断（finish_reason=$finishReason）：${truncated.keys}")
+            onEvent(AgentEvent("thinking", ""))
+            val msg = "输出被截断了，工具参数不完整，已阻止执行。\n\n" +
+                    "原因：${if (finishReason == "length") "达到 max_tokens 上限" else "流意外结束"}\n" +
+                    "受影响：\n$detail\n\n" +
+                    "处理建议：\n" +
+                    "1. 把大文件拆成多次写入（先写骨架，再用 append=true 追加）\n" +
+                    "2. 减少单次输出的代码量\n" +
+                    "3. 到设置里调大该模型的 max_tokens"
+            onEvent(AgentEvent("assistant_text", msg))
+            onEvent(AgentEvent("final", msg))
+            return msg
+        }
+
         // 给每个 tool_call 算一个稳定的 id
         val callIds = mutableMapOf<Int, String>()
         toolCalls.toSortedMap().forEach { (idx, acc) ->
@@ -901,7 +945,9 @@ suspend fun runAgentLoop(
         } else ""
         sortedCalls.forEach { (idx, acc) ->
             val stableId = callIds[idx]!!
-            val args = try { JSONObject(acc.arguments.toString()) } catch (_: Exception) { JSONObject() }
+            val args = try {
+                JSONObject(sanitizeJsonControlChars(acc.arguments.toString()))
+            } catch (_: Exception) { JSONObject() }
             val friendlyName = ToolRegistry.displayName(acc.name)
             onEvent(AgentEvent(
                 "tool_call", "$friendlyName\n${args.toString(2)}", acc.name, stableId,
@@ -920,7 +966,12 @@ suspend fun runAgentLoop(
                     AgentLogger.log("TOOL", "已取消，跳过工具 ${acc.name}")
                     return@forEach
                 }
-                val args = try { JSONObject(acc.arguments.toString()) } catch (_: Exception) { JSONObject() }
+                val args = try {
+                    JSONObject(sanitizeJsonControlChars(acc.arguments.toString()))
+                } catch (e: Exception) {
+                    AgentLogger.log("ERR", "工具 ${acc.name} 参数解析失败：${e.javaClass.simpleName}: ${e.message}")
+                    JSONObject()
+                }
                 AgentLogger.log("TOOL", "调用（串行）：${acc.name}")
                 results[idx] = runOneToolForAgent(acc.name, args, context, settings, loadedToolNames)
             }
@@ -939,8 +990,11 @@ suspend fun runAgentLoop(
                             return@async idx to "失败：用户已停止"
                         }
                         val args = try {
-                            JSONObject(acc.arguments.toString())
-                        } catch (_: Exception) { JSONObject() }
+                            JSONObject(sanitizeJsonControlChars(acc.arguments.toString()))
+                        } catch (e: Exception) {
+                            AgentLogger.log("ERR", "工具 ${acc.name} 参数解析失败：${e.javaClass.simpleName}: ${e.message}")
+                            JSONObject()
+                        }
                         val r = try {
                             runOneToolForAgent(acc.name, args, context, settings, loadedToolNames)
                         } catch (ce: CancellationException) {
@@ -964,7 +1018,9 @@ suspend fun runAgentLoop(
             currentCoroutineContext().ensureActive()
 
             val stableId = callIds[idx]!!
-            val args = try { JSONObject(acc.arguments.toString()) } catch (_: Exception) { JSONObject() }
+            val args = try {
+                JSONObject(sanitizeJsonControlChars(acc.arguments.toString()))
+            } catch (_: Exception) { JSONObject() }
             val friendlyName = ToolRegistry.displayName(acc.name)
             val rawResult = results[idx] ?: "失败：工具未执行"
 

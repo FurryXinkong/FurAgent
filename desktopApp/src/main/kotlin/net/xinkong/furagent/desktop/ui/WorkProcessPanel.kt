@@ -2,12 +2,17 @@ package net.xinkong.furagent.desktop.ui
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import androidx.compose.material3.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -641,11 +646,15 @@ internal fun WorkProcessText(msg: DesktopMessage) {
                 }
                 // 始终用 MarkdownText（有 remember 缓存，解析只跑一次）
                 // 大文本的真正瓶颈是 maxLines 限制，不是 markdown 解析
+                //
+                // 展开后不限行数：工具参数/结果必须完整可见，
+                // 否则用户无法审计 AI 到底执行了什么（write_file 的 content、
+                // execute_command 的 command 都可能很长）。
                 SelectionContainer {
                     MarkdownText(
                         text = msg.content,
                         color = TextPrimary(),
-                        maxLines = if (expanded) 500 else 2
+                        maxLines = if (expanded) Int.MAX_VALUE else 2
                     )
                 }
             }

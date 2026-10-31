@@ -5,7 +5,7 @@ import kotlinx.coroutines.ensureActive
 import net.xinkong.furagent.shared.ThinkingLevel
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.Locale
+import java.util.*
 
 /**
  * 桌面端 DesktopAgent 与手机端 Agent.kt 共用的 Agent 循环纯逻辑。
@@ -206,6 +206,21 @@ class ToolCallAccumulator {
     val arguments = StringBuilder()
 }
 
+/**
+ * SSE 流解析结果。
+ *
+ * finishReason 用于识别「输出被截断」：
+ *   - "length"：达到 max_tokens 上限，arguments 可能是半截 JSON；
+ *   - "tool_calls" / "stop"：正常结束。
+ *
+ * 之前只返回 toolCalls，调用方无从得知是否被截断，
+ * 半截 JSON 解析失败后静默降级成空参数，表现为「工具只执行了一部分」。
+ */
+data class SseParseResult(
+    val toolCalls: MutableMap<Int, ToolCallAccumulator>,
+    val finishReason: String = ""
+)
+
 // SSE 解析
 
 /**
@@ -228,8 +243,9 @@ suspend fun parseSseStream(
     onContent: (String) -> Unit,
     onReasoning: (String) -> Unit = {},
     onParseError: (String, String) -> Unit = { _, _ -> }
-): MutableMap<Int, ToolCallAccumulator> {
+): SseParseResult {
     val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
+    var finishReason = ""
     while (true) {
         currentCoroutineContext().ensureActive()
         val line = readLine() ?: break
@@ -244,7 +260,13 @@ suspend fun parseSseStream(
         }
         val choices = chunk.optJSONArray("choices") ?: continue
         if (choices.length() == 0) continue
-        val delta = choices.optJSONObject(0)?.optJSONObject("delta") ?: continue
+        val choice0 = choices.optJSONObject(0) ?: continue
+        // finish_reason 只在最后一个 chunk 出现，且可能为 null
+        if (!choice0.isNull("finish_reason")) {
+            choice0.optString("finish_reason", "").takeIf { it.isNotEmpty() && it != "" }
+                ?.let { finishReason = it }
+        }
+        val delta = choice0.optJSONObject("delta") ?: continue
 
         // 坑 org.json 的 optString(key, default) 在字段存在但值为 JSON null 时，
         // 返回的是字符串 "null" 而不是 default（内部是 object.toString()）。
@@ -272,13 +294,41 @@ suspend fun parseSseStream(
                 val acc = toolCalls.getOrPut(idx) { ToolCallAccumulator() }
                 tc.optString("id", "").takeIf { it.isNotEmpty() && it != "null" }?.let { acc.id = it }
                 tc.optJSONObject("function")?.let { fn ->
-                    fn.optString("name", "").takeIf { it.isNotEmpty() && it != "null" }?.let { acc.name = it }
-                    fn.optString("arguments", "").takeIf { it.isNotEmpty() && it != "null" }?.let { acc.arguments.append(it) }
+                    fn.optString("name", "").takeIf { it.isNotEmpty() && it != "" }?.let { acc.name = it }
+                    // 清洗非法控制字符：DeepSeek 长输出时偶尔会吐出 \u0000，
+                    // 而 JSON 规范不允许字符串里出现裸 NUL，
+                    // 导致整个 arguments 解析失败、参数全丢（表现为工具收到空参数）。
+                    fn.optString("arguments", "").takeIf { it.isNotEmpty() && it != "" }
+                        ?.let { acc.arguments.append(sanitizeJsonControlChars(it)) }
                 }
             }
         }
     }
-    return toolCalls
+    return SseParseResult(toolCalls, finishReason)
+}
+
+/**
+ * 清洗 JSON 字符串里的非法控制字符。
+ *
+ * JSON 规范（RFC 8259）规定：字符串内只能出现 \u0000-\u001F 的转义形式，
+ * 裸控制字符是非法的。org.json 遇到裸 NUL 会直接抛
+ * "Unterminated string. Character with int code 0 is not allowed"。
+ *
+ * 真实案例：DeepSeek 生成大段代码时偶尔吐出 \u0000，
+ * 导致 write_file 的整个 arguments 解析失败，参数全丢，
+ * 工具收到空对象，表现为「只执行了一部分」或「未提供 path」。
+ *
+ * 处理：把裸控制字符（除 \t \n \r 外）直接剔除。
+ * 这些字符在代码/文本里本来就没有意义，剔除不会损坏内容。
+ */
+fun sanitizeJsonControlChars(s: String): String {
+    if (s.none { it < ' ' && it != '\t' && it != '\n' && it != '\r' }) return s
+    val sb = StringBuilder(s.length)
+    for (c in s) {
+        if (c < ' ' && c != '\t' && c != '\n' && c != '\r') continue
+        sb.append(c)
+    }
+    return sb.toString()
 }
 
 // 历史截断起点

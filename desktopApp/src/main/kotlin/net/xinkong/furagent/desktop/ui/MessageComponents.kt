@@ -18,8 +18,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.*
-import androidx.compose.ui.input.key.*
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.toComposeImageBitmap
 import androidx.compose.ui.input.pointer.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
@@ -317,8 +319,10 @@ internal fun SubSessionCard(msg: DesktopMessage) {
             }
             if (summary.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
+                // 不硬截断：由 maxLines 控制折叠高度，
+                // 避免 take(300) 把长摘要从中间砍断（可能砍掉关键错误信息）。
                 Text(
-                    summary.take(300),
+                    summary,
                     fontSize = 12.sp,
                     color = TextSecondary(),
                     maxLines = 3,
@@ -1617,7 +1621,9 @@ internal fun HistoryEntryRow(
 /** patch 渲染：+ 绿 / - 红 / @@ 蓝 / 上下文灰。 */
 @Composable
 internal fun PatchView(patch: String) {
-    val lines = remember(patch) { patch.lines().take(300) }
+    // 不截断：diff 是审计依据，用户需要看到完整改动。
+    // 之前 take(300) 会砍掉大文件的 diff 尾部。
+    val lines = remember(patch) { patch.lines() }
     Column(
         Modifier
             .fillMaxWidth()

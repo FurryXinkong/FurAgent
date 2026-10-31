@@ -75,8 +75,8 @@ object DocumentTools {
                     """"footer":{"type":"string","description":"页脚文本（PPT 用）"},""" +
                     """"header":{"type":"string","description":"页眉文本（Word 用）"},""" +
                     """"pageNumber":{"type":"boolean","description":"是否显示页码（PPT/Word 用）"},""" +
-                    """"content":{"type":"array","description":"内容块数组（docx/pptx 用）。块类型：title/heading/text/bullets/table/image/pagebreak/toc/quote/code/checkbox","items":{"type":"object"}},""" +
-                    """"sheets":{"type":"array","description":"工作表数组（xlsx 用）。每项：{name, headers, rows, theme?, style?, columns?, highlights?, merges?, formulas?, conditional?, validation?, chart?}","items":{"type":"object"}},""" +
+                    """"content":{"type":"array","description":"内容块数组（docx/pptx 用）。Word 块：title/heading/text/bullets/table/image/pagebreak/toc/quote/code/checkbox/columns/watermark/footnote/hr。PPT 块：title/heading/text/bullets/table/image/pagebreak/shape/kpi/divider/chart/notes/layout","items":{"type":"object"}},""" +
+                    """"sheets":{"type":"array","description":"工作表数组（xlsx 用）。每项：{name, headers, rows, theme?, style?, columns?, highlights?, merges?, formulas?, conditional?, validation?, chart?, headerRows?, groups?, comments?, links?, sparklines?, print?}","items":{"type":"object"}},""" +
                     """"edits":{"type":"array","description":"编辑操作数组（edit_docx/edit_xlsx 用）。docx 每项：{paragraph?, find?, replace?, set?, insertAfter?, delete?}；xlsx 每项：{sheet?, row?, col?, value?, style?, insertRow?, deleteRow?, insertCol?, deleteCol?}","items":{"type":"object"}},""" +
                     """"structured":{"type":"boolean","description":"read_* 时是否返回结构化 JSON（默认 true）"}""" +
                     """},"required":["op","path"]}"""
@@ -158,6 +158,10 @@ object DocumentTools {
                     "code" -> addDocxCode(doc, block, cfg)
                     "checkbox" -> addDocxCheckbox(doc, block, cfg)
                     "toc" -> addDocxToc(doc, cfg)
+                    "columns" -> addDocxColumns(doc, block, cfg)
+                    "watermark" -> addDocxWatermark(doc, block)
+                    "footnote" -> addDocxFootnote(doc, block, cfg)
+                    "hr" -> addDocxHr(doc, block)
                 }
             }
 
@@ -816,145 +820,11 @@ object DocumentTools {
             }
 
             val content = args.optJSONArray("content") ?: JSONArray()
-            var currentSlide: org.apache.poi.xslf.usermodel.XSLFSlide? = null
-            var y = 60.0
-
-            fun newSlide(): org.apache.poi.xslf.usermodel.XSLFSlide {
-                val s = ppt.createSlide()
-                if (cfg.bgColor != null) fillSlideBackground(s, cfg.bgColor)
-                y = 60.0
-                return s
-            }
+            val canvas = SlideCanvas(ppt, pageSize, cfg)
 
             for (i in 0 until content.length()) {
                 val block = content.optJSONObject(i) ?: continue
-                when (block.optString("type", "text")) {
-                    "title", "heading" -> {
-                        currentSlide = newSlide()
-                        val box = currentSlide.createTextBox()
-                        box.anchor = java.awt.Rectangle(60, 40, pageSize.width - 120, 80)
-                        val p = box.addNewTextParagraph()
-                        val run = p.addNewTextRun()
-                        // 兼容 text / title 两种字段名
-                        val headText = block.optString("text", "").ifBlank { block.optString("title", "") }
-                        run.setText(headText)
-                        run.fontSize = 32.0
-                        run.isBold = true
-                        if (cfg.titleColor != null) run.setFontColor(cfg.titleColor)
-                        y = 140.0
-                        // heading 块可带 items，直接渲染成要点列表
-                        val headItems = block.optJSONArray("items")
-                        if (headItems != null && headItems.length() > 0) {
-                            val ib = currentSlide!!.createTextBox()
-                            val ih = headItems.length() * 50 + 20
-                            ib.anchor = java.awt.Rectangle(60, y.toInt(), pageSize.width - 120, ih)
-                            for (j in 0 until headItems.length()) {
-                                val ip = ib.addNewTextParagraph()
-                                ip.indentLevel = 0
-                                val ir = ip.addNewTextRun()
-                                val t = headItems.optString(j, "")
-                                ir.setText("• $t")
-                                ir.fontSize = fitFontSize(t, 20.0, pageSize.width - 160)
-                                if (cfg.bodyColor != null) ir.setFontColor(cfg.bodyColor)
-                            }
-                            y += ih + 10
-                        }
-                    }
-                    "text" -> {
-                        val s = currentSlide ?: newSlide().also { currentSlide = it }
-                        val text = block.optString("text", "")
-                        val box = s.createTextBox()
-                        box.anchor = java.awt.Rectangle(60, y.toInt(), pageSize.width - 120, 60)
-                        val p = box.addNewTextParagraph()
-                        val run = p.addNewTextRun()
-                        run.setText(text)
-                        run.fontSize = fitFontSize(text, 18.0, pageSize.width - 120)
-                        if (cfg.bodyColor != null) run.setFontColor(cfg.bodyColor)
-                        y += 70
-                    }
-                    "bullets" -> {
-                        val s = currentSlide ?: newSlide().also { currentSlide = it }
-                        val items = block.optJSONArray("items") ?: continue
-                        val box = s.createTextBox()
-                        val h = (items.length() * 50 + 20)
-                        box.anchor = java.awt.Rectangle(60, y.toInt(), pageSize.width - 120, h)
-                        for (j in 0 until items.length()) {
-                            val p = box.addNewTextParagraph()
-                            p.indentLevel = 0
-                            val run = p.addNewTextRun()
-                            val t = items.optString(j, "")
-                            run.setText("• $t")
-                            run.fontSize = fitFontSize(t, 20.0, pageSize.width - 160)
-                            if (cfg.bodyColor != null) run.setFontColor(cfg.bodyColor)
-                        }
-                        y += h + 10
-                    }
-                    "table" -> {
-                        val s = currentSlide ?: newSlide().also { currentSlide = it }
-                        val headers = block.optJSONArray("headers")
-                        val rows = block.optJSONArray("rows") ?: continue
-                        val cols = maxOf(headers?.length() ?: 0, (0 until rows.length()).maxOfOrNull {
-                            rows.optJSONArray(it)?.length() ?: 0
-                        } ?: 0)
-                        if (cols == 0) continue
-                        val totalRows = rows.length() + (if (headers != null) 1 else 0)
-                        val tbl = s.createTable(totalRows, cols)
-                        tbl.anchor = java.awt.Rectangle(60, y.toInt(), pageSize.width - 120, totalRows * 40)
-                        var ri = 0
-                        if (headers != null) {
-                            for (c in 0 until cols) {
-                                val cell = tbl.getCell(0, c)
-                                cell.text = headers.optString(c, "")
-                                if (cfg.tableHeaderFill != null) cell.setFillColor(cfg.tableHeaderFill)
-                                cell.textParagraphs.forEach { tp ->
-                                    tp.textRuns.forEach { tr ->
-                                        tr.isBold = true
-                                        if (cfg.tableHeaderFont != null) tr.setFontColor(cfg.tableHeaderFont)
-                                    }
-                                }
-                            }
-                            ri = 1
-                        }
-                        for (r in 0 until rows.length()) {
-                            val rowArr = rows.optJSONArray(r) ?: continue
-                            for (c in 0 until cols) {
-                                tbl.getCell(ri + r, c).text = rowArr.optString(c, "")
-                            }
-                        }
-                        y += totalRows * 45 + 10
-                    }
-                    "image" -> {
-                        val s = currentSlide ?: newSlide().also { currentSlide = it }
-                        val imgPath = block.optString("path", "").trim()
-                        if (imgPath.isBlank()) continue
-                        val resolved = host.resolvePath(imgPath) ?: continue
-                        val f = File(resolved)
-                        if (!f.exists()) continue
-                        val data = f.readBytes()
-                        val type = when (f.extension.lowercase()) {
-                            "png" -> PictureData.PictureType.PNG
-                            "gif" -> PictureData.PictureType.GIF
-                            else -> PictureData.PictureType.JPEG
-                        }
-                        val pd = ppt.addPicture(data, type)
-                        val w = block.optInt("width", 400)
-                        // 按图片实际宽高比算高度。旧实现硬编码 4:3（w * 0.75），
-                        // 16:9 图片会被拉伸。显式传了 height 就尊重用户值。
-                        val explicitH = block.optInt("height", 0)
-                        val h = if (explicitH > 0) explicitH else {
-                            try {
-                                javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(data))?.let { img ->
-                                    if (img.width > 0) {
-                                        (w.toDouble() * img.height / img.width).toInt().coerceAtLeast(1)
-                                    } else (w * 0.75).toInt()
-                                } ?: (w * 0.75).toInt()
-                            } catch (_: Exception) { (w * 0.75).toInt() }
-                        }
-                        val pic = s.createPicture(pd)
-                        pic.anchor = java.awt.Rectangle(60, y.toInt(), w, h)
-                        y += h + 10
-                    }
-                }
+                renderPptxBlock(canvas, block, cfg, host)
             }
 
             // 页码 / 页脚（跳过首页）
@@ -980,6 +850,411 @@ object DocumentTools {
         } finally {
             try { ppt.close() } catch (_: Exception) { }
         }
+    }
+
+    /**
+     * 幻灯片画布：管理当前页的纵向游标 y 与横向区域。
+     *
+     * 旧实现把 y 当局部变量累加，内容一多就画到页面外（看不见但文件里有）。
+     * 这里把「当前页 + 游标 + 横向区域」封装成对象，所有块渲染前先 ensureSpace()，
+     * 空间不够自动开新页，从根本上消除溢出。
+     */
+    private class SlideCanvas(
+        val ppt: XMLSlideShow,
+        val pageSize: java.awt.Dimension,
+        val cfg: PptxStyleConfig
+    ) {
+        var slide: org.apache.poi.xslf.usermodel.XSLFSlide? = null
+        var y: Double = TOP_MARGIN
+        /** 当前横向区域：left / width（像素） */
+        var areaLeft: Int = SIDE_MARGIN
+        var areaWidth: Int = pageSize.width - SIDE_MARGIN * 2
+
+        companion object {
+            const val SIDE_MARGIN = 60
+            const val TOP_MARGIN = 60.0
+            const val BOTTOM_MARGIN = 70.0
+        }
+
+        /** 内容区底部边界（留出页脚空间） */
+        val bottomLimit: Double get() = pageSize.height - BOTTOM_MARGIN
+
+        /** 剩余可用高度 */
+        val remaining: Double get() = bottomLimit - y
+
+        fun newSlide(): org.apache.poi.xslf.usermodel.XSLFSlide {
+            val s = ppt.createSlide()
+            if (cfg.bgColor != null) fillSlideBackground(s, cfg.bgColor)
+            slide = s
+            y = TOP_MARGIN
+            areaLeft = SIDE_MARGIN
+            areaWidth = pageSize.width - SIDE_MARGIN * 2
+            return s
+        }
+
+        /** 确保当前页有 h 像素空间，不够则自动开新页。返回可用的 slide。 */
+        fun ensureSpace(h: Double): org.apache.poi.xslf.usermodel.XSLFSlide {
+            val cur = slide
+            if (cur == null || remaining < h) return newSlide()
+            return cur
+        }
+
+        /** 设置横向区域（分栏用）。ratio 为宽度占比，side=left/right。 */
+        fun setArea(side: String, ratio: Double) {
+            val full = pageSize.width - SIDE_MARGIN * 2
+            val w = (full * ratio.coerceIn(0.1, 0.9)).toInt()
+            when (side.lowercase()) {
+                "left" -> { areaLeft = SIDE_MARGIN; areaWidth = w }
+                "right" -> { areaLeft = SIDE_MARGIN + full - w; areaWidth = w }
+                else -> { areaLeft = SIDE_MARGIN; areaWidth = full }
+            }
+        }
+
+        fun resetArea() { areaLeft = SIDE_MARGIN; areaWidth = pageSize.width - SIDE_MARGIN * 2 }
+    }
+
+    /** 渲染单个 PPT 内容块。 */
+    private fun renderPptxBlock(
+        canvas: SlideCanvas,
+        block: JSONObject,
+        cfg: PptxStyleConfig,
+        host: ToolHost
+    ) {
+        val pageSize = canvas.pageSize
+        when (block.optString("type", "text")) {
+            "title", "heading" -> {
+                // 标题块总是开新页
+                val s = canvas.newSlide()
+                val box = s.createTextBox()
+                box.anchor = java.awt.Rectangle(60, 40, pageSize.width - 120, 80)
+                val p = box.addNewTextParagraph()
+                val run = p.addNewTextRun()
+                val headText = block.optString("text", "").ifBlank { block.optString("title", "") }
+                run.setText(headText)
+                run.fontSize = 32.0
+                run.isBold = true
+                if (cfg.titleColor != null) run.setFontColor(cfg.titleColor)
+                canvas.y = 140.0
+                // heading 块可带 items，直接渲染成要点列表
+                val headItems = block.optJSONArray("items")
+                if (headItems != null && headItems.length() > 0) {
+                    val ib = s.createTextBox()
+                    val ih = headItems.length() * 50 + 20
+                    ib.anchor = java.awt.Rectangle(60, canvas.y.toInt(), pageSize.width - 120, ih)
+                    for (j in 0 until headItems.length()) {
+                        val ip = ib.addNewTextParagraph()
+                        ip.indentLevel = 0
+                        val ir = ip.addNewTextRun()
+                        val t = headItems.optString(j, "")
+                        ir.setText("• $t")
+                        ir.fontSize = fitFontSize(t, 20.0, pageSize.width - 160)
+                        if (cfg.bodyColor != null) ir.setFontColor(cfg.bodyColor)
+                    }
+                    canvas.y += ih + 10
+                }
+            }
+            "text" -> {
+                val text = block.optString("text", "")
+                val h = estimateTextHeight(text, 18.0, canvas.areaWidth)
+                val s = canvas.ensureSpace(h)
+                val box = s.createTextBox()
+                box.anchor = java.awt.Rectangle(canvas.areaLeft, canvas.y.toInt(), canvas.areaWidth, h.toInt())
+                val p = box.addNewTextParagraph()
+                val run = p.addNewTextRun()
+                run.setText(text)
+                run.fontSize = fitFontSize(text, 18.0, canvas.areaWidth)
+                if (cfg.bodyColor != null) run.setFontColor(cfg.bodyColor)
+                canvas.y += h + 10
+            }
+            "bullets" -> {
+                val items = block.optJSONArray("items") ?: return
+                val ordered = block.optBoolean("ordered", false)
+                val lineH = 50.0
+                val h = items.length() * lineH + 20
+                val s = canvas.ensureSpace(h)
+                val box = s.createTextBox()
+                box.anchor = java.awt.Rectangle(canvas.areaLeft, canvas.y.toInt(), canvas.areaWidth, h.toInt())
+                for (j in 0 until items.length()) {
+                    val p = box.addNewTextParagraph()
+                    p.indentLevel = 0
+                    val run = p.addNewTextRun()
+                    val t = items.optString(j, "")
+                    run.setText(if (ordered) "${j + 1}. $t" else "• $t")
+                    run.fontSize = fitFontSize(t, 20.0, canvas.areaWidth - 40)
+                    if (cfg.bodyColor != null) run.setFontColor(cfg.bodyColor)
+                }
+                canvas.y += h + 10
+            }
+            "table" -> {
+                val headers = block.optJSONArray("headers")
+                val rows = block.optJSONArray("rows") ?: return
+                val cols = maxOf(headers?.length() ?: 0, (0 until rows.length()).maxOfOrNull {
+                    rows.optJSONArray(it)?.length() ?: 0
+                } ?: 0)
+                if (cols == 0) return
+                val totalRows = rows.length() + (if (headers != null) 1 else 0)
+                val rowH = 40.0
+                val h = totalRows * rowH + 10
+                val s = canvas.ensureSpace(h)
+                val tbl = s.createTable(totalRows, cols)
+                tbl.anchor = java.awt.Rectangle(canvas.areaLeft, canvas.y.toInt(), canvas.areaWidth, h.toInt())
+                var ri = 0
+                if (headers != null) {
+                    for (c in 0 until cols) {
+                        val cell = tbl.getCell(0, c)
+                        cell.text = headers.optString(c, "")
+                        if (cfg.tableHeaderFill != null) cell.setFillColor(cfg.tableHeaderFill)
+                        cell.textParagraphs.forEach { tp ->
+                            tp.textRuns.forEach { tr ->
+                                tr.isBold = true
+                                if (cfg.tableHeaderFont != null) tr.setFontColor(cfg.tableHeaderFont)
+                            }
+                        }
+                    }
+                    ri = 1
+                }
+                for (r in 0 until rows.length()) {
+                    val rowArr = rows.optJSONArray(r) ?: continue
+                    for (c in 0 until cols) {
+                        tbl.getCell(ri + r, c).text = rowArr.optString(c, "")
+                    }
+                }
+                canvas.y += h + 10
+            }
+            "image" -> {
+                val imgPath = block.optString("path", "").trim()
+                if (imgPath.isBlank()) return
+                val resolved = host.resolvePath(imgPath) ?: return
+                val f = File(resolved)
+                if (!f.exists()) return
+                val data = f.readBytes()
+                val type = when (f.extension.lowercase()) {
+                    "png" -> PictureData.PictureType.PNG
+                    "gif" -> PictureData.PictureType.GIF
+                    else -> PictureData.PictureType.JPEG
+                }
+                val pd = canvas.ppt.addPicture(data, type)
+                val w = block.optInt("width", 400)
+                val explicitH = block.optInt("height", 0)
+                val h = if (explicitH > 0) explicitH else {
+                    try {
+                        javax.imageio.ImageIO.read(java.io.ByteArrayInputStream(data))?.let { img ->
+                            if (img.width > 0) (w.toDouble() * img.height / img.width).toInt().coerceAtLeast(1)
+                            else (w * 0.75).toInt()
+                        } ?: (w * 0.75).toInt()
+                    } catch (_: Exception) { (w * 0.75).toInt() }
+                }
+                val s = canvas.ensureSpace(h.toDouble())
+                val pic = s.createPicture(pd)
+                pic.anchor = java.awt.Rectangle(canvas.areaLeft, canvas.y.toInt(), w, h)
+                canvas.y += h + 10
+            }
+            "pagebreak" -> canvas.newSlide()
+            "shape" -> {
+                val shapeType = block.optString("shape", "rect").lowercase()
+                val w = block.optInt("width", canvas.areaWidth)
+                val h = block.optInt("height", 100)
+                val s = canvas.ensureSpace(h.toDouble())
+                val x = canvas.areaLeft + block.optInt("x", 0)
+                val st = when (shapeType) {
+                    "roundrect", "rounded" -> org.apache.poi.sl.usermodel.ShapeType.ROUND_RECT
+                    "ellipse", "circle", "oval" -> org.apache.poi.sl.usermodel.ShapeType.ELLIPSE
+                    "triangle" -> org.apache.poi.sl.usermodel.ShapeType.TRIANGLE
+                    "arrow" -> org.apache.poi.sl.usermodel.ShapeType.RIGHT_ARROW
+                    "line" -> org.apache.poi.sl.usermodel.ShapeType.LINE
+                    else -> org.apache.poi.sl.usermodel.ShapeType.RECT
+                }
+                val shape = s.createAutoShape()
+                shape.shapeType = st
+                shape.anchor = java.awt.Rectangle(x, canvas.y.toInt(), w, h)
+                val fill = block.optString("fill", "")
+                if (fill.isNotBlank()) parseColor(fill)?.let { shape.fillColor = it }
+                val lineColor = block.optString("lineColor", "")
+                if (lineColor.isNotBlank()) parseColor(lineColor)?.let { shape.lineColor = it }
+                val lineWidth = block.optDouble("lineWidth", 0.0)
+                if (lineWidth > 0) shape.lineWidth = lineWidth
+                // 形状内文字
+                val text = block.optString("text", "")
+                if (text.isNotBlank()) {
+                    shape.clearText()
+                    val p = shape.addNewTextParagraph()
+                    p.textAlign = org.apache.poi.sl.usermodel.TextParagraph.TextAlign.CENTER
+                    val r = p.addNewTextRun()
+                    r.setText(text)
+                    r.fontSize = block.optDouble("fontSize", 16.0)
+                    if (block.optBoolean("bold", false)) r.isBold = true
+                    val tc = block.optString("textColor", "")
+                    if (tc.isNotBlank()) parseColor(tc)?.let { r.setFontColor(it) }
+                }
+                canvas.y += h + 10
+            }
+            "divider" -> {
+                val s = canvas.ensureSpace(20.0)
+                val line = s.createAutoShape()
+                line.shapeType = org.apache.poi.sl.usermodel.ShapeType.LINE
+                line.anchor = java.awt.Rectangle(canvas.areaLeft, canvas.y.toInt(), canvas.areaWidth, 0)
+                val c = block.optString("color", "CCCCCC")
+                parseColor(c)?.let { line.lineColor = it }
+                line.lineWidth = block.optDouble("width", 1.0)
+                canvas.y += 20
+            }
+            "kpi" -> {
+                // KPI 卡片：大数字 + 标签，可横向排列多个
+                val items = block.optJSONArray("items") ?: return
+                if (items.length() == 0) return
+                val cardH = block.optInt("height", 120)
+                val gap = 20
+                val totalW = canvas.areaWidth
+                val cardW = (totalW - gap * (items.length() - 1)) / items.length()
+                val s = canvas.ensureSpace(cardH.toDouble())
+                for (j in 0 until items.length()) {
+                    val it = items.optJSONObject(j) ?: continue
+                    val x = canvas.areaLeft + j * (cardW + gap)
+                    try {
+                        val card = s.createAutoShape()
+                        card.shapeType = org.apache.poi.sl.usermodel.ShapeType.ROUND_RECT
+                        card.anchor = java.awt.Rectangle(x, canvas.y.toInt(), cardW, cardH)
+                        val bg = it.optString("bg", "F5F7FA")
+                        parseColor(bg)?.let { card.fillColor = it }
+                        card.lineColor = java.awt.Color(0, 0, 0, 0)
+                        card.clearText()
+                        // 数值
+                        val p1 = card.addNewTextParagraph()
+                        p1.textAlign = org.apache.poi.sl.usermodel.TextParagraph.TextAlign.CENTER
+                        val r1 = p1.addNewTextRun()
+                        r1.setText(it.optString("value", ""))
+                        r1.fontSize = it.optDouble("valueSize", 32.0)
+                        r1.isBold = true
+                        val vc = it.optString("valueColor", "1F3864")
+                        parseColor(vc)?.let { c -> r1.setFontColor(c) }
+                        // 标签
+                        val p2 = card.addNewTextParagraph()
+                        p2.textAlign = org.apache.poi.sl.usermodel.TextParagraph.TextAlign.CENTER
+                        val r2 = p2.addNewTextRun()
+                        r2.setText(it.optString("label", ""))
+                        r2.fontSize = it.optDouble("labelSize", 14.0)
+                        val lc = it.optString("labelColor", "666666")
+                        parseColor(lc)?.let { c -> r2.setFontColor(c) }
+                    } catch (e: Exception) {
+                        DesktopLogger.error(TAG, "PPT KPI 卡片失败：${e.javaClass.simpleName}: ${e.message}")
+                    }
+                }
+                canvas.y += cardH + 20
+            }
+            "chart" -> {
+                val chartType = block.optString("chart", "bar").lowercase()
+                val categories = block.optJSONArray("categories") ?: return
+                val series = block.optJSONArray("series") ?: return
+                if (categories.length() == 0 || series.length() == 0) return
+                val w = block.optInt("width", canvas.areaWidth)
+                // 高度按分类数自适应：每个分类约 34 点，上下留白 90 点，夹在 200~420 之间
+                val autoH = (categories.length() * 34 + 90).coerceIn(200, 420)
+                val h = block.optInt("height", autoH)
+                val s = canvas.ensureSpace(h.toDouble())
+                try {
+                    // createChart(slide) 只建 chart part 和关系，不会把 graphicFrame 挂到页面；
+                    // 必须用无参 createChart() + slide.addChart(chart, rect) 才会真正显示。
+                    val chart = canvas.ppt.createChart()
+                    // getTitle() 在新建图表上返回 null，必须用 setTitleText
+                    val chartTitle = block.optString("title", "")
+                    if (chartTitle.isNotBlank()) {
+                        chart.setTitleText(chartTitle)
+                        // 默认 overlay=true，标题会浮在绘图区上压住图形，必须关掉
+                        chart.setTitleOverlay(false)
+                    }
+                    val xAxis = chart.createCategoryAxis(org.apache.poi.xddf.usermodel.chart.AxisPosition.BOTTOM)
+                    val yAxis = chart.createValueAxis(org.apache.poi.xddf.usermodel.chart.AxisPosition.LEFT)
+                    yAxis.crosses = org.apache.poi.xddf.usermodel.chart.AxisCrosses.AUTO_ZERO
+                    val ct = when (chartType) {
+                        "line" -> org.apache.poi.xddf.usermodel.chart.ChartTypes.LINE
+                        "pie" -> org.apache.poi.xddf.usermodel.chart.ChartTypes.PIE
+                        "area" -> org.apache.poi.xddf.usermodel.chart.ChartTypes.AREA
+                        else -> org.apache.poi.xddf.usermodel.chart.ChartTypes.BAR
+                    }
+                    // 条形图默认从下往上画，分类顺序会反；反转分类轴让第一个分类在最上面
+                    if (ct == org.apache.poi.xddf.usermodel.chart.ChartTypes.BAR) {
+                        xAxis.orientation = org.apache.poi.xddf.usermodel.chart.AxisOrientation.MAX_MIN
+                        // 分类轴反转后值轴会跑到顶部，强制交叉在最大端（视觉底部）
+                        yAxis.crosses = org.apache.poi.xddf.usermodel.chart.AxisCrosses.MAX
+                    }
+                    val data = chart.createData(ct, xAxis, yAxis)
+                    // 分类
+                    val cats = arrayOfNulls<String>(categories.length())
+                    for (i in 0 until categories.length()) cats[i] = categories.optString(i, "")
+                    val catData = org.apache.poi.xddf.usermodel.chart.XDDFDataSourcesFactory.fromArray(cats)
+                    // 系列
+                    for (si in 0 until series.length()) {
+                        val so = series.optJSONObject(si) ?: continue
+                        val vals = so.optJSONArray("values") ?: continue
+                        val arr = arrayOfNulls<Double>(vals.length())
+                        for (vi in 0 until vals.length()) arr[vi] = vals.optDouble(vi, 0.0)
+                        val ds = data.addSeries(catData, org.apache.poi.xddf.usermodel.chart.XDDFDataSourcesFactory.fromArray(arr))
+                        ds.setTitle(so.optString("name", "系列${si + 1}"))
+                    }
+                    chart.plot(data)
+                    // 条形图默认 gapWidth=150%（柱宽:间距 = 100:150），分类少时柱子会过粗，
+                    // 收紧到 100 让柱宽与间距相等，视觉更均衡
+                    if (data is org.apache.poi.xddf.usermodel.chart.XDDFBarChartData) {
+                        data.gapWidth = 100
+                    }
+                    // 把图表挂到页面（这一步才会生成 graphicFrame）
+                    // 注意：canvas 的坐标是点（point），addChart 的 Rectangle2D 需要 EMU，
+                    // 必须 ×12700 转换，否则图表会堆在左上角。
+                    val emu = 12700.0
+                    val chartRect = java.awt.Rectangle(
+                        (canvas.areaLeft * emu).toInt(),
+                        (canvas.y * emu).toInt(),
+                        (w * emu).toInt(),
+                        (h * emu).toInt()
+                    )
+                    s.addChart(chart, chartRect)
+                } catch (e: Exception) {
+                    DesktopLogger.error(TAG, "PPT 图表生成失败：${e.javaClass.simpleName}: ${e.message}")
+                }
+                canvas.y += h + 10
+            }
+            "notes" -> {
+                // 演讲者备注：不占版面，写入当前页
+                val s = canvas.slide ?: canvas.newSlide()
+                val text = block.optString("text", "")
+                if (text.isNotBlank()) {
+                    try {
+                        // getNotes() 在未创建备注母版时返回 null，需先 createNotesMaster
+                        var notes = s.notes
+                        if (notes == null) {
+                            if (canvas.ppt.notesMaster == null) canvas.ppt.createNotesMaster()
+                            notes = canvas.ppt.getNotesSlide(s)
+                        }
+                        val ph = notes?.getPlaceholder(org.apache.poi.sl.usermodel.Placeholder.BODY)
+                            as? org.apache.poi.xslf.usermodel.XSLFTextShape
+                        if (ph != null) {
+                            ph.clearText()
+                            ph.addNewTextParagraph().addNewTextRun().setText(text)
+                        } else {
+                            DesktopLogger.warn(TAG, "PPT 备注：未找到 BODY 占位符")
+                        }
+                    } catch (e: Exception) {
+                        DesktopLogger.error(TAG, "PPT 备注写入失败：${e.javaClass.simpleName}: ${e.message}")
+                    }
+                }
+            }
+            "layout" -> {
+                // 分栏控制：{type:"layout", side:"left"|"right"|"full", ratio:0.5}
+                val side = block.optString("side", "full")
+                val ratio = block.optDouble("ratio", 0.5)
+                if (side.equals("full", true)) canvas.resetArea() else canvas.setArea(side, ratio)
+            }
+        }
+    }
+
+    /** 估算文本块高度（按字符数与宽度粗略折行）。 */
+    private fun estimateTextHeight(text: String, fontSize: Double, boxWidth: Int): Double {
+        if (text.isBlank()) return 30.0
+        // 中文字符约等于 1 个字号宽，英文约 0.55
+        val charW = fontSize * 0.85
+        val perLine = (boxWidth / charW).coerceAtLeast(1.0)
+        val lines = kotlin.math.ceil(text.length / perLine).toInt().coerceAtLeast(1)
+        return lines * fontSize * 1.6 + 10
     }
 
     /** 填充幻灯片背景色。 */
@@ -1199,6 +1474,134 @@ object DocumentTools {
                     }
 
                     if (cfg.freezeHeader && headers != null) {
+
+                    // 多级表头：headerRows: [["A","B"],["a1","b1"]]，自动合并同值单元格
+                    val headerRows = s.optJSONArray("headerRows")
+                    if (headerRows != null && headerRows.length() > 0) {
+                        applyMultiHeader(sheet, headerRows, styleCache, cfg)
+                    }
+
+                    // 行分组折叠：groups: [{from, to, level, collapsed}]
+                    val groups = s.optJSONArray("groups")
+                    if (groups != null) {
+                        for (gi in 0 until groups.length()) {
+                            val go = groups.optJSONObject(gi) ?: continue
+                            val from = go.optInt("from", -1)
+                            val to = go.optInt("to", -1)
+                            if (from < 0 || to < from) continue
+                            val level = go.optInt("level", 1).coerceIn(1, 7)
+                            for (r in from..to) {
+                                val row = sheet.getRow(r) ?: sheet.createRow(r)
+                                row.ctRow.setOutlineLevel(level.toShort())
+                            }
+                            if (go.optBoolean("collapsed", false)) {
+                                sheet.groupRow(from, to)
+                                sheet.setRowGroupCollapsed(from, true)
+                            }
+                        }
+                    }
+
+                    // 批注：comments: [{row, col, text, author}]
+                    val comments = s.optJSONArray("comments")
+                    if (comments != null) {
+                        val factory = wb.creationHelper.createClientAnchor()
+                        for (ci in 0 until comments.length()) {
+                            val co = comments.optJSONObject(ci) ?: continue
+                            val cr = co.optInt("row", -1)
+                            val cc = co.optInt("col", -1)
+                            val ctext = co.optString("text", "")
+                            if (cr < 0 || cc < 0 || ctext.isBlank()) continue
+                            try {
+                                val row = sheet.getRow(cr) ?: sheet.createRow(cr)
+                                val cell = row.getCell(cc) ?: row.createCell(cc)
+                                val drawing = sheet.createDrawingPatriarch()
+                                val anchor = factory as org.apache.poi.xssf.usermodel.XSSFClientAnchor
+                                anchor.setCol1(cc); anchor.setCol2(cc + 3)
+                                anchor.setRow1(cr); anchor.setRow2(cr + 3)
+                                val comment = drawing.createCellComment(anchor)
+                                comment.string = wb.creationHelper.createRichTextString(ctext)
+                                comment.author = co.optString("author", "FurAgent")
+                                cell.cellComment = comment
+                            } catch (_: Exception) { }
+                        }
+                    }
+
+                    // 超链接：links: [{row, col, url, text}]
+                    val links = s.optJSONArray("links")
+                    if (links != null) {
+                        for (li in 0 until links.length()) {
+                            val lo = links.optJSONObject(li) ?: continue
+                            val lr = lo.optInt("row", -1)
+                            val lc = lo.optInt("col", -1)
+                            val url = lo.optString("url", "")
+                            if (lr < 0 || lc < 0 || url.isBlank()) continue
+                            try {
+                                val row = sheet.getRow(lr) ?: sheet.createRow(lr)
+                                val cell = row.getCell(lc) ?: row.createCell(lc)
+                                val lt = lo.optString("text", "")
+                                if (lt.isNotBlank()) cell.setCellValue(lt)
+                                val hl = wb.creationHelper.createHyperlink(org.apache.poi.common.usermodel.HyperlinkType.URL)
+                                hl.address = url
+                                cell.hyperlink = hl
+                                val linkStyle = wb.createCellStyle()
+                                linkStyle.cloneStyleFrom(cell.cellStyle)
+                                val lf = wb.createFont()
+                                lf.underline = org.apache.poi.ss.usermodel.FontUnderline.SINGLE.byteValue
+                                lf.color = org.apache.poi.ss.usermodel.IndexedColors.BLUE.index
+                                linkStyle.setFont(lf)
+                                cell.cellStyle = linkStyle
+                            } catch (_: Exception) { }
+                        }
+                    }
+
+                    // 迷你图：sparklines: [{row, col, fromCol, toCol, type}]
+                    val sparklines = s.optJSONArray("sparklines")
+                    if (sparklines != null) {
+                        for (si in 0 until sparklines.length()) {
+                            val so = sparklines.optJSONObject(si) ?: continue
+                            val sr = so.optInt("row", -1)
+                            val sc = so.optInt("col", -1)
+                            val fc = so.optInt("fromCol", -1)
+                            val tc = so.optInt("toCol", -1)
+                            if (sr < 0 || sc < 0 || fc < 0 || tc < fc) continue
+                            try {
+                                val ctSheet = sheet.ctWorksheet
+                                val extLst = if (ctSheet.isSetExtLst) ctSheet.extLst else ctSheet.addNewExtLst()
+                                val ext = extLst.addNewExt()
+                                ext.setUri("{05C60535-1F16-4fd2-B633-F4F36F0B64E0}")
+                                val xml = """<x14:sparklineGroups xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main" xmlns:xm="http://schemas.microsoft.com/office/excel/2006/main"><x14:sparklineGroup type="${so.optString("type", "line")}" displayEmptyCellsAs="gap"><x14:colorSeries rgb="FF4472C4"/><x14:sparklines><x14:sparkline><xm:f>${sheet.sheetName}!${colName(fc)}${sr + 1}:${colName(tc)}${sr + 1}</xm:f><xm:sqref>${colName(sc)}${sr + 1}</xm:sqref></x14:sparkline></x14:sparklines></x14:sparklineGroup></x14:sparklineGroups>"""
+                                val parsed = org.apache.xmlbeans.XmlObject.Factory.parse(xml)
+                                ext.set(parsed)
+                            } catch (_: Exception) { }
+                        }
+                    }
+
+                    // 打印设置：print: {area, titleRows, landscape, fitToWidth, scale}
+                    val printCfg = s.optJSONObject("print")
+                    if (printCfg != null) {
+                        try {
+                            val area = printCfg.optString("area", "")
+                            if (area.isNotBlank()) {
+                                wb.setPrintArea(wb.getSheetIndex(sheet), area)
+                            }
+                            val titleRows = printCfg.optString("titleRows", "")
+                            if (titleRows.isNotBlank()) {
+                                val tr = org.apache.poi.ss.util.CellRangeAddress.valueOf(titleRows)
+                                sheet.repeatingRows = tr
+                            }
+                            if (printCfg.optBoolean("landscape", false)) {
+                                sheet.printSetup.landscape = true
+                            }
+                            val fitW = printCfg.optInt("fitToWidth", 0)
+                            if (fitW > 0) {
+                                sheet.printSetup.fitWidth = fitW.toShort()
+                                sheet.printSetup.fitHeight = 0
+                                sheet.setFitToPage(true)
+                            }
+                            val scale = printCfg.optInt("scale", 0)
+                            if (scale in 10..400) sheet.printSetup.scale = scale.toShort()
+                        } catch (_: Exception) { }
+                    }
                         sheet.createFreezePane(0, 1)
                     }
                 }
@@ -1889,5 +2292,132 @@ object DocumentTools {
         "green" -> "E8F5E9"
         "orange" -> "FDF2E9"
         else -> ""
+    }
+
+    // ==================== Word 增强：分栏 / 水印 / 脚注 / 分隔线 ====================
+
+    /** 分栏：{type:"columns", count:2, spacing:720, line:false} */
+    private fun addDocxColumns(doc: XWPFDocument, block: JSONObject, cfg: DocxStyleConfig) {
+        try {
+            val count = block.optInt("count", 2).coerceIn(1, 4)
+            val spacing = block.optInt("spacing", 720)
+            val line = block.optBoolean("line", false)
+            // 分栏是节属性，必须挂在段落上
+            val p = doc.createParagraph()
+            val pPr = if (p.ctp.isSetPPr) p.ctp.pPr else p.ctp.addNewPPr()
+            val sectPr = if (pPr.isSetSectPr) pPr.sectPr else pPr.addNewSectPr()
+            val cols = if (sectPr.isSetCols) sectPr.cols else sectPr.addNewCols()
+            cols.setNum(java.math.BigInteger.valueOf(count.toLong()))
+            cols.setSpace(java.math.BigInteger.valueOf(spacing.toLong()))
+            cols.setSep(line)
+        } catch (e: Exception) {
+            DesktopLogger.error(TAG, "Word 分栏失败：${e.message}")
+        }
+    }
+
+    /** 水印：{type:"watermark", text:"机密", color:"CCCCCC", size:60, rotate:-45} */
+    private fun addDocxWatermark(doc: XWPFDocument, block: JSONObject) {
+        try {
+            val text = block.optString("text", "机密")
+            val color = block.optString("color", "CCCCCC")
+            val size = block.optInt("size", 60)
+            val rotate = block.optInt("rotate", -45)
+            // 水印放在页眉里，用 VML 实现（Word 原生方式）
+            val policy = doc.createHeaderFooterPolicy() ?: return
+            val header = policy.defaultHeader ?: return
+            val p = header.createParagraph()
+            val r = p.createRun()
+            val vml = """<w:pict xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:v="urn:schemas-microsoft-com:vml"><v:shape id="PowerPlusWaterMarkObject" type="#_x0000_t136" style="position:absolute;margin-left:0;margin-top:0;width:400pt;height:100pt;rotation:${rotate};z-index:-251658752;mso-position-horizontal:center;mso-position-horizontal-relative:margin;mso-position-vertical:center;mso-position-vertical-relative:margin" fillcolor="#$color" stroked="f"><v:textpath style="font-family:&quot;宋体&quot;;font-size:${size}pt" string="$text"/></v:shape></w:pict>"""
+            val parsed = org.apache.xmlbeans.XmlObject.Factory.parse(vml)
+            r.ctr.set(parsed)
+        } catch (e: Exception) {
+            DesktopLogger.error(TAG, "Word 水印失败：${e.message}")
+        }
+    }
+
+    /** 脚注：{type:"footnote", text:"注释内容"} */
+    private fun addDocxFootnote(doc: XWPFDocument, block: JSONObject, cfg: DocxStyleConfig) {
+        try {
+            val text = block.optString("text", "")
+            if (text.isBlank()) return
+            val fn = doc.createFootnote()
+            val p = fn.paragraphs.firstOrNull() ?: fn.createParagraph()
+            val r = p.createRun()
+            r.setText(text)
+            r.fontSize = 9
+            r.fontFamily = cfg.font
+            // 正文里插入引用标记
+            val bodyP = doc.createParagraph()
+            val refRun = bodyP.createRun()
+            refRun.setText(fn.id.toString())
+            refRun.fontSize = 9
+            refRun.setSubscript(org.apache.poi.xwpf.usermodel.VerticalAlign.SUBSCRIPT)
+        } catch (e: Exception) {
+            DesktopLogger.error(TAG, "Word 脚注失败：${e.message}")
+        }
+    }
+
+    /** 水平分隔线：{type:"hr", color:"CCCCCC", size:6} */
+    private fun addDocxHr(doc: XWPFDocument, block: JSONObject) {
+        try {
+            val p = doc.createParagraph()
+            val pPr = if (p.ctp.isSetPPr) p.ctp.pPr else p.ctp.addNewPPr()
+            val pBdr = pPr.addNewPBdr()
+            val bottom = pBdr.addNewBottom()
+            bottom.setVal(org.openxmlformats.schemas.wordprocessingml.x2006.main.STBorder.SINGLE)
+            bottom.setSz(java.math.BigInteger.valueOf(block.optInt("size", 6).toLong()))
+            bottom.setSpace(java.math.BigInteger.valueOf(1))
+            bottom.setColor(block.optString("color", "CCCCCC"))
+        } catch (e: Exception) {
+            DesktopLogger.error(TAG, "Word 分隔线失败：${e.message}")
+        }
+    }
+
+    /** 多级表头：把 headerRows 写入并合并同值单元格。 */
+    private fun applyMultiHeader(
+        sheet: org.apache.poi.xssf.usermodel.XSSFSheet,
+        headerRows: JSONArray,
+        styleCache: XlsxStyleCache,
+        cfg: XlsxStyleConfig
+    ) {
+        try {
+            for (ri in 0 until headerRows.length()) {
+                val rowArr = headerRows.optJSONArray(ri) ?: continue
+                val row = sheet.getRow(ri) ?: sheet.createRow(ri)
+                row.heightInPoints = cfg.headerRowHeight
+                for (ci in 0 until rowArr.length()) {
+                    val cell = row.getCell(ci) ?: row.createCell(ci)
+                    cell.setCellValue(rowArr.optString(ci, ""))
+                    cell.cellStyle = styleCache.headerStyle(ci)
+                }
+                // 同值横向合并
+                var start = 0
+                for (ci in 1..rowArr.length()) {
+                    val cur: String? = if (ci < rowArr.length()) rowArr.optString(ci, "") else null
+                    val prev: String = rowArr.optString(start, "")
+                    if (cur != prev) {
+                        if (ci - start > 1 && prev.isNotBlank()) {
+                            try {
+                                sheet.addMergedRegion(org.apache.poi.ss.util.CellRangeAddress(ri, ri, start, ci - 1))
+                            } catch (_: Exception) { }
+                        }
+                        start = ci
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            DesktopLogger.error(TAG, "多级表头失败：${e.message}")
+        }
+    }
+
+    /** 列号转字母（0 -> A）。 */
+    private fun colName(col: Int): String {
+        var c = col
+        val sb = StringBuilder()
+        while (c >= 0) {
+            sb.insert(0, ('A' + c % 26))
+            c = c / 26 - 1
+        }
+        return sb.toString()
     }
 }

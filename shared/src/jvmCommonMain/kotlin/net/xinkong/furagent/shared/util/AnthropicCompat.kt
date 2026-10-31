@@ -284,11 +284,12 @@ object AnthropicCompat {
         onContent: (String) -> Unit,
         onReasoning: (String) -> Unit = {},
         onParseError: (String, String) -> Unit = { _, _ -> }
-    ): MutableMap<Int, ToolCallAccumulator> {
+    ): SseParseResult {
         val toolCalls = mutableMapOf<Int, ToolCallAccumulator>()
         // Anthropic 用 content block index，需要映射到我们的 tool 序号
         val blockToTool = mutableMapOf<Int, Int>()
         var nextToolIdx = 0
+        var finishReason = ""
 
         while (true) {
             currentCoroutineContext().ensureActive()
@@ -343,12 +344,22 @@ object AnthropicCompat {
                     }
                 }
 
-                "message_delta", "message_stop", "message_start", "content_block_stop", "ping" -> {
+                "message_delta" -> {
+                    // stop_reason 在 message_delta.delta.stop_reason
+                    // max_tokens 表示被截断，tool_use 的 input_json 可能是半截
+                    val d = chunk.optJSONObject("delta")
+                    if (d != null && !d.isNull("stop_reason")) {
+                        d.optString("stop_reason", "").takeIf { it.isNotEmpty() }
+                            ?.let { finishReason = it }
+                    }
+                }
+
+                "message_stop", "message_start", "content_block_stop", "ping" -> {
                     // 不需要处理
                 }
             }
         }
-        return toolCalls
+        return SseParseResult(toolCalls, finishReason)
     }
 
     /**
