@@ -1,17 +1,14 @@
 package net.xinkong.furagent.desktop.core.mcp
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
 import net.xinkong.furagent.desktop.data.McpConfigStore
 import net.xinkong.furagent.desktop.data.McpServerConfig
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.tools.ToolResult
+import net.xinkong.furagent.shared.util.McpToolNames
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 
@@ -113,13 +110,8 @@ object McpManager {
      * 改为精确匹配 `id.take(8) == shortId`。
      */
     suspend fun callTool(prefixedName: String, args: JSONObject): ToolResult {
-        // 解析
-        val parts = prefixedName.split("__")
-        if (parts.size < 3 || parts[0] != "mcp") {
-            return ToolResult.fail("不是有效的 MCP 工具名：$prefixedName")
-        }
-        val shortId = parts[1]
-        val toolName = parts.drop(2).joinToString("__")
+        val (shortId, toolName) = McpToolNames.parsePrefixedToolName(prefixedName)
+            ?: return ToolResult.fail("不是有效的 MCP 工具名：$prefixedName")
         val client = clients.values.firstOrNull { it.id.take(8) == shortId }
             ?: return ToolResult.fail("MCP 服务器不存在：$shortId")
         return client.callTool(toolName, args)
@@ -128,11 +120,11 @@ object McpManager {
     /**
      * 判断是否是 MCP 工具名
      */
-    fun isMcpTool(name: String): Boolean = name.startsWith("mcp__")
+    fun isMcpTool(name: String): Boolean = McpToolNames.isMcpTool(name)
 
     /**
      * 工具名前缀。使用 clientId 前 8 位。
      */
     fun prefixedToolName(clientId: String, toolName: String): String =
-        "mcp__${clientId.take(8)}__$toolName"
+        McpToolNames.prefixedToolName(clientId, toolName)
 }

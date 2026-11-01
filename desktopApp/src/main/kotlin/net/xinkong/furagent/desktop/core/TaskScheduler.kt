@@ -11,6 +11,7 @@ import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.shared.data.ChatMessage
 import net.xinkong.furagent.shared.util.AnthropicCompat
 import net.xinkong.furagent.shared.util.ApiProtocol
+import net.xinkong.furagent.shared.util.DateFormats
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -174,7 +175,7 @@ object TaskScheduler {
             // 不用解构赋值（字段顺序一变就静默错位），改用属性访问。
             for (t in pendingUpdates) {
                 val label = t.description.ifBlank { t.id.take(8) }
-                log("「$label」下次：${ScheduleStore.formatTime(t.triggerTime)}")
+                log("「$label」下次：${DateFormats.formatDateTime(t.triggerTime)}")
             }
             for (id in pendingDeletes) {
                 log("「${id.take(8)}」已完成，移除")

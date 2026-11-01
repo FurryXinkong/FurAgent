@@ -444,7 +444,7 @@ internal fun TextMessageRow(
                 Spacer(Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        formatTime(msg.timestamp),
+                        DateFormats.formatTimeShort(msg.timestamp),
                         fontSize = 11.sp,
                         color = TextMuted(),
                         modifier = Modifier.padding(horizontal = 4.dp)
@@ -1433,12 +1433,7 @@ internal fun TokenStatusBar(messages: List<DesktopMessage>) {
     }
 }
 
-/** token 数展示：万以下直出，以上用 k / M 缩写。 */
-private fun fmtTok(v: Long): String = when {
-    v >= 1_000_000 -> "%.2fM".format(v / 1_000_000.0)
-    v >= 10_000 -> "%.1fk".format(v / 1000.0)
-    else -> v.toString()
-}
+
 
 // 修改历史 + 一键回档（聊天页底栏入口）
 
@@ -1653,6 +1648,3 @@ internal fun PatchView(patch: String) {
 
 // 输入卡片 / ChipSurface / ThinkingToggleChip / ModelQuickSelector / AttachmentThumb
 // → 已拆到 ChatInputCard.kt
-
-private fun formatTime(ts: Long): String =
-    DateFormats.formatTimeShort(ts)

@@ -1,5 +1,7 @@
 package net.xinkong.furagent.shared.util
 
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.*
 
 /**
@@ -168,5 +170,92 @@ object DirectDeviceCodec {
      */
     fun buildShortCodeString(host: String, code: String): String {
         return "$host:$code"
+    }
+
+    /**
+     * 从短码输入里提取 host / port / code。
+     * 只在 isShortCode(raw) == true 时调用。
+     */
+    fun extractHostPortCode(raw: String): Triple<String, Int, String>? {
+        val t = raw.trim()
+        if (t.startsWith("http://") || t.startsWith("https://")) return null
+        val parts = t.split(":").map { it.trim() }
+        return when (parts.size) {
+            2 -> {
+                val host = parts[0]
+                val code = parts[1]
+                if (host.isBlank() || code.length !in 4..8) null
+                else Triple(host, DEFAULT_PORT, code.uppercase())
+            }
+            3 -> {
+                val host = parts[0]
+                val port = parts[1].toIntOrNull() ?: return null
+                val code = parts[2]
+                if (host.isBlank() || port <= 0 || code.length !in 4..8) null
+                else Triple(host, port, code.uppercase())
+            }
+            else -> null
+        }
+    }
+}
+
+/**
+ * DirectDevice JSON 编解码（双端共用）。
+ *
+ * 平台只负责提供文件路径和日志 / 损坏恢复策略，
+ * 这里只做 JSON <-> List<DirectDevice> 的转换。
+ */
+object DirectDeviceJsonCodec {
+
+    /**
+     * 解析 JSON 数组文本为设备列表（按 lastSeenAt 倒序）。
+     * 单条异常跳过；顶层失败返回 null（由调用方决定是否备份损坏文件）。
+     */
+    fun parseList(text: String, onError: (String) -> Unit = {}): List<DirectDevice>? {
+        return try {
+            val arr = JSONArray(text)
+            val out = mutableListOf<DirectDevice>()
+            var skipped = 0
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i)
+                if (o == null) { skipped++; continue }
+                try {
+                    out.add(
+                        DirectDevice(
+                            id = o.optString("id", UUID.randomUUID().toString()),
+                            name = o.optString("name", ""),
+                            host = o.optString("host", ""),
+                            port = o.optInt("port", 0),
+                            token = o.optString("token", ""),
+                            lastSeenAt = o.optLong("lastSeenAt", 0L)
+                        )
+                    )
+                } catch (e: Exception) {
+                    skipped++
+                    onError("device[$i] 解析失败，已跳过：${e.javaClass.simpleName}: ${e.message}")
+                }
+            }
+            if (skipped > 0) onError("已跳过 $skipped 个异常设备，保留 ${out.size} 个")
+            out.sortedByDescending { it.lastSeenAt }
+        } catch (e: Exception) {
+            onError("读取直连设备失败：${e.javaClass.simpleName}: ${e.message}")
+            null
+        }
+    }
+
+    /** 序列化设备列表为 JSON 数组文本。 */
+    fun serializeList(list: List<DirectDevice>): String {
+        val arr = JSONArray()
+        list.forEach { d ->
+            arr.put(JSONObject().apply {
+                put("id", d.id)
+                put("name", d.name)
+                put("host", d.host)
+                put("port", d.port)
+                put("token", d.token)
+                put("lastSeenAt", d.lastSeenAt)
+            })
+        }
+        return arr.toString(2)
     }
 }

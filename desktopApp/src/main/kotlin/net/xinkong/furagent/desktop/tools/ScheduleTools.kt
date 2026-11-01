@@ -1,12 +1,11 @@
 package net.xinkong.furagent.desktop.tools
 
-import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.desktop.data.ScheduleStore
 import net.xinkong.furagent.desktop.data.ScheduledTask
-import net.xinkong.furagent.shared.util.TaskCondition
 import net.xinkong.furagent.shared.tools.ToolResult
+import net.xinkong.furagent.shared.util.DateFormats
+import net.xinkong.furagent.shared.util.TaskCondition
 import org.json.JSONObject
-import java.text.SimpleDateFormat
 import java.util.*
 
 object ScheduleTools {
@@ -184,7 +183,7 @@ object ScheduleTools {
             if (t.action == "run_workflow") sb.append("（${t.workflowName}）")
             if (t.action == "run_command") sb.append("（${t.command.take(40)}）")
             sb.append("\n")
-            sb.append("   下次：${ScheduleStore.formatTime(t.triggerTime)}\n")
+            sb.append("   下次：${DateFormats.formatDateTime(t.triggerTime)}\n")
             val repeat = when (t.repeatMode) {
                 "interval" -> "每 ${t.intervalSeconds} 秒"
                 "daily" -> "每天"

@@ -10,8 +10,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import net.xinkong.furagent.shared.icons.Icons
-import androidx.compose.material3.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -25,6 +27,8 @@ import net.xinkong.furagent.desktop.data.ScheduledTask
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.util.DateFormats
 
 /**
  * 定时任务页面（从 Pages.kt 拆分）。
@@ -219,7 +223,7 @@ private fun ScheduleCard(
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    "下次：${ScheduleStore.formatTime(task.triggerTime)}",
+                    "下次：${DateFormats.formatDateTime(task.triggerTime)}",
                     fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     color = TextMuted()

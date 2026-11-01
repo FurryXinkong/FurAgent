@@ -24,16 +24,15 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.net.toUri
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.httpClient
 import net.xinkong.furagent.core.testModelConnection
 import net.xinkong.furagent.data.AppSettings
 import net.xinkong.furagent.data.ModelProfile
 import net.xinkong.furagent.data.SettingsStore
+import net.xinkong.furagent.openUrlSafely
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.update.UpdateChecker
 import net.xinkong.furagent.shared.util.ApiUrlResolver
@@ -1001,28 +1000,6 @@ fun SettingsPage(
                 item { Spacer(Modifier.height(32.dp)) }
             }
         }
-    }
-}
-
-/**
- * 安全打开外部链接。
- *
- * 设备上没有能处理该 scheme 的应用时 startActivity 会抛
- * ActivityNotFoundException，这里统一兜住，避免点按钮直接崩。
- */
-private fun openUrlSafely(context: Context, url: String, label: String) {
-    try {
-        context.startActivity(
-            android.content.Intent(
-                android.content.Intent.ACTION_VIEW,
-                url.toUri()
-            )
-        )
-    } catch (e: Exception) {
-        AgentLogger.log(
-            "ERR",
-            "打开 $label 失败：${e.javaClass.simpleName}: ${e.message}"
-        )
     }
 }
 

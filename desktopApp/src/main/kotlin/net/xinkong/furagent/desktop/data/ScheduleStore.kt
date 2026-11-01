@@ -3,7 +3,6 @@ package net.xinkong.furagent.desktop.data
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.util.ConditionEvaluator
 import net.xinkong.furagent.shared.util.ConditionResult
-import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.shared.util.FileRecovery
 import net.xinkong.furagent.shared.util.TaskCondition
 import org.json.JSONArray
@@ -632,6 +631,4 @@ object ScheduleStore {
             }
         } catch (_: Exception) { false }
     }
-
-    fun formatTime(ms: Long): String = DateFormats.formatDateTime(ms)
 }

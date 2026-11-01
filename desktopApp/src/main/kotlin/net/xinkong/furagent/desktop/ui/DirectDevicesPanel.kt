@@ -1,11 +1,13 @@
 package net.xinkong.furagent.desktop.ui
 
-import net.xinkong.furagent.shared.util.DateFormats
 import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
@@ -13,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -30,30 +31,22 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.bridge.BridgeServer
 import net.xinkong.furagent.desktop.bridge.HttpFileServer
-import net.xinkong.furagent.desktop.data.DirectDeviceStore
 import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
+import net.xinkong.furagent.desktop.data.DirectDeviceStore
 import net.xinkong.furagent.desktop.system.NativeFilePicker
-import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.tools.PhoneTools
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
 import net.xinkong.furagent.shared.EndpointId
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.tools.ToolResult
-import net.xinkong.furagent.shared.util.DirectDevice
-import net.xinkong.furagent.shared.util.DirectDeviceCodec
-import net.xinkong.furagent.shared.util.DirectTransfer
-import net.xinkong.furagent.shared.util.FileNaming
-import net.xinkong.furagent.shared.util.formatFileSize
+import net.xinkong.furagent.shared.util.*
 import org.json.JSONObject
-import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
-import java.text.SimpleDateFormat
 import java.util.*
 
 // 直连设备 section
@@ -344,7 +337,7 @@ internal fun DirectDevicesSection(onInfo: (String) -> Unit) {
 
                         if (DirectDeviceCodec.isShortCode(raw)) {
                             // 短码流程：先解析 host/port/code，再调 /pair
-                            val triple = extractHostPortCode(raw)
+                            val triple = DirectDeviceCodec.extractHostPortCode(raw)
                             if (triple == null) {
                                 errMsg = "短码格式不正确（应为 IP:短码 或 IP:端口:短码）"
                                 return@TextButton
@@ -432,31 +425,7 @@ internal fun DirectDevicesSection(onInfo: (String) -> Unit) {
     }
 }
 
-/**
- * 从短码输入里提取 host / port / code。
- * 只在 DirectDeviceCodec.isShortCode(raw) == true 时调用。
- */
-internal fun extractHostPortCode(raw: String): Triple<String, Int, String>? {
-    val t = raw.trim()
-    if (t.startsWith("http://") || t.startsWith("https://")) return null
-    val parts = t.split(":").map { it.trim() }
-    return when (parts.size) {
-        2 -> {
-            val host = parts[0]
-            val code = parts[1]
-            if (host.isBlank() || code.length !in 4..8) null
-            else Triple(host, DirectDeviceCodec.DEFAULT_PORT, code.uppercase())
-        }
-        3 -> {
-            val host = parts[0]
-            val port = parts[1].toIntOrNull() ?: return null
-            val code = parts[2]
-            if (host.isBlank() || port <= 0 || code.length !in 4..8) null
-            else Triple(host, port, code.uppercase())
-        }
-        else -> null
-    }
-}
+
 
 @Composable
 internal fun DirectDeviceCardDesktop(
@@ -771,7 +740,7 @@ internal fun DeviceCard(
                         }
                         Spacer(Modifier.height(3.dp))
                         Text(
-                            "连接于 ${formatTime(client.connectedAt)}",
+                            "连接于 ${DateFormats.formatDateTime(client.connectedAt)}",
                             fontSize = 11.sp,
                             color = TextMuted()
                         )
@@ -1178,8 +1147,4 @@ internal fun fileIcon(name: String): ImageVector {
         "txt", "md", "json", "xml", "kt", "java", "py", "js" -> Icons.Default.Description
         else -> Icons.AutoMirrored.Filled.InsertDriveFile
     }
-}
-
-private fun formatTime(ts: Long): String {
-    return DateFormats.formatDateTime(ts)
 }

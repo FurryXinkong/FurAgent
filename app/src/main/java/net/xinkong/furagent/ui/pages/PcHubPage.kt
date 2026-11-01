@@ -1,7 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
-import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -14,12 +13,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -39,21 +35,12 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.bridge.PcBridgeClient
 import net.xinkong.furagent.data.*
-import net.xinkong.furagent.shared.util.DirectDevice
-import net.xinkong.furagent.shared.util.DirectDeviceCodec
-import net.xinkong.furagent.shared.util.DirectTransfer
-import net.xinkong.furagent.shared.util.FileNaming
-import net.xinkong.furagent.shared.util.formatFileSize
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.util.*
 import net.xinkong.furagent.system.LocalNetworkPermission
 import net.xinkong.furagent.system.notifyToast
-import net.xinkong.furagent.ui.ApplyBackgroundBlur
-import net.xinkong.furagent.ui.GlassSheen
-import net.xinkong.furagent.ui.PocoCard
-import net.xinkong.furagent.ui.PocoPageTopBar
-import net.xinkong.furagent.ui.SuccessColor
-import net.xinkong.furagent.ui.WarningColor
-import net.xinkong.furagent.ui.glassPageBg
-import net.xinkong.furagent.ui.pocoSwitchColors
+import net.xinkong.furagent.ui.*
+import net.xinkong.furagent.ui.theme.AppRadius
 import org.json.JSONObject
 import java.io.File
 import java.net.Inet4Address
@@ -1519,7 +1506,7 @@ private fun DirectTransferTab(
                         }
 
                         if (DirectDeviceCodec.isShortCode(raw)) {
-                            val triple = extractHostPortCode(raw)
+                            val triple = DirectDeviceCodec.extractHostPortCode(raw)
                             if (triple == null) {
                                 errMsg = "短码格式不正确（应为 IP:短码 或 IP:端口:短码）"
                                 return@TextButton
@@ -1687,30 +1674,7 @@ private fun DirectTransferTab(
     }
 }
 
-/**
- * 从短码输入里提取 host / port / code。
- */
-private fun extractHostPortCode(raw: String): Triple<String, Int, String>? {
-    val t = raw.trim()
-    if (t.startsWith("http://") || t.startsWith("https://")) return null
-    val parts = t.split(":").map { it.trim() }
-    return when (parts.size) {
-        2 -> {
-            val host = parts[0]
-            val code = parts[1]
-            if (host.isBlank() || code.length !in 4..8) null
-            else Triple(host, DirectDeviceCodec.DEFAULT_PORT, code.uppercase())
-        }
-        3 -> {
-            val host = parts[0]
-            val port = parts[1].toIntOrNull() ?: return null
-            val code = parts[2]
-            if (host.isBlank() || port <= 0 || code.length !in 4..8) null
-            else Triple(host, port, code.uppercase())
-        }
-        else -> null
-    }
-}
+
 
 @Composable
 private fun DirectDeviceCard(

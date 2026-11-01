@@ -4,11 +4,9 @@ import android.content.Context
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.shared.util.DirectDevice
 import net.xinkong.furagent.shared.util.DirectDeviceCodec
+import net.xinkong.furagent.shared.util.DirectDeviceJsonCodec
 import net.xinkong.furagent.shared.util.FileRecovery
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
-import java.util.*
 
 /**
  * 直连设备本地存储（Android）。
@@ -29,68 +27,22 @@ object DirectDeviceStore {
      *   - 顶层反序列化失败 → FileRecovery 备份损坏文件
      */
     fun list(context: Context): List<DirectDevice> {
-        return try {
-            val f = file(context)
-            if (!f.exists()) return emptyList()
-            val arr = JSONArray(f.readText(Charsets.UTF_8))
-            val out = mutableListOf<DirectDevice>()
-            var skipped = 0
-            for (i in 0 until arr.length()) {
-                val o = arr.optJSONObject(i)
-                if (o == null) {
-                    skipped++
-                    continue
-                }
-                try {
-                    out.add(
-                        DirectDevice(
-                            id = o.optString("id", UUID.randomUUID().toString()),
-                            name = o.optString("name", ""),
-                            host = o.optString("host", ""),
-                            port = o.optInt("port", 0),
-                            token = o.optString("token", ""),
-                            lastSeenAt = o.optLong("lastSeenAt", 0L)
-                        )
-                    )
-                } catch (e: Exception) {
-                    skipped++
-                    AgentLogger.log(
-                        "DIRECT",
-                        "device[$i] 解析失败，已跳过：${e.javaClass.simpleName}: ${e.message}"
-                    )
-                }
-            }
-            if (skipped > 0) {
-                AgentLogger.log(
-                    "DIRECT",
-                    "已跳过 $skipped 个异常设备，保留 ${out.size} 个"
-                )
-            }
-            out.sortedByDescending { it.lastSeenAt }
-        } catch (e: Exception) {
-            AgentLogger.log(
-                "DIRECT",
-                "读取直连设备失败，已备份损坏文件：${e.javaClass.simpleName}: ${e.message}"
-            )
-            FileRecovery.backupCorrupted(file(context))
-            emptyList()
+        val f = file(context)
+        if (!f.exists()) return emptyList()
+        val result = DirectDeviceJsonCodec.parseList(f.readText(Charsets.UTF_8)) { msg ->
+            AgentLogger.log("DIRECT", msg)
         }
+        if (result == null) {
+            AgentLogger.log("DIRECT", "读取直连设备失败，已备份损坏文件")
+            FileRecovery.backupCorrupted(f)
+            return emptyList()
+        }
+        return result
     }
 
     fun save(context: Context, list: List<DirectDevice>) {
         try {
-            val arr = JSONArray()
-            list.forEach { d ->
-                arr.put(JSONObject().apply {
-                    put("id", d.id)
-                    put("name", d.name)
-                    put("host", d.host)
-                    put("port", d.port)
-                    put("token", d.token)
-                    put("lastSeenAt", d.lastSeenAt)
-                })
-            }
-            atomicWrite(file(context), arr.toString(2))
+            atomicWrite(file(context), DirectDeviceJsonCodec.serializeList(list))
         } catch (e: Exception) {
             AgentLogger.log(
                 "DIRECT",

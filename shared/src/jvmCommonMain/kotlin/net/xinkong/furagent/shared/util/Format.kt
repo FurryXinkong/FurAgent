@@ -1,6 +1,6 @@
 package net.xinkong.furagent.shared.util
 
-import java.util.Locale
+import java.util.*
 
 /**
  * 统一的格式化工具。
@@ -36,4 +36,11 @@ fun formatDuration(ms: Long): String = when {
         val s = ms / 1000
         String.format(Locale.US, "%d:%02d", s / 60, s % 60)
     }
+}
+
+/** token 数展示：万以下直出，以上用 k / M 缩写。 */
+fun fmtTok(v: Long): String = when {
+    v >= 1_000_000 -> "%.2fM".format(v / 1_000_000.0)
+    v >= 10_000 -> "%.1fk".format(v / 1000.0)
+    else -> v.toString()
 }

@@ -1,6 +1,4 @@
 package net.xinkong.furagent.ui
-import net.xinkong.furagent.AppPage
-import net.xinkong.furagent.ui.theme.AppRadius
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -12,8 +10,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import net.xinkong.furagent.shared.icons.Icons
-import androidx.compose.material3.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,10 +28,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import net.xinkong.furagent.AppPage
 import net.xinkong.furagent.data.ChatMessage
 import net.xinkong.furagent.data.TokenStats
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.util.SessionAnalytics
+import net.xinkong.furagent.shared.util.fmtTok
 import net.xinkong.furagent.system.notifyToast
+import net.xinkong.furagent.ui.theme.AppRadius
 
 /**
  * 聊天页的独立 UI 组件。
@@ -328,40 +332,6 @@ fun DrawerItem(
     }
 }
 
-// 消息删除辅助
-
-/**
- * 删除一条消息（user 消息会连带删除其后的整轮 AI 回复）。
- */
-fun deleteMessagePair(history: List<ChatMessage>, index: Int): List<ChatMessage> {
-    val msg = history.getOrNull(index) ?: return history
-    val newList = history.toMutableList()
-    when {
-        msg.role == "user" && msg.type == "text" -> {
-            var end = index + 1
-            while (end < newList.size) {
-                val m = newList[end]
-                if (m.role == "user" && m.type == "text") break
-                end++
-            }
-            for (i in (end - 1) downTo index) newList.removeAt(i)
-        }
-        msg.role == "assistant" && msg.type == "text" -> {
-            // 删 assistant 时连带其后的 tool_call / tool_result / reasoning，
-            // 直到下一条 user 或 assistant text，避免留下孤儿结果（看起来像“返回没有调用”）
-            newList.removeAt(index)
-            while (index < newList.size) {
-                val m = newList[index]
-                if (m.role == "user") break
-                if (m.role == "assistant" && m.type == "text") break
-                newList.removeAt(index)
-            }
-        }
-        else -> newList.removeAt(index)
-    }
-    return newList
-}
-
 // 任务完成结果卡：本次会话编辑过的文件
 
 @Composable
@@ -515,9 +485,4 @@ fun AndroidTokenStatusBar(messages: List<ChatMessage>) {
     }
 }
 
-/** token 数展示：万以下直出，以上用 k / M 缩写。 */
-private fun fmtTok(v: Long): String = when {
-    v >= 1_000_000 -> "%.2fM".format(v / 1_000_000.0)
-    v >= 10_000 -> "%.1fk".format(v / 1000.0)
-    else -> v.toString()
-}
+

@@ -27,6 +27,7 @@ import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.*
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.*
+import net.xinkong.furagent.shared.data.deleteMessagePair
 import net.xinkong.furagent.shared.update.UpdateChecker
 import net.xinkong.furagent.shared.update.UpdateInfo
 import net.xinkong.furagent.shared.util.DateFormats
@@ -1573,22 +1574,7 @@ private suspend fun reExecuteToolCall(
     else "失败：${result.output.take(200)}")
 }
 
-fun deleteMessagePair(history: List<DesktopMessage>, index: Int): List<DesktopMessage> {
-    val msg = history.getOrNull(index) ?: return history
-    val newList = history.toMutableList()
-    if (msg.role == "user" && msg.type == "text") {
-        var end = index + 1
-        while (end < newList.size) {
-            val m = newList[end]
-            if (m.role == "user" && m.type == "text") break
-            end++
-        }
-        for (i in (end - 1) downTo index) newList.removeAt(i)
-    } else {
-        newList.removeAt(index)
-    }
-    return newList
-}
+
 
 private fun compressImage(src: File, quality: Int, maxDim: Int): File? {
     return try {

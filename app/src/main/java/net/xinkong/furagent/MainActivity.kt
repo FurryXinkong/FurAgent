@@ -72,6 +72,7 @@ import net.xinkong.furagent.core.SessionSummarizer
 import net.xinkong.furagent.core.mcp.McpManager
 import net.xinkong.furagent.data.*
 import net.xinkong.furagent.service.FloatingService
+import net.xinkong.furagent.shared.data.deleteMessagePair
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.update.UpdateChecker
 import net.xinkong.furagent.shared.update.UpdateInfo
@@ -2915,7 +2916,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
  * 设备上没有能处理该 scheme 的应用时 startActivity 会抛
  * ActivityNotFoundException，这里统一兜住并记日志，避免点按钮直接崩。
  */
-private fun openUrlSafely(context: android.content.Context, url: String, label: String) {
+internal fun openUrlSafely(context: android.content.Context, url: String, label: String) {
     try {
         context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
     } catch (e: Exception) {
