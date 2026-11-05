@@ -1,10 +1,6 @@
 package net.xinkong.furagent.shared.util
 
-import net.xinkong.furagent.shared.util.DateFormats
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 文件名处理（双端共用）。
@@ -48,9 +44,14 @@ object FileNaming {
         val ts = DateFormats.formatFileTs()
         var candidate = File(dirFile, "${base}_$ts$ext")
         var tries = 0
-        while (candidate.exists() && tries < 10) {
+        // 原实现 tries 上限 10，用尽后仍可能返回已存在文件（重名冲突覆盖用户数据）。
+        // 改为最多 1000 次并加纳秒后缀兜底，保证返回的文件名一定不冲突。
+        while (candidate.exists() && tries < 1000) {
             candidate = File(dirFile, "${base}_${ts}_${tries}$ext")
             tries++
+        }
+        if (candidate.exists()) {
+            candidate = File(dirFile, "${base}_${ts}_${System.nanoTime()}$ext")
         }
         return candidate
     }

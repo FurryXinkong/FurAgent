@@ -518,7 +518,6 @@ object DesktopAgent {
             val uiLock = Any()
             fun reportToolResult(idx: Int, r: ToolResult, durationMs: Long) {
                 val callId = callIds[idx] ?: "call_${loopIndex}_$idx"
-                val snap: List<DesktopMessage>
                 synchronized(uiLock) {
                     results[idx] = r to durationMs
                     current = current + DesktopMessage(
@@ -526,9 +525,10 @@ object DesktopAgent {
                         type = "tool_result", toolCallId = callId,
                         durationMs = durationMs, parallelGroup = parallelTag
                     )
-                    snap = current
+                    // 在锁内调用 onUpdate：onUpdate 是快照覆盖语义，并行工具时若在锁外
+                    // 调用，先完成的工具可能后到达 UI，把后完成工具追加的消息覆盖掉。
+                    onUpdate(current)
                 }
-                onUpdate(snap)
             }
 
             if (hasMetaTool || sortedCalls.size <= 1) {
@@ -815,74 +815,75 @@ object DesktopAgent {
             val msg = history[i]
             when (msg.type) {
                 "tool_call" -> {
-                    val firstLine = msg.content.substringBefore('\n').trim()
-                    val argsPart = msg.content.substringAfter('\n', "").trim()
-                    val toolName = resolveToolName(firstLine)
-                    val argsJson = try {
-                        if (argsPart.isBlank()) "{}" else JSONObject(argsPart).toString()
-                    } catch (_: Exception) { "{}" }
-                    val callId = msg.toolCallId.ifBlank {
-                        "call_${msg.id.replace("-", "")}"
-                    }
-
-                    messages.put(JSONObject().apply {
-                        put("role", "assistant")
-                        // 正文回填：AI 上一轮常常先说一句话再调工具，
-                        // 那句话被存成了独立的 type="text" 消息。
-                        // 旧逻辑这里硬编码空串，导致回放时 AI 看不到自己说过什么，
-                        // 而且会产出「连续两条 assistant」，Anthropic 协议直接 400。
-                        // 这里把紧邻前面的 text 消息正文取过来，合并成一条 assistant。
-                        val prevText = history.getOrNull(i - 1)
-                            ?.takeIf { it.type == "text" && it.role == "assistant" }
-                            ?.content ?: ""
-                        put("content", prevText)
-                        put("tool_calls", JSONArray().apply {
-                            put(JSONObject().apply {
-                                put("id", callId)
-                                put("type", "function")
-                                put("function", JSONObject().apply {
-                                    put("name", toolName)
-                                    put("arguments", argsJson)
-                                })
+                    // 把连续的一批 tool_call 合并到同一条 assistant 消息的 tool_calls 数组里。
+                    // 旧实现每条 tool_call 单独 put 一条 assistant + 一条 tool，
+                    // 于是「AI 说一句话 + 并行调 3 个工具」被还原成 3 条 assistant 消息，
+                    // 每条 content 都回填成同一句话。后果：
+                    //   1. Anthropic 协议要求 user/assistant 交替，3 条连续 assistant 直接 400；
+                    //   2. content 重复 N 次，token 严重浪费；
+                    //   3. 语义上模型看到的是「说了 3 遍同一句话，各调 1 个工具」。
+                    // 正解：收集本批所有 tool_call，put 一条 assistant（带 N 个 tool_calls），
+                    // 再 put N 条 tool 消息，与真实 API 响应结构对齐。
+                    val batchCalls = mutableListOf<JSONObject>()
+                    val batchResults = mutableListOf<JSONObject>()
+                    // 回填 content：紧邻本批之前的 assistant text（如果有）
+                    val prevText = history.getOrNull(i - 1)
+                        ?.takeIf { it.type == "text" && it.role == "assistant" }
+                        ?.content ?: ""
+                    while (i < history.size && history[i].type == "tool_call") {
+                        val cur = history[i]
+                        val firstLine = cur.content.substringBefore('\n').trim()
+                        val argsPart = cur.content.substringAfter('\n', "").trim()
+                        val toolName = resolveToolName(firstLine)
+                        val argsJson = try {
+                            if (argsPart.isBlank()) "{}" else JSONObject(argsPart).toString()
+                        } catch (_: Exception) { "{}" }
+                        val callId = cur.toolCallId.ifBlank {
+                            "call_${cur.id.replace("-", "")}"
+                        }
+                        batchCalls.add(JSONObject().apply {
+                            put("id", callId)
+                            put("type", "function")
+                            put("function", JSONObject().apply {
+                                put("name", toolName)
+                                put("arguments", argsJson)
                             })
                         })
+                        // 按 toolCallId 配对，不能只看位置相邻：
+                        // 并行跑一批工具时历史是 [A_call, B_call, C_call, B_result, A_result, C_result]，
+                        // 按位置会误判 A 未返回、B 未返回。
+                        val resultMsg = history.firstOrNull {
+                            it.type == "tool_result" && it.toolCallId.isNotBlank() &&
+                                    it.toolCallId == callId
+                        } ?: run {
+                            // 兼容旧数据（没存 toolCallId）：退回位置相邻判断
+                            val pos = history.indexOf(cur) + 1
+                            history.getOrNull(pos)
+                                ?.takeIf { it.type == "tool_result" && it.toolCallId.isBlank() }
+                        }
+                        if (resultMsg != null) {
+                            batchResults.add(JSONObject().apply {
+                                put("role", "tool")
+                                put("tool_call_id", callId)
+                                put("content", resultMsg.content)
+                            })
+                        } else {
+                            batchResults.add(JSONObject().apply {
+                                put("role", "tool")
+                                put("tool_call_id", callId)
+                                put("content", "（该工具调用未记录返回结果）")
+                            })
+                        }
+                        i += 1
+                    }
+                    messages.put(JSONObject().apply {
+                        put("role", "assistant")
+                        put("content", prevText)
+                        put("tool_calls", JSONArray().apply {
+                            batchCalls.forEach { put(it) }
+                        })
                     })
-
-                    // 按 toolCallId 配对，不能只看位置相邻。
-                    // 并行跑一批工具时，历史里是「A的call, B的call, C的call,
-                    // B的result, A的result, C的result」这种错开的顺序。
-                    // 旧逻辑只看下一条是不是 tool_result，于是 A 被判成
-                    // “未记录返回结果”，模型以为工具失败 → 重跑一遍（重复读
-                    // 同一个文件、重复跑同一个命令），又慢又浪费钱。
-                    val resultMsg = history.firstOrNull {
-                        it.type == "tool_result" && it.toolCallId.isNotBlank() &&
-                                it.toolCallId == callId
-                    } ?: run {
-                        // 兼容旧数据（没存 toolCallId）：退回位置相邻判断
-                        val pos = history.indexOf(msg) + 1
-                        history.getOrNull(pos)
-                            ?.takeIf { it.type == "tool_result" && it.toolCallId.isBlank() }
-                    }
-
-                    if (resultMsg != null) {
-                        messages.put(JSONObject().apply {
-                            put("role", "tool")
-                            put("tool_call_id", callId)
-                            put("content", resultMsg.content)
-                        })
-                        // 并行 tool_call 时历史是 [A_call, B_call, C_call, B_result, A_result, C_result]
-                        // 这种错开顺序。旧实现 i += 2 假设 tool_call 后面紧跟自己的 result，
-                        // 处理 A_call 找到 A_result 后跳到 C_call，B_call 和 B_result 被完全丢弃。
-                        // 改成 i += 1：tool_result 由下面 "tool_result" -> i += 1 分支单独跳过。
-                        i += 1
-                    } else {
-                        messages.put(JSONObject().apply {
-                            put("role", "tool")
-                            put("tool_call_id", callId)
-                            put("content", "（该工具调用未记录返回结果）")
-                        })
-                        i += 1
-                    }
+                    batchResults.forEach { messages.put(it) }
                 }
                 "tool_result" -> i += 1
                 "system_note" -> i += 1
@@ -894,10 +895,29 @@ object DesktopAgent {
                         // 注入给模型的系统通知（如「子代理完成」回流）此前被这里丢弃，
                         // 模型永远看不到，只能自己调 sub_session 去查。
                         // 请求中不允许中途插入 system 角色，故以 user 身份附带并标明来源。
-                        messages.put(JSONObject().apply {
-                            put("role", "user")
-                            put("content", "【系统通知】\n" + msg.content)
-                        })
+                        val notice = "【系统通知】\n" + msg.content
+                        // 防连续 user：如果最后一条已经是 user（用户刚发完消息 / 上一条 system_note 已合并），
+                        // 合并进去。OpenAI 协议虽不报错但浪费 token；Anthropic 严格交替会 400。
+                        val last = if (messages.length() > 0) messages.optJSONObject(messages.length() - 1) else null
+                        if (last != null && last.optString("role") == "user") {
+                            val prev = last.opt("content")
+                            when (prev) {
+                                is String -> last.put("content", prev + "\n\n" + notice)
+                                is JSONArray -> prev.put(JSONObject().apply {
+                                    put("type", "text")
+                                    put("text", notice)
+                                })
+                                else -> messages.put(JSONObject().apply {
+                                    put("role", "user")
+                                    put("content", notice)
+                                })
+                            }
+                        } else {
+                            messages.put(JSONObject().apply {
+                                put("role", "user")
+                                put("content", notice)
+                            })
+                        }
                     }
                     i += 1
                 }

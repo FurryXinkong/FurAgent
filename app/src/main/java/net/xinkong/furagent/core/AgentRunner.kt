@@ -36,10 +36,6 @@ import kotlin.time.Duration.Companion.milliseconds
  */
 object AgentRunner {
 
-    private val RE_STRIP_URL = Regex("""https?://\S+""")
-    private val RE_STRIP_PATH = Regex("""/\S+""")
-    private val RE_STRIP_MARKDOWN = Regex("""[*_`#>\[\]()!]+""")
-
     data class Snapshot(
         val sessionId: String = "",
         val history: List<ChatMessage> = emptyList(),
@@ -396,7 +392,9 @@ object AgentRunner {
         val text = last.content
         if (text.isBlank()) return
         if (text.startsWith("网络请求失败")) return
-        if (text.startsWith("API 错误")) return
+        // 实际错误文案是 ApiErrorInfo.format 返回的 "HTTP 429 · ..."，
+        // 不是 "API 错误"。旧检查是死代码，导致所有 HTTP 错误文案仍被朗读。
+        if (text.startsWith("HTTP ")) return
         if (text.startsWith("流式解析失败")) return
         if (text.startsWith("发生异常")) return
 

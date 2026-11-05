@@ -19,7 +19,7 @@ object SessionAnalytics {
         val path: String,
         /** 被操作次数（同路径多次写入累计） */
         val count: Int,
-        /** 最近一次动作（write / edit / delete / move / other） */
+        /** 最近一次动作（write / edit / delete / move / download / other） */
         val lastAction: String
     )
 
@@ -34,8 +34,15 @@ object SessionAnalytics {
     private val WRITE_HINTS = listOf(
         "write", "写入", "创建文件", "edit", "编辑", "code_edit", "代码编辑",
         "delete", "删除", "move", "移动", "rename", "重命名", "copy", "复制",
-        "append", "追加", "download", "下载"
+        "append", "追加"
     )
+
+    /**
+     * 下载类工具关键词。
+     * 下载只落盘到下载目录，语义上不是「修改用户文件」，
+     * 单独归为 download，避免在「本次修改的文件」里被当成 write。
+     */
+    private val DOWNLOAD_HINTS = listOf("download", "下载")
 
     /**
      * 聚合本会话修改过的文件（保序去重，按首次出现排序）。
@@ -49,13 +56,15 @@ object SessionAnalytics {
             val namePart = if (nl >= 0) m.content.substring(0, nl) else m.content
             val argsPart = if (nl >= 0) m.content.substring(nl + 1) else ""
             val lower = namePart.lowercase()
-            val looksWrite = WRITE_HINTS.any { lower.contains(it) }
+            val looksDownload = DOWNLOAD_HINTS.any { lower.contains(it) }
+            val looksWrite = looksDownload || WRITE_HINTS.any { lower.contains(it) }
             if (!looksWrite) return@forEach
 
             val paths = extractPaths(argsPart)
             if (paths.isEmpty()) return@forEach
 
             val action = when {
+                looksDownload -> "download"
                 lower.contains("delete") || lower.contains("删除") -> "delete"
                 lower.contains("move") || lower.contains("rename") || lower.contains("移动")
                     || lower.contains("重命名") -> "move"

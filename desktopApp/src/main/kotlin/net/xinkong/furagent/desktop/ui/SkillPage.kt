@@ -5,18 +5,15 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Icon
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
-import androidx.compose.material3.Text
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +21,8 @@ import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
+import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.skill.SkillTools
 
 /**
  * 自定义脚本 —— 整屏页面。
@@ -603,15 +602,49 @@ private fun SkillConfigDialog(
                                         color = TextSecondary()
                                     )
                                 }
+                            } else if (spec?.secret == true) {
+                                // 敏感项：默认显示打码值（能看出已配置），点小眼睛才显示完整明文
+                                var revealed by remember(meta.name, k) { mutableStateOf(false) }
+                                val actual = config.valueOf(k, meta.configSpec)?.toString().orEmpty()
+                                val shown = when {
+                                    revealed -> values[k] ?: ""
+                                    actual.isNotEmpty() -> SkillTools.maskSecret(actual)
+                                    else -> ""
+                                }
+                                GlassTextField(
+                                    value = shown,
+                                    placeholder = "未配置",
+                                    monospace = true,
+                                    visualTransformation = if (revealed) VisualTransformation.None
+                                        else PasswordVisualTransformation(),
+                                    trailingContent = {
+                                        IconButton(
+                                            onClick = {
+                                                // 首次展开时把真实值填进编辑框，否则用户看到的是打码串
+                                                if (!revealed && (values[k] ?: "").isEmpty()) {
+                                                    values[k] = actual
+                                                }
+                                                revealed = !revealed
+                                            },
+                                            modifier = Modifier.size(32.dp)
+                                        ) {
+                                            Icon(
+                                                if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                                contentDescription = if (revealed) "隐藏" else "显示",
+                                                tint = TextSecondary(),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                        }
+                                    },
+                                    onValueChange = { values[k] = it }
+                                )
                             } else {
                                 GlassTextField(
                                     value = values[k] ?: "",
                                     placeholder = when {
-                                        spec?.secret == true -> "留空表示不修改"
                                         spec?.type == "integer" || spec?.type == "number" -> "数字"
                                         else -> ""
                                     },
-                                    monospace = spec?.secret == true,
                                     onValueChange = { values[k] = it }
                                 )
                             }

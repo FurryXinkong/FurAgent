@@ -7,7 +7,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -17,19 +16,21 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import net.xinkong.furagent.ui.theme.DarkSuccess
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.ui.theme.AppRadius
+import net.xinkong.furagent.ui.theme.DarkSuccess
 import net.xinkong.furagent.ui.theme.LightSuccess
 
 // 玻璃色
@@ -503,7 +504,9 @@ fun PocoTextField(
     value: String,
     onValueChange: (String) -> Unit,
     label: String? = null,
-    minLines: Int = 1
+    minLines: Int = 1,
+    visualTransformation: VisualTransformation = VisualTransformation.None,
+    trailingContent: @Composable (() -> Unit)? = null
 ) {
     Column {
         if (label != null) {
@@ -520,6 +523,8 @@ fun PocoTextField(
                 .fillMaxWidth()
                 .heightIn(min = if (minLines > 1) 88.dp else 0.dp),
             minLines = minLines, shape = RoundedCornerShape(AppRadius.MD),
+            visualTransformation = visualTransformation,
+            trailingIcon = trailingContent,
             colors = OutlinedTextFieldDefaults.colors(
                 focusedBorderColor = MaterialTheme.colorScheme.primary,
                 unfocusedBorderColor = glassInputBorder(),

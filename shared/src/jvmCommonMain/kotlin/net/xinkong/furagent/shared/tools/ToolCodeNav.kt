@@ -201,7 +201,6 @@ object ToolCodeNav {
                     null
                 }
             } else null
-            val needle = keyword.lowercase(Locale.ROOT)
             val ctx = contextLines.coerceIn(0, 10)
 
             val out = mutableListOf<ContentMatch>()

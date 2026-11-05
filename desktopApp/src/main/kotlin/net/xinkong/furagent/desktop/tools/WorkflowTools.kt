@@ -7,7 +7,6 @@ import net.xinkong.furagent.desktop.data.WorkflowStore
 import net.xinkong.furagent.shared.tools.ToolResult
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.time.Duration.Companion.milliseconds
 
 object WorkflowTools {
@@ -168,7 +167,7 @@ object WorkflowTools {
         log.append("执行工作流「${wf.name}」共 ${wf.steps.size} 步：\n\n")
         val vars = mutableMapOf<String, String>()
         vars.putAll(paramsMap)
-        executeSteps(wf.steps, vars, executor, log, 0, depth)
+        executeSteps(wf.steps, vars, executor, log, 0)
         return ToolResult.ok(log.toString())
     }
 
@@ -177,8 +176,7 @@ object WorkflowTools {
         vars: MutableMap<String, String>,
         executor: suspend (String, JSONObject) -> ToolResult,
         log: StringBuilder,
-        depth: Int,
-        workflowDepth: Int = 0
+        depth: Int
     ) {
         // 步骤嵌套上限从 10 提到 30。
         // 10 层对正常用户太浅（循环套条件套循环就 3 层了）。
@@ -225,7 +223,7 @@ object WorkflowTools {
                     log.append("$prefix◇ 条件：$conditionExpr -> $condResult\n")
                     val branch = if (condResult) trueBranch else falseBranch
                     if (branch.isNotEmpty()) {
-                        executeSteps(branch, vars, executor, log, depth + 1, workflowDepth)
+                        executeSteps(branch, vars, executor, log, depth + 1)
                     } else {
                         log.append("$prefix  （分支为空）\n")
                     }
@@ -238,7 +236,7 @@ object WorkflowTools {
                     for ((idx, item) in items.withIndex()) {
                         vars[loopVar] = item
                         vars["index"] = idx.toString()
-                        executeSteps(loopBody, vars, executor, log, depth + 1, workflowDepth)
+                        executeSteps(loopBody, vars, executor, log, depth + 1)
                     }
                 }
 

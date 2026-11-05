@@ -507,6 +507,39 @@ object Icons {
             }
         }
 
+        val Visibility: ImageVector get() = _Visibility
+        private val _Visibility by lazy {
+            icon("Filled.Visibility") {
+                // 杏仁形眼眶：上下两段弧
+                stroke {
+                    moveTo(2.5f, 12f)
+                    arcTo(11f, 7f, 0f, false, true, 21.5f, 12f)
+                    arcTo(11f, 7f, 0f, false, true, 2.5f, 12f)
+                    close()
+                }
+                // 瞳孔
+                dot(12f, 12f, 2.6f)
+            }
+        }
+
+        val VisibilityOff: ImageVector get() = _VisibilityOff
+        private val _VisibilityOff by lazy {
+            icon("Filled.VisibilityOff") {
+                // 眼眶（同 Visibility）
+                stroke {
+                    moveTo(2.5f, 12f)
+                    arcTo(11f, 7f, 0f, false, true, 21.5f, 12f)
+                    arcTo(11f, 7f, 0f, false, true, 2.5f, 12f)
+                    close()
+                }
+                dot(12f, 12f, 2.6f)
+                // 斜线划掉
+                stroke {
+                    moveTo(4f, 20f); lineTo(20f, 4f)
+                }
+            }
+        }
+
         val LocationOn: ImageVector get() = _LocationOn
         private val _LocationOn by lazy {
             icon("Filled.LocationOn") {

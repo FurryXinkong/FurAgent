@@ -461,6 +461,13 @@ object DocumentTools {
                         .getCell((c + colSpan - 1).coerceAtMost(cols - 1))
                     // POI 的 XWPFTableCell 没有 mergeTo，用底层 CTTc 的 vMerge/gridSpan
                     mergeCells(start, end, rowSpan, colSpan)
+                    // 中间格：标 CONTINUE 并清空内容。
+                    for (rr in r until (r + rowSpan).coerceAtMost(totalRows)) {
+                        for (cc in c until (c + colSpan).coerceAtMost(cols)) {
+                            if (rr == r && cc == c) continue
+                            try { markContinueAndClear(table.getRow(rr).getCell(cc)) } catch (_: Exception) { }
+                        }
+                    }
                 } catch (_: Exception) { }
             }
         }
@@ -525,6 +532,25 @@ object DocumentTools {
             if (rowSpan > 1) {
                 val vm = tcPr.addNewVMerge()
                 vm.`val` = org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.RESTART
+            }
+        } catch (_: Exception) { }
+    }
+
+    /**
+     * 把被合并的中间格标成 vMerge CONTINUE 并清空内容。
+     *
+     * 旧实现只设了起始格的 gridSpan / RESTART，被合并格的内容原样保留，
+     * 在 Word 里看起来像"合并了但仍有多份文字"。
+     */
+    private fun markContinueAndClear(cell: XWPFTableCell) {
+        try {
+            val tc = cell.ctTc
+            val pr = if (tc.isSetTcPr) tc.tcPr else tc.addNewTcPr()
+            if (pr.isSetVMerge) pr.unsetVMerge()
+            pr.addNewVMerge().`val` = org.openxmlformats.schemas.wordprocessingml.x2006.main.STMerge.CONTINUE
+            while (cell.paragraphs.size > 1) cell.removeParagraph(cell.paragraphs.size - 1)
+            cell.paragraphs.firstOrNull()?.let { p ->
+                while (p.runs.isNotEmpty()) p.removeRun(0)
             }
         } catch (_: Exception) { }
     }
@@ -1473,13 +1499,14 @@ object DocumentTools {
                         }
                     }
 
-                    if (cfg.freezeHeader && headers != null) {
-
-                    // 多级表头：headerRows: [["A","B"],["a1","b1"]]，自动合并同值单元格
+                    // 多级表头独立于 freezeHeader：headerRows 有自己的合并逻辑，
+                    // 不冻结窗格、或不传单层 headers 时也应生效。
                     val headerRows = s.optJSONArray("headerRows")
                     if (headerRows != null && headerRows.length() > 0) {
                         applyMultiHeader(sheet, headerRows, styleCache, cfg)
                     }
+
+                    if (cfg.freezeHeader && headers != null) {
 
                     // 行分组折叠：groups: [{from, to, level, collapsed}]
                     val groups = s.optJSONArray("groups")
@@ -1602,7 +1629,7 @@ object DocumentTools {
                             if (scale in 10..400) sheet.printSetup.scale = scale.toShort()
                         } catch (_: Exception) { }
                     }
-                        sheet.createFreezePane(0, 1)
+                        sheet.createFreezePane(0, headerRows.length())
                     }
                 }
             }

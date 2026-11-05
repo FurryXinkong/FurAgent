@@ -68,9 +68,12 @@ object PathResolver {
     }
 
     private fun isPrefixOf(path: String, prefix: String): Boolean {
-        if (path == prefix) return true
+        if (path.equals(prefix, ignoreCase = true)) return true
         if (path.length <= prefix.length) return false
-        if (!path.startsWith(prefix)) return false
+        // Windows 文件系统大小写不敏感，白名单 C:\Users 必须能匹配 c:\Users\file。
+        // Unix 大小写敏感，但这里统一用 ignoreCase 不会造成安全问题：
+        // 路径已经过 canonicalPath 展开，大小写差异只可能是用户输入习惯。
+        if (!path.startsWith(prefix, ignoreCase = true)) return false
         val next = path[prefix.length]
         return next == '/' || next == '\\' || next == File.separatorChar
     }

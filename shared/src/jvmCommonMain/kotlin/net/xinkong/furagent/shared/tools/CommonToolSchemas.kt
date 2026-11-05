@@ -112,8 +112,8 @@ object CommonToolSchemas {
         ToolSpec(
             name = "run_sub_session",
             displayName = "运行子会话",
-            description = "派生一个全新的独立子会话（子代理）执行子任务：子会话不携带当前对话历史，以全新上下文独立运行；调用立即返回、不阻塞主对话（可并行最多 4 个）。调用时机：子任务与当前历史无关、或需要隔离上下文独立完成的整块工作。",
-            paramsSchema = """{"type":"object","properties":{"task":{"type":"string","description":"子任务完整描述，需自包含全部上下文"},"title":{"type":"string","description":"可选：子会话标题"},"session_id":{"type":"string","description":"可选：复用已有子会话 id"}},"required":["task"]}"""
+            description = "派生一个全新的独立子会话（子代理）执行子任务：子会话不携带当前对话历史，以全新上下文独立运行；调用立即返回、不阻塞主对话（可并行最多 4 个）。调用时机：子任务与当前历史无关、或需要隔离上下文独立完成的整块工作。建议同时传 expect 约定返回格式，否则子代理可能只回一句「我会先定位这些文件」，主对话拿不到可用结论。",
+            paramsSchema = """{"type":"object","properties":{"task":{"type":"string","description":"子任务完整描述，需自包含全部上下文"},"title":{"type":"string","description":"可选：子会话标题"},"session_id":{"type":"string","description":"可选：复用已有子会话 id"},"expect":{"type":"string","description":"可选：期望的返回格式约定，会追加到子任务末尾。例如「每项返回 文件路径|行号|状态(ok/fail/skip)|说明」"}},"required":["task"]}"""
         ),
 
         // 15. 查询子会话

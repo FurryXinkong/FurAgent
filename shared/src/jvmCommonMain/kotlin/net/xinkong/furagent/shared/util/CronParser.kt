@@ -1,6 +1,6 @@
 package net.xinkong.furagent.shared.util
 
-import java.util.Calendar
+import java.util.*
 
 /**
  * 标准 5 段 cron 解析（分 时 日 月 周）。
@@ -114,6 +114,8 @@ object CronParser {
             val stepParts = s.split('/')
             val range = stepParts[0]
             val step = if (stepParts.size > 1) stepParts[1].toIntOrNull() ?: 1 else 1
+            // step <= 0 会让下面的 while 死循环。matchSpec 里有同样的检查，matchDow 之前漏了。
+            if (step < 1) continue
 
             val (lo, hi) = when {
                 range == "*" -> 0 to 6

@@ -1922,19 +1922,26 @@ fun RichMessageText(
         // ComposeMarkdownRenderer 内部做了大量的正则解析和树构建。
         // 如果 content 没有变化（例如只是父组件重组），不应重复解析。
         // 这里利用 key 强制：如果 content 没变，ComposeMarkdownRenderer 内部缓存命中。
-        key(content) {
-            ComposeMarkdownRenderer(
-                text = content,
-            colors = MarkdownColors(
+        // MarkdownColors 必须 remember：每次重组 new 一个对象会让下游
+        // pointerInput 的 key 变化，手势检测器反复重建，拖选会被打断。
+        // MaterialTheme.colorScheme 是 @Composable 读取，必须在 remember 外先取值。
+        val outlineVariant = MaterialTheme.colorScheme.outlineVariant
+        val mdColors = remember(textColor, linkColor, codeBg, outlineVariant) {
+            MarkdownColors(
                 textColor = textColor,
                 linkColor = linkColor,
                 codeBg = codeBg,
                 quoteColor = textColor.copy(alpha = 0.4f),
-                dividerColor = MaterialTheme.colorScheme.outlineVariant,
-                tableBorderColor = MaterialTheme.colorScheme.outlineVariant
-            ),
-            modifier = modifier,
-            maxLines = maxLines,
+                dividerColor = outlineVariant,
+                tableBorderColor = outlineVariant
+            )
+        }
+        key(content) {
+            ComposeMarkdownRenderer(
+                text = content,
+                colors = mdColors,
+                modifier = modifier,
+                maxLines = maxLines,
                 onLinkClick = { url ->
                     try {
                         context.startActivity(

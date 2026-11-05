@@ -1,5 +1,6 @@
 package net.xinkong.furagent.shared.skill
 
+import net.xinkong.furagent.shared.SecretCodec
 import net.xinkong.furagent.shared.tools.ToolLogger
 import org.json.JSONObject
 import java.io.File
@@ -191,8 +192,18 @@ object SkillStore {
         return try {
             val o = JSONObject(f.readText(Charsets.UTF_8))
             val values = mutableMapOf<String, Any?>()
+            // 敏感项在磁盘上是 SecretCodec 混淆过的，读出来必须解密。
+            // 声明里 secret=true 的项才解密；其余原样（兼容旧明文配置）。
+            val spec = find(name)?.configSpec ?: emptyMap()
             o.optJSONObject("values")?.let { v ->
-                v.keys().forEach { k -> values[k] = v.opt(k) }
+                v.keys().forEach { k ->
+                    val raw = v.opt(k)
+                    values[k] = if (spec[k]?.secret == true && raw is String) {
+                        SecretCodec.deobfuscate(raw)
+                    } else {
+                        raw
+                    }
+                }
             }
             SkillConfig(
                 enabled = o.optBoolean("enabled", true),
@@ -210,11 +221,23 @@ object SkillStore {
     /** 写脚本配置。返回 null 表示成功，否则是错误原因。 */
     fun saveConfig(name: String, config: SkillConfig): String? {
         return try {
+            // 敏感项落盘前必须混淆：scripts/ 目录是明文可读的，
+            // AI 用 read_file 就能直接看到 API Key。
+            // 用与模型 apiKey 相同的 SecretCodec（XOR+Base64，伪装成 sk- 前缀）。
+            val spec = find(name)?.configSpec ?: emptyMap()
             val o = JSONObject().apply {
                 put("enabled", config.enabled)
                 if (config.timeout != null) put("timeout", config.timeout.coerceIn(1, 3600))
                 put("values", JSONObject().apply {
-                    config.values.forEach { (k, v) -> put(k, v ?: JSONObject.NULL) }
+                    config.values.forEach { (k, v) ->
+                        if (v == null) {
+                            put(k, JSONObject.NULL)
+                        } else if (spec[k]?.secret == true) {
+                            put(k, SecretCodec.obfuscate(v.toString()))
+                        } else {
+                            put(k, v)
+                        }
+                    }
                 })
             }
             val f = configFile(name)
@@ -284,6 +307,23 @@ object SkillStore {
         val n = name.trim()
         if (n.isBlank()) return "脚本名不能为空"
         if (!NAME_RE.matches(n)) return "脚本名只能包含字母、数字、下划线、连字符：$n"
+
+        // 密钥注册校验：声明了 secret:true 的配置项，必须写清楚 description，
+        // 否则用户在自定义脚本页看到的是一个没有说明的密码框，不知道该填什么。
+        // 这是「导入前必须注册 config」的强制点：AI 不能随手声明一个 secret 项。
+        config?.let { c ->
+            c.keys().forEach { k ->
+                val item = c.optJSONObject(k) ?: return@forEach
+                if (item.optBoolean("secret", false)) {
+                    val desc = item.optString("description", "").trim()
+                    if (desc.isBlank()) {
+                        return "配置项 $k 声明了 secret:true，但缺少 description。" +
+                                "敏感项必须说明用途（如「GitHub Personal Access Token」），" +
+                                "否则用户不知道该填什么密钥。"
+                    }
+                }
+            }
+        }
 
         val root = scriptsDir()
         val file = File(root, "$n$EXT")
@@ -440,7 +480,7 @@ object SkillStore {
 # ============================================================================
 #
 # 【一、文件放哪】
-#   scripts/<脚本名>.py（桌面端 ~/.furagent/scripts/，安卓端 App 私有目录 scripts/）
+#   ~/.furagent/scripts/<脚本名>.py
 #   一个 .py 一个脚本，文件名（去掉 .py）就是脚本名，也是工具名后缀。
 #   脚本名只能用字母、数字、下划线、连字符。
 #   例：example_hello.py → 工具名 pytool_example_hello
@@ -448,7 +488,7 @@ object SkillStore {
 # 【二、头部元数据（模块级变量，必须写在文件最外层）】
 #   NAME        脚本名（一般与文件名一致）
 #   DESCRIPTION 给 AI 看的说明：这个脚本干什么、什么时候该用、有什么坑
-#   PARAMS      调用参数定义（AI 调用时传的）
+#   PARAMS      调用参数定义（AI 调用时传的，每次都可能不同）
 #   CONFIG      配置项定义（长期保存的值，如 API Key、默认路径）
 #   TIMEOUT     超时秒数（1-3600，默认 60）
 #
@@ -464,18 +504,28 @@ object SkillStore {
 #       },
 #   }
 #
-# 【四、CONFIG 格式（可选）】
+# 【四、CONFIG 格式（可选）—— 脚本向 FurAgent 请求配置】
 #   CONFIG = {
 #       "配置名": {
-#           "type": "string",
-#           "description": "说明",
-#           "secret": True,          # 敏感值：UI 打码、AI 读配置时也打码
+#           "type": "string",        # string / integer / number / boolean
+#           "description": "说明",    # 敏感项必须写清楚去哪申请、什么格式
+#           "secret": True,          # 敏感值：落盘加密、UI 打码、AI 读不到明文
 #           "default": "默认值",      # 可选，没填时用这个
 #       },
 #   }
-#   配置存在 scripts/<脚本名>.config.json，
-#   用户可以在「自定义脚本」页点「配置」按钮改，
-#   AI 也可以用 pytool(op=config) 读写。
+#
+#   这是脚本「请求配置」的唯一方式：在头部 CONFIG 里声明你要什么，
+#   FurAgent 在导入脚本时就会注册这些配置项，用户可以在
+#   「自定义脚本 → 配置」里填，运行时自动注入给你。
+#   没在 CONFIG 里声明的项，运行时拿不到。
+#
+#   【敏感项（secret: True）的规则】
+#     - 落盘加密：存在 <脚本名>.config.json 里的是 sk-<base64> 混淆串，
+#       不是明文。AI 用 read_file 读配置文件也只能看到混淆串。
+#     - UI 打码：配置弹窗里默认显示 gith****Qzxp，点小眼睛才看完整值。
+#     - AI 不写不读：密钥由用户手动填。AI 不能用 pytool(op=config) 写密钥，
+#       也不该去 read_file 读配置文件。
+#     - 必须写 description：说明去哪申请、什么格式，否则创建脚本会被拒绝。
 #
 # 【五、运行时怎么拿到参数和配置】
 #   FurAgent 启动脚本时：
@@ -485,8 +535,12 @@ object SkillStore {
 #
 #   args = json.loads(sys.stdin.readline() or "{}")
 #   who  = args.get("who", "世界")          # 普通参数
-#   cfg  = args.get("_config", {})          # 配置项
+#   cfg  = args.get("_config", {})          # 配置项（推荐）
 #   key  = cfg.get("api_key", "")
+#
+#   两种取配置的方式等价，任选一种：
+#     cfg = args.get("_config") or {}                      # 从 stdin
+#     cfg = json.loads(os.environ.get("FURAGENT_SKILL_CONFIG") or "{}")  # 从环境变量
 #
 # 【六、怎么返回结果】
 #   往 stdout 打一行 JSON（最后一行会被解析）：
@@ -505,8 +559,8 @@ object SkillStore {
 #   4. 长任务要自己控制时间，别超过 TIMEOUT。
 #   5. 路径参数直接用用户给的字符串即可，FurAgent 不限制路径。
 #   6. 需要第三方库时，优先用标准库；非标准库要在 DESCRIPTION 里写明依赖。
-#      注意：安卓端（Chaquopy）只带标准库 + 少量预编译包，桌面专属的
-#      系统命令 / 原生二进制在安卓上不可用，需要时用 sys.platform 分支。
+#   7. 敏感配置（API Key 等）一律声明 secret: True，不要写进 PARAMS，
+#      也不要硬编码在代码里。
 #
 # 【八、调试方法】
 #   在「自定义脚本」页点「试运行」，填参数直接跑，看返回。
@@ -517,7 +571,8 @@ object SkillStore {
 NAME = "example_hello"
 DESCRIPTION = (
     "示例脚本 / 编写规范。向指定对象打招呼，演示参数传递、配置读取、"
-    "错误处理和结果返回的完整写法。写新脚本时可以直接复制这个文件改。"
+    "敏感配置（secret）声明、错误处理和结果返回的完整写法。"
+    "写新脚本时可以直接复制这个文件改。"
 )
 PARAMS = {
     "who": {
@@ -547,15 +602,50 @@ CONFIG = {
         "description": "结尾署名，留空则不加",
         "default": "",
     },
+    "repeat_limit": {
+        "type": "integer",
+        "description": "times 参数的上限，默认 10",
+        "default": 10,
+    },
+    # ↓ 敏感项示例：落盘加密、UI 打码、AI 读不到明文。
+    #   真实脚本里这里换成 API Key / Token 之类。
+    #   description 必须写清楚去哪申请、什么格式，否则创建脚本会被拒绝。
+    "api_token": {
+        "type": "string",
+        "description": "示例敏感项（演示 secret 用法）。真实场景填 API Key，"
+                       "例如 GitHub PAT（github_pat_ 开头）。留空则跳过鉴权演示。",
+        "secret": True,
+        "default": "",
+    },
 }
 TIMEOUT = 30
 
 import json
+import os
 import sys
+
 
 def out(obj):
     # 统一的输出函数：一行 JSON 到 stdout。
     print(json.dumps(obj, ensure_ascii=False))
+
+
+def load_config(args):
+    # 取配置。优先用 stdin 注入的 _config，回退到环境变量。
+    #
+    # 两种方式 FurAgent 都会提供，任选一种即可。
+    # 这里演示回退写法，方便脚本单独在命令行调试。
+    cfg = args.get("_config")
+    if isinstance(cfg, dict) and cfg:
+        return cfg
+    raw = os.environ.get("FURAGENT_SKILL_CONFIG") or ""
+    if raw.strip():
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return {}
+
 
 def main():
     # ---- 1. 读参数 ----
@@ -566,8 +656,8 @@ def main():
         out({"ok": False, "error": "参数解析失败：%s" % e})
         return
 
-    # ---- 2. 读配置（FurAgent 注入的 _config）----
-    cfg = args.get("_config") or {}
+    # ---- 2. 读配置（FurAgent 注入的 _config / 环境变量）----
+    cfg = load_config(args)
 
     # ---- 3. 取参数并做校验 ----
     who = (args.get("who") or "").strip()
@@ -575,17 +665,28 @@ def main():
         out({"ok": False, "error": "缺少必填参数 who"})
         return
 
+    # 配置项可能是字符串（用户手填）也可能是数字，统一转 int
+    try:
+        limit = int(cfg.get("repeat_limit") or 10)
+    except (TypeError, ValueError):
+        limit = 10
+    limit = max(1, min(100, limit))
+
     try:
         times = int(args.get("times") or 1)
     except (TypeError, ValueError):
         out({"ok": False, "error": "times 必须是整数"})
         return
-    times = max(1, min(10, times))
+    times = max(1, min(limit, times))
 
     shout = bool(args.get("shout"))
 
     greeting = (cfg.get("greeting") or "你好").strip()
     signature = (cfg.get("signature") or "").strip()
+
+    # 敏感项：这里只演示「拿到了」，实际脚本里拿去调 API。
+    # 注意：不要把 token 打进 result 返回给 AI，只报告是否配置。
+    token = (cfg.get("api_token") or "").strip()
 
     # ---- 4. 干活 ----
     lines = []
@@ -601,8 +702,13 @@ def main():
         lines.append("")
         lines.append("—— %s" % signature)
 
+    # 只报告敏感项是否配置，不回显值
+    lines.append("")
+    lines.append("[api_token] %s" % ("已配置（长度 %d）" % len(token) if token else "未配置"))
+
     # ---- 5. 返回结果 ----
     out({"ok": True, "result": "\n".join(lines)})
+
 
 if __name__ == "__main__":
     try:

@@ -263,17 +263,21 @@ suspend fun parseSseStream(
         val choice0 = choices.optJSONObject(0) ?: continue
         // finish_reason 只在最后一个 chunk 出现，且可能为 null
         if (!choice0.isNull("finish_reason")) {
-            choice0.optString("finish_reason", "").takeIf { it.isNotEmpty() && it != "" }
+            choice0.optString("finish_reason", "").takeIf { it.isNotEmpty() }
                 ?.let { finishReason = it }
         }
         val delta = choice0.optJSONObject("delta") ?: continue
 
         // 坑 org.json 的 optString(key, default) 在字段存在但值为 JSON null 时，
-        // 返回的是字符串 "null" 而不是 default（内部是 object.toString()）。
+        // 返回的是字符串 "" 而不是 default（内部是 object.toString()）。
         // DeepSeek 官方 API 的流式 chunk 会显式返回 content: null / reasoning_content: null，
-        // 直接 optString 会把 "null" 拼进正文和思考面板，表现为满屏 nullnullnull。
+        // 直接 optString 会把 "" 拼进正文和思考面板，表现为满屏 null。
         // 火山引擎等兼容层直接省略字段，所以不会触发。
         // 修法：先 isNull() 判断，再取字符串。
+        //
+        // 注意：不要用 `optString(...) != ""` 来过滤！SSE 分片时某个分片
+        // 内容可能恰好就是这四个字母，字符串比较会把合法分片丢掉。
+        // 判断 JSON null 只能用 isNull()。
         val content = if (delta.isNull("content")) "" else delta.optString("content", "")
         if (content.isNotEmpty()) onContent(content)
 
@@ -292,14 +296,30 @@ suspend fun parseSseStream(
                 val tc = tcs.optJSONObject(i) ?: continue
                 val idx = tc.optInt("index", 0)
                 val acc = toolCalls.getOrPut(idx) { ToolCallAccumulator() }
-                tc.optString("id", "").takeIf { it.isNotEmpty() && it != "null" }?.let { acc.id = it }
+                // 坑 org.json 的 optString(key, default) 在字段存在但值为 JSON null 时，
+                // 返回的是字符串 "" 而不是 default（内部是 object.toString()）。
+                // 所以这里必须用 isNull() 判断字段本身是不是 JSON null，
+                // 绝不能写成 `optString(...) != ""`。
+                //
+                // 真实事故：SSE 流式分片时，arguments 的某个分片内容可能恰好就是
+                // 四个字母 n-u-l-l（模型输出 "content":"" 时，分片边界正好切在
+                // 引号处）。用字符串比较会把这一整片丢掉，累积出的 JSON 变成
+                // {"content":""}，工具收到空参数，表现为「写文件写出 0 字节」。
+                // 同理 id / name 也一并改成 isNull 判断。
+                if (!tc.isNull("id")) {
+                    tc.optString("id", "").takeIf { it.isNotEmpty() }?.let { acc.id = it }
+                }
                 tc.optJSONObject("function")?.let { fn ->
-                    fn.optString("name", "").takeIf { it.isNotEmpty() && it != "" }?.let { acc.name = it }
+                    if (!fn.isNull("name")) {
+                        fn.optString("name", "").takeIf { it.isNotEmpty() }?.let { acc.name = it }
+                    }
                     // 清洗非法控制字符：DeepSeek 长输出时偶尔会吐出 \u0000，
                     // 而 JSON 规范不允许字符串里出现裸 NUL，
                     // 导致整个 arguments 解析失败、参数全丢（表现为工具收到空参数）。
-                    fn.optString("arguments", "").takeIf { it.isNotEmpty() && it != "" }
-                        ?.let { acc.arguments.append(sanitizeJsonControlChars(it)) }
+                    if (!fn.isNull("arguments")) {
+                        fn.optString("arguments", "").takeIf { it.isNotEmpty() }
+                            ?.let { acc.arguments.append(sanitizeJsonControlChars(it)) }
+                    }
                 }
             }
         }

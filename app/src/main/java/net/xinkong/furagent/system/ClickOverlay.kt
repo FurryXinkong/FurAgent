@@ -5,6 +5,8 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.os.Handler
+import android.os.Looper
 import android.util.TypedValue
 import android.view.Gravity
 import android.view.View
@@ -28,6 +30,13 @@ object ClickOverlay {
     @Volatile private var windowManager: WindowManager? = null
     @Volatile private var view: RippleView? = null
     @Volatile private var params: WindowManager.LayoutParams? = null
+
+    /** 主线程 Handler，用于 addView 失败后的延迟重试（不阻塞线程）。 */
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** 重试次数上限，避免窗口一直加不上时无限 post。 */
+    private const val MAX_ADD_RETRY = 3
+    private const val ADD_RETRY_DELAY_MS = 50L
 
     fun attach(ctx: Context) {
         if (view != null) return
@@ -56,30 +65,18 @@ object ClickOverlay {
             ).apply {
                 gravity = Gravity.TOP or Gravity.START
             }
-            // 部分 ROM 首次 addView 会失败（窗口 token 还没就绪），重试一次
-            var added = false
+            // 部分 ROM 首次 addView 会失败（窗口 token 还没就绪）。
+            // 旧实现用 Thread.sleep(50) 原地重试，attach 是在 onServiceConnected
+            // （主线程）里调的，阻塞主线程有 ANR 风险。改成 Handler.postDelayed 异步重试。
             try {
                 wm.addView(v, p)
-                added = true
+                windowManager = wm
+                view = v
+                params = p
             } catch (e: Exception) {
-                android.util.Log.w("ClickOverlay", "首次 addView 失败，重试：${e.message}")
-                try {
-                    Thread.sleep(50)
-                    wm.addView(v, p)
-                    added = true
-                } catch (e2: Exception) {
-                    android.util.Log.w("ClickOverlay", "重试 addView 仍失败：${e2.message}")
-                }
+                android.util.Log.w("ClickOverlay", "首次 addView 失败，稍后重试：${e.message}")
+                retryAddView(wm, v, p, 1)
             }
-            if (!added) {
-                windowManager = null
-                view = null
-                params = null
-                return
-            }
-            windowManager = wm
-            view = v
-            params = p
         } catch (_: Exception) {
             // 悬浮层添加失败（可能权限被撤销），静默降级
             windowManager = null
@@ -88,7 +85,41 @@ object ClickOverlay {
         }
     }
 
+    /** 延迟重试 addView，不阻塞调用线程。 */
+    private fun retryAddView(
+        wm: WindowManager,
+        v: RippleView,
+        p: WindowManager.LayoutParams,
+        attempt: Int
+    ) {
+        mainHandler.postDelayed({
+            // 期间被 detach 或已成功添加过，直接放弃
+            if (view != null) return@postDelayed
+            try {
+                wm.addView(v, p)
+                windowManager = wm
+                view = v
+                params = p
+            } catch (e: Exception) {
+                if (attempt < MAX_ADD_RETRY) {
+                    android.util.Log.w(
+                        "ClickOverlay",
+                        "第 $attempt 次重试 addView 失败：${e.message}"
+                    )
+                    retryAddView(wm, v, p, attempt + 1)
+                } else {
+                    android.util.Log.w("ClickOverlay", "重试 addView 仍失败：${e.message}")
+                    windowManager = null
+                    view = null
+                    params = null
+                }
+            }
+        }, ADD_RETRY_DELAY_MS)
+    }
+
     fun detach() {
+        // 取消还没执行的重试
+        mainHandler.removeCallbacksAndMessages(null)
         val v = view ?: return
         try {
             windowManager?.removeView(v)

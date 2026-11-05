@@ -185,6 +185,9 @@ object NativeFilePicker {
             val finished = proc.waitFor(5, TimeUnit.MINUTES)
             if (!finished) {
                 try { proc.destroyForcibly() } catch (_: Throwable) { }
+                // 超时路径也必须 join readerThread：否则线程可能挂在 readText 上，
+                // 虽然 isDaemon=true 不会阻止 JVM 退出，但每次超时泄漏一个线程。
+                try { reader.join(500) } catch (_: Throwable) { }
                 DesktopLoggerHolder.log("NativeFilePicker 超时（5 分钟），已强制终止")
                 return null
             }

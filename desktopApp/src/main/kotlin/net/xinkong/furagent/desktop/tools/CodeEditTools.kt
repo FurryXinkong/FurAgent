@@ -501,6 +501,9 @@ object CodeEditTools {
         // ---------- 阶段 1：全部校验 + 在内存里算出结果，不碰磁盘 ----------
         val plans = mutableListOf<FilePlan>()
         val errors = mutableListOf<String>()
+        // 同一个 path 在 files 里出现两次会导致重复备份 + 重复写入，
+        // 第二次的 original 还是旧内容，锚点必然对不上。直接报错更安全。
+        val seenPaths = mutableSetOf<String>()
 
         for (i in 0 until filesArr.length()) {
             val item = filesArr.optJSONObject(i)
@@ -514,6 +517,11 @@ object CodeEditTools {
                 continue
             }
             val file = File(pathStr)
+            val pathKey = try { file.canonicalPath } catch (_: Exception) { file.absolutePath }
+            if (!seenPaths.add(pathKey)) {
+                errors.add("$pathStr：在 files 里重复出现，请合并成一项")
+                continue
+            }
             val isCreate = item.optBoolean("create", false)
 
             val editsArr = item.optJSONArray("edits")

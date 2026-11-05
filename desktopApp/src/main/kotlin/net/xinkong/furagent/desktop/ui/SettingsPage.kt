@@ -294,6 +294,14 @@ fun SettingsPage(
                                     loopsInput = settings.maxToolCallLoops.toString()
                                 }
                             }
+                            var parallelSubInput by remember {
+                                mutableStateOf(settings.maxParallelSub.toString())
+                            }
+                            LaunchedEffect(settings.maxParallelSub) {
+                                if (parallelSubInput != settings.maxParallelSub.toString()) {
+                                    parallelSubInput = settings.maxParallelSub.toString()
+                                }
+                            }
 
                             var budgetInput by remember {
                                 mutableStateOf(settings.contextTokenBudgetK.toString())
@@ -363,6 +371,45 @@ fun SettingsPage(
                                         val v = filtered.toIntOrNull()
                                         if (v != null) {
                                             onSettingsChange(settings.copy(contextTokenBudgetK = v))
+                                        }
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(Radius.SM),
+                                    modifier = Modifier.width(110.dp),
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        color = TextPrimary(),
+                                        fontSize = 13.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = CardColor(),
+                                        unfocusedContainerColor = CardColor(),
+                                        focusedBorderColor = AccentColor(),
+                                        unfocusedBorderColor = BorderColor()
+                                    )
+                                )
+                            }
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("并行子代理上限", fontSize = 13.sp, color = TextPrimary())
+                                    Text(
+                                        "同时最多几个子代理并行，1~16；每个都是独立 API 会话，调大直接乘在 token 消耗上",
+                                        fontSize = 11.sp,
+                                        color = TextMuted()
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = parallelSubInput,
+                                    onValueChange = { s ->
+                                        val filtered = s.filter { it.isDigit() }.take(2)
+                                        parallelSubInput = filtered
+                                        val v = filtered.toIntOrNull()
+                                        if (v != null && v in 1..16) {
+                                            onSettingsChange(settings.copy(maxParallelSub = v))
                                         }
                                     },
                                     singleLine = true,

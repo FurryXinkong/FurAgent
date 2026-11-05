@@ -7,7 +7,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import java.io.File
 import java.net.HttpURLConnection
-import java.net.URL
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
@@ -137,7 +136,11 @@ object DownloadManager {
             val u = java.net.URI(task.url).toURL()
             conn = u.openConnection() as HttpURLConnection
             conn.connectTimeout = 30_000
-            conn.readTimeout = 0
+            // readTimeout 原为 0（无限）。但 TCP 卡住（对端挂死、中间设备丢包）时
+            // input.read() 会永久阻塞，协程取消里的 ensureActive() 检查不到，
+            // 导致「用户点了取消但下载永远不结束」。改成 60 秒无数据则超时，
+            // 既给慢速网络留余量，又让取消生效。
+            conn.readTimeout = 60_000
             conn.instanceFollowRedirects = true
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "FurAgent/1.0")
@@ -176,8 +179,18 @@ object DownloadManager {
             input.close()
 
             if (!tmp.renameTo(target)) {
-                target.writeBytes(tmp.readBytes())
-                tmp.delete()
+                // 性能 rename 跨盘失败时用流式拷贝，避免 readBytes() 大文件 OOM
+                try {
+                    tmp.inputStream().use { input ->
+                        target.outputStream().use { out ->
+                            input.copyTo(out, 128 * 1024)
+                        }
+                    }
+                    tmp.delete()
+                } catch (e: Exception) {
+                    try { tmp.delete() } catch (_: Exception) { }
+                    throw e
+                }
             }
             updateTask(id) {
                 it.copy(

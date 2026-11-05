@@ -125,10 +125,6 @@ private val TEXT_FILE_EXTS = setOf(
     "cpp", "hpp", "go", "rs", "rb", "php", "vue", "bat", "ps1", "dockerfile"
 )
 
-private val RE_STRIP_URL = Regex("""https?://\S+""")
-private val RE_STRIP_PATH = Regex("""/\S+""")
-private val RE_STRIP_MARKDOWN = Regex("""[*_`#>]+""")
-
 class MainActivity : ComponentActivity() {
 
     private val themeState = mutableStateOf("system")

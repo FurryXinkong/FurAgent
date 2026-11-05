@@ -1124,10 +1124,18 @@ object SystemTools {
             Regex("""(^|[\s&|;(])(rm|rmdir|rd)(\s|$)"""),
             Regex("""(^|[\s&|;(])(del|erase)(\s|$)"""),
             Regex("""(^|[\s&|;(])remove-item(\s|$)"""),
-            Regex("""(^|[\s&|;(])ri(\s|$)""")
+            Regex("""(^|[\s&|;(])ri(\s|$)"""),
+            // 补充：清空/截断文件（> file / truncate -s 0）
+            Regex("""(^|[\s&|;(])truncate(\s|$)"""),
+            Regex(""">\s*[^\s|&>]"""),
+            // find -delete / find -exec rm
+            Regex("""(^|[\s&|;(])find\b.*\s-delete"""),
+            Regex("""(^|[\s&|;(])find\b.*\s-exec\s+(rm|rmdir|shred)\b"""),
+            // shred（不可恢复的删除）
+            Regex("""(^|[\s&|;(])shred(\s|$)""")
         )
         val hit = patterns.firstOrNull { it.containsMatchIn(c) } ?: return null
-        return "失败：已拦截，命令包含删除操作（${hit.pattern}）。\n" +
+        return "失败：已拦截，命令包含删除/覆盖操作（${hit.pattern}）。\n" +
                 "AI 不得直接删除文件。如需删除，请改用 file_op（op=delete），" +
                 "文件会被移入回收站，由用户决定何时清空。"
     }

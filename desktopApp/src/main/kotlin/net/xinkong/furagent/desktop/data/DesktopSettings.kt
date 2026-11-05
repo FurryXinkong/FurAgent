@@ -104,6 +104,15 @@ data class DesktopSettings(
     val maxTurns: Int = 20,
 
     /**
+     * 同时最多几个子代理并行。
+     *
+     * 默认 4（与 SubSessionLimits.MAX_PARALLEL_SUB 一致）。
+     * 机器强 / 想批量清任务时可以调到 8，但注意：
+     * 每个子代理都是独立 API 会话，并行数直接乘在 token 消耗上。
+     */
+    val maxParallelSub: Int = 4,
+
+    /**
      * 上下文预算 历史的 token 上限（单位：千 token，0 = 不限制）。
      *
      * 为什么需要 maxTurns 只能按轮次数拦，拦不住“工具输出特别大”的会话：
@@ -235,6 +244,7 @@ data class DesktopSettings(
                 put("subAgentProfileId", subAgentProfileId)
                 put("apiKeySource", apiKeySource)
                 put("maxToolCallLoops", maxToolCallLoops)
+        put("maxParallelSub", maxParallelSub)
                 put("maxTurns", maxTurns)
         put("contextTokenBudgetK", contextTokenBudgetK)
                 put("systemPromptMode", systemPromptMode)
@@ -273,8 +283,24 @@ data class DesktopSettings(
             val tmp = File(dir, "settings.json.tmp")
             tmp.writeText(o.toString(2), Charsets.UTF_8)
             if (!tmp.renameTo(f)) {
-                f.writeText(o.toString(2), Charsets.UTF_8)
-                tmp.delete()
+                // Windows 上 renameTo 在目标已存在时失败；直接 f.writeText 会截断旧文件，
+                // 中途失败（磁盘满、杀软锁文件）会丢全部设置。改用 backup-and-rename：
+                // 目标先改名到 .bak → tmp 改名到目标 → 清理 .bak；rename 失败从 .bak 恢复。
+                val bak = File(dir, "settings.json.bak")
+                try { bak.delete() } catch (_: Exception) { }
+                if (f.exists() && !f.renameTo(bak)) {
+                    // 旧文件改不动：最保守，直接覆盖写（至少当前版本不会丢）
+                    try { f.writeText(o.toString(2), Charsets.UTF_8) } catch (_: Exception) { }
+                    tmp.delete()
+                    return
+                }
+                if (tmp.renameTo(f)) {
+                    try { bak.delete() } catch (_: Exception) { }
+                } else {
+                    // tmp 改名失败：从 bak 恢复旧文件
+                    try { bak.renameTo(f) } catch (_: Exception) { }
+                    tmp.delete()
+                }
             }
         } catch (e: Exception) {
             DesktopLogger.error(
@@ -392,6 +418,7 @@ data class DesktopSettings(
                     apiKeySource = o.optString("apiKeySource", "profile")
                         .takeIf { it in listOf("profile", "env") } ?: "profile",
                     maxToolCallLoops = o.optInt("maxToolCallLoops", 20).coerceAtLeast(1),
+            maxParallelSub = o.optInt("maxParallelSub", 4).coerceIn(1, 16),
                     maxTurns = o.optInt("maxTurns", 20).coerceAtLeast(1),
         contextTokenBudgetK = o.optInt("contextTokenBudgetK", 100).coerceIn(0, 2000),
                     systemPromptMode = o.optString("systemPromptMode", "append")

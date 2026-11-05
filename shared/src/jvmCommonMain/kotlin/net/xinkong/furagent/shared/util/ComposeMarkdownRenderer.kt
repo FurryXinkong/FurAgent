@@ -10,23 +10,26 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+/**
+ * Markdown 渲染配色。
+ *
+ * @Immutable 很关键：调用方每次重组都会 new 一个 MarkdownColors，
+ * 不加这个注解 Compose 会认为参数变了，导致下游 pointerInput 的 key 变化、
+ * 手势检测器反复重建——表现就是「文字有时能选中、有时选不中」。
+ */
+@Immutable
 data class MarkdownColors(
     val textColor: Color,
     val linkColor: Color,
@@ -50,7 +53,11 @@ fun ComposeMarkdownRenderer(
 
     Column(modifier = modifier) {
         blocks.forEachIndexed { index, block ->
-            RenderBlock(block, colors, maxLines, onLinkClick, onLongPress, onTap)
+            // key(block) 让每个块独立记忆：流式输出时只有最后一块在变，
+            // 前面的块不会因为父组件重组而重新解析行内 markdown。
+            key(index, block) {
+                RenderBlock(block, colors, maxLines, onLinkClick, onLongPress, onTap)
+            }
             if (index < blocks.size - 1) {
                 Spacer(modifier = Modifier.height(8.dp))
             }
@@ -76,7 +83,9 @@ private fun RenderBlock(
                 else -> 15.sp
             }
             MarkdownStyledText(
-                text = buildInlineAnnotatedString(block.text, colors, fontSize, true),
+                text = remember(block.text, colors, fontSize) {
+                    buildInlineAnnotatedString(block.text, colors, fontSize, true)
+                },
                 colors = colors,
                 maxLines = maxLines,
                 onLinkClick = onLinkClick,
@@ -88,7 +97,9 @@ private fun RenderBlock(
 
         is MdBlock.Paragraph -> {
             MarkdownStyledText(
-                text = buildInlineAnnotatedString(block.text, colors, 14.sp, false),
+                text = remember(block.text, colors) {
+                    buildInlineAnnotatedString(block.text, colors, 14.sp, false)
+                },
                 colors = colors,
                 maxLines = maxLines,
                 onLinkClick = onLinkClick,
@@ -108,7 +119,9 @@ private fun RenderBlock(
                             modifier = Modifier.width(16.dp).padding(top = 2.dp)
                         )
                         MarkdownStyledText(
-                            text = buildInlineAnnotatedString(item, colors, 14.sp, false),
+                            text = remember(item, colors) {
+                                buildInlineAnnotatedString(item, colors, 14.sp, false)
+                            },
                             colors = colors,
                             maxLines = maxLines,
                             onLinkClick = onLinkClick,
@@ -131,7 +144,9 @@ private fun RenderBlock(
                             modifier = Modifier.width(24.dp).padding(top = 2.dp)
                         )
                         MarkdownStyledText(
-                            text = buildInlineAnnotatedString(item, colors, 14.sp, false),
+                            text = remember(item, colors) {
+                                buildInlineAnnotatedString(item, colors, 14.sp, false)
+                            },
                             colors = colors,
                             maxLines = maxLines,
                             onLinkClick = onLinkClick,
@@ -157,7 +172,9 @@ private fun RenderBlock(
                         .background(colors.quoteColor, RoundedCornerShape(2.dp))
                 )
                 MarkdownStyledText(
-                    text = buildInlineAnnotatedString(block.text, colors, 14.sp, false, italic = true),
+                    text = remember(block.text, colors) {
+                        buildInlineAnnotatedString(block.text, colors, 14.sp, false, italic = true)
+                    },
                     colors = colors,
                     maxLines = maxLines,
                     onLinkClick = onLinkClick,
@@ -213,7 +230,9 @@ private fun RenderTable(table: MdBlock.Table, colors: MarkdownColors) {
         Row(modifier = Modifier.fillMaxWidth().background(colors.codeBg.copy(alpha = 0.5f))) {
             table.headers.forEach { header ->
                 MarkdownStyledText(
-                    text = buildInlineAnnotatedString(header, colors, 14.sp, true),
+                    text = remember(header, colors) {
+                        buildInlineAnnotatedString(header, colors, 14.sp, true)
+                    },
                     colors = colors,
                     modifier = Modifier.weight(weight).padding(8.dp),
                     maxLines = Int.MAX_VALUE
@@ -227,7 +246,9 @@ private fun RenderTable(table: MdBlock.Table, colors: MarkdownColors) {
                 for (i in 0 until colCount) {
                     val cellText = row.getOrElse(i) { "" }
                     MarkdownStyledText(
-                        text = buildInlineAnnotatedString(cellText, colors, 14.sp, false),
+                        text = remember(cellText, colors) {
+                            buildInlineAnnotatedString(cellText, colors, 14.sp, false)
+                        },
                         colors = colors,
                         modifier = Modifier.weight(weight).padding(8.dp),
                         maxLines = Int.MAX_VALUE
@@ -257,9 +278,16 @@ private fun MarkdownStyledText(
 ) {
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
+    // pointerInput 的 key 不能放 text（AnnotatedString）。
+    // 每次重组都可能新建一个内容相同的 AnnotatedString，
+    // 作为 key 会触发手势检测器重建，重建瞬间正在进行的拖选会被打断
+    // ——这就是「有时能选中有时不能」的根因。
+    // 改用 text.text（纯字符串，内容不变则引用稳定）作为 key。
+    val textKey = text.text
+
     Text(
         text = text,
-        modifier = modifier.pointerInput(text, onLinkClick, onTap, onLongPress) {
+        modifier = modifier.pointerInput(textKey, onLinkClick, onTap, onLongPress) {
             if (onLinkClick != null || onTap != null || onLongPress != null) {
                 detectTapGestures(
                     onLongPress = { onLongPress?.invoke() },

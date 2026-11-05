@@ -52,7 +52,13 @@ object SessionCodec {
             title = newTitle,
             createdAt = now,
             updatedAt = now,
-            messages = src.messages.map { it.copy(id = UUID.randomUUID().toString()) }
+            messages = src.messages.map { it.copy(id = UUID.randomUUID().toString()) },
+            // 复制体是独立会话：不继承 parentId（否则删母会话时会被级联删除），
+            // 但继承 systemPrompt（否则复制体行为与原会话不一致）、
+            // titleLocked（否则 persist 自动标题会覆盖「（副本）」后缀）。
+            parentId = null,
+            systemPrompt = src.systemPrompt,
+            titleLocked = if (src.titleLocked == true) true else null
         )
     }
 

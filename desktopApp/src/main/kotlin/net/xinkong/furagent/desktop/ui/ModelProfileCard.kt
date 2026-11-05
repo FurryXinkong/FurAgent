@@ -15,6 +15,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -193,6 +195,7 @@ fun EditModelProfileDialog(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var model by remember { mutableStateOf(initial.model) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
+    var keyRevealed by remember { mutableStateOf(false) }
     var supportsThinking by remember { mutableStateOf(initial.supportsThinking) }
     var supportsVision by remember { mutableStateOf(initial.supportsVision) }
     var temperature by remember { mutableStateOf(initial.temperature.toFloat()) }
@@ -229,7 +232,17 @@ fun EditModelProfileDialog(
                         label = "模型名",
                         placeholder = "doubao-seedream-5.0-pro"
                     )
-                    GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...")
+                    GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...",
+                        visualTransformation = if (keyRevealed) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingContent = {
+                            IconButton(onClick = { keyRevealed = !keyRevealed }, modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    if (keyRevealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (keyRevealed) "隐藏" else "显示",
+                                    tint = TextSecondary(), modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        })
                 } else {
                     // ===== 对话模型 =====
                     Text("快速填充预设", fontSize = 12.sp, color = TextSecondary())
@@ -277,7 +290,17 @@ fun EditModelProfileDialog(
                         }
                     }
                     GlassTextField(model, { model = it }, label = "模型名", placeholder = "deepseek-chat")
-                    GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...")
+                    GlassTextField(apiKey, { apiKey = it }, label = "API Key", placeholder = "sk-...",
+                        visualTransformation = if (keyRevealed) VisualTransformation.None else PasswordVisualTransformation(),
+                        trailingContent = {
+                            IconButton(onClick = { keyRevealed = !keyRevealed }, modifier = Modifier.size(32.dp)) {
+                                Icon(
+                                    if (keyRevealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (keyRevealed) "隐藏" else "显示",
+                                    tint = TextSecondary(), modifier = Modifier.size(16.dp)
+                                )
+                            }
+                        })
                     GlassSwitchRow(
                         title = "支持深度思考",
                         subtitle = "关闭后聊天页不显示「深度思考」开关（如 DeepSeek-V3 非思考版）",

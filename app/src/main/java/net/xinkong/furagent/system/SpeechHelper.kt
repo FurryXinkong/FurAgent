@@ -56,6 +56,16 @@ object SpeechHelper {
     @Volatile private var currentSegmentIdx: Int = 0
     @Volatile private var paused: Boolean = false
 
+    /**
+     * 队列里还没读完的段数。
+     *
+     * speakFrom 一次性把所有段 QUEUE_ADD 进 TTS 队列，onDone 是逐段回调的。
+     * 旧实现每段 onDone 都置 speaking=false，导致第一段读完 UI 就显示"未朗读"，
+     * 实际后面还有段在播。改成计数：只有归零才置 false。
+     * 用 AtomicInteger 是因为 onDone/onError 在 TTS 的 binder 线程回调。
+     */
+    private val pendingSegments = java.util.concurrent.atomic.AtomicInteger(0)
+
     /** 兼容：老调用方读 lastError。 */
     val lastError: String?
         get() = _state.value.error
@@ -96,11 +106,25 @@ object SpeechHelper {
                                 _state.value = _state.value.copy(speaking = true)
                             }
                             override fun onDone(utteranceId: String?) {
+                                // 分段朗读时逐段递减，只有最后一段读完才算真的结束
+                                if (utteranceId != null && utteranceId.startsWith("seg_")) {
+                                    if (pendingSegments.decrementAndGet() > 0) return
+                                }
                                 _isSpeaking.value = false
                                 _state.value = _state.value.copy(speaking = false)
                             }
                             @Deprecated("Deprecated in Java")
                             override fun onError(utteranceId: String?) {
+                                // 出错的段同样要从待读计数里扣掉，否则计数永远不归零
+                                if (utteranceId != null && utteranceId.startsWith("seg_")) {
+                                    if (pendingSegments.decrementAndGet() > 0) {
+                                        AgentLogger.log(
+                                            "SYS",
+                                            "TTS onError（utteranceId=$utteranceId），剩余 ${pendingSegments.get()} 段"
+                                        )
+                                        return
+                                    }
+                                }
                                 _isSpeaking.value = false
                                 AgentLogger.log("SYS", "TTS onError（utteranceId=$utteranceId）")
                                 _state.value = _state.value.copy(
@@ -188,17 +212,27 @@ object SpeechHelper {
     private fun speakFrom(idx: Int): Boolean {
         if (idx >= segments.size) return false
         currentSegmentIdx = idx
+        // 先按"全部入队成功"预置计数，入队失败的段当场扣掉
+        var queued = 0
         for (i in idx until segments.size) {
             val seg = segments[i]
             try {
-                tts?.speak(
+                val r = tts?.speak(
                     seg,
                     if (i == idx) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD,
                     null,
                     "seg_$i"
                 )
+                if (r != TextToSpeech.ERROR) queued++
             } catch (_: Exception) { }
         }
+        if (queued <= 0) {
+            pendingSegments.set(0)
+            _isSpeaking.value = false
+            _state.value = _state.value.copy(speaking = false, error = "朗读失败（系统返回 ERROR）")
+            return false
+        }
+        pendingSegments.set(queued)
         _isSpeaking.value = true
         _state.value = _state.value.copy(speaking = true)
         return true
@@ -212,6 +246,8 @@ object SpeechHelper {
         }
         paused = true
         try { tts?.stop() } catch (_: Exception) { }
+        // stop 会丢弃队列里所有段，计数必须清零，否则残留计数会让后续朗读永远不结束
+        pendingSegments.set(0)
         _isSpeaking.value = false
         _state.value = _state.value.copy(speaking = false)
     }
@@ -229,6 +265,7 @@ object SpeechHelper {
     /** 停止朗读。**不清除 error**。 */
     fun stop() {
         try { tts?.stop() } catch (_: Exception) { }
+        pendingSegments.set(0)
         _isSpeaking.value = false
         _state.value = _state.value.copy(speaking = false)
         // stop 时清空分段状态
@@ -256,6 +293,7 @@ object SpeechHelper {
         } catch (_: Exception) { }
         tts = null
         ready = false
+        pendingSegments.set(0)
         _isSpeaking.value = false
         _state.value = State()
     }

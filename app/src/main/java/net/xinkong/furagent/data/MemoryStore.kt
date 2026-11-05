@@ -265,8 +265,10 @@ object MemoryStore {
                     put("id", it.id)
                     put("content", it.content)
                     put("createdAt", it.createdAt)
-                    // 序列化 enabled
                     put("enabled", it.enabled)
+                    // 序列化 sessionId：旧实现漏了，导致会话摘要无法幂等覆盖，
+                    // 每次摘要都新增一条而不是替换，无限累积污染 system prompt。
+                    if (it.sessionId.isNotBlank()) put("sessionId", it.sessionId)
                 })
             }
             atomicWrite(file(context), arr.toString())

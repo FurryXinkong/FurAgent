@@ -17,9 +17,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import net.xinkong.furagent.data.*
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.util.DateFormats
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.ui.theme.AppRadius
@@ -71,6 +74,7 @@ fun EditModelDialog(
     var baseUrl by remember { mutableStateOf(initial.baseUrl) }
     var model by remember { mutableStateOf(initial.model) }
     var apiKey by remember { mutableStateOf(initial.apiKey) }
+    var keyRevealed by remember { mutableStateOf(false) }
     var supportsThinking by remember { mutableStateOf(initial.supportsThinking) }
     var supportsVision by remember { mutableStateOf(initial.supportsVision) }
     var temperature by remember { mutableStateOf(initial.temperature.toFloat()) }
@@ -157,7 +161,17 @@ fun EditModelDialog(
                     placeholder = { Text("sk-... 或留空") },
                     modifier = Modifier.fillMaxWidth(), singleLine = true,
                     shape = RoundedCornerShape(AppRadius.SM),
-                    colors = pocoFieldColors()
+                    colors = pocoFieldColors(),
+                    visualTransformation = if (keyRevealed) VisualTransformation.None
+                        else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { keyRevealed = !keyRevealed }) {
+                            Icon(
+                                if (keyRevealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (keyRevealed) "隐藏" else "显示"
+                            )
+                        }
+                    }
                 )
                 if (!isImageModel) {
                 Row(

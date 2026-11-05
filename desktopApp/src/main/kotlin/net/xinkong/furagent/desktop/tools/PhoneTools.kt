@@ -1,15 +1,15 @@
 package net.xinkong.furagent.desktop.tools
 
-import net.xinkong.furagent.shared.util.DateFormats
 import kotlinx.coroutines.*
 import net.xinkong.furagent.desktop.bridge.BridgeServer
 import net.xinkong.furagent.desktop.core.DownloadManager
 import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
-import net.xinkong.furagent.shared.util.FileNaming
 import net.xinkong.furagent.shared.BridgeMessage
 import net.xinkong.furagent.shared.BridgeToolList
 import net.xinkong.furagent.shared.EndpointId
 import net.xinkong.furagent.shared.tools.ToolResult
+import net.xinkong.furagent.shared.util.DateFormats
+import net.xinkong.furagent.shared.util.FileNaming
 import net.xinkong.furagent.shared.util.formatFileSize
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -19,7 +19,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
 import java.net.URLEncoder
-import java.text.SimpleDateFormat
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -365,15 +364,15 @@ object PhoneTools {
         else ToolResult.fail("发送失败：${result.output}")
     }
 
-    private fun uploadViaPhoneHttp(
+    private suspend fun uploadViaPhoneHttp(
         clientId: String,
         localFile: File,
         fileNameHint: String
-    ): ToolResult? {
-        val info = clientHttpMap[clientId] ?: return null
-        val host = findHostByClientId(clientId) ?: return null
-        if (info.port <= 0 || info.token.isBlank()) return null
-        return try {
+    ): ToolResult? = withContext(Dispatchers.IO) {
+        val info = clientHttpMap[clientId] ?: return@withContext null
+        val host = findHostByClientId(clientId) ?: return@withContext null
+        if (info.port <= 0 || info.token.isBlank()) return@withContext null
+        try {
             val url = "http://$host:${info.port}/upload" +
                     "?token=${URLEncoder.encode(info.token, "UTF-8")}" +
                     "&path=${URLEncoder.encode(fileNameHint, "UTF-8")}"
@@ -386,7 +385,6 @@ object PhoneTools {
                 } else ToolResult.fail("HTTP ${resp.code}：$text")
             }
         } catch (e: Exception) {
-            // println → DesktopLogger
             net.xinkong.furagent.desktop.system.DesktopLogger.warn(
                 "PhoneTools",
                 "HTTP 上传失败：${e.javaClass.simpleName}: ${e.message}"
@@ -439,6 +437,9 @@ object PhoneTools {
         val start = System.currentTimeMillis()
         while (true) {
             if (System.currentTimeMillis() - start > timeoutMs) {
+                // 必须取消后台任务：否则报"下载超时"但实际还在耗带宽，
+                // 用户以为断了，实际还在下。
+                try { DownloadManager.cancel(taskId) } catch (_: Exception) { }
                 return ToolResult.fail("下载超时")
             }
             val task = DownloadManager.tasks.value.firstOrNull { it.id == taskId }

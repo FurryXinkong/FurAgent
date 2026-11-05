@@ -159,7 +159,15 @@ object PythonTools {
         // AI 不得以任何方式直接删除文件，包括通过 python 绕过 delete_file。
         if (op == "run_code" || op == "run_file") {
             val src = if (op == "run_code") args.optString("code", "")
-            else runCatching { File(args.optString("path", "")).readText(Charsets.UTF_8) }.getOrDefault("")
+            else runCatching {
+                // 只读前 100KB 做静态检测：删除操作永远在文件开头（import 之后），
+                // 全量读大 .py（几十 MB 的日志脚本）纯浪费内存。
+                File(args.optString("path", "")).inputStream().use { ins ->
+                    val buf = ByteArray(100_000)
+                    val n = ins.read(buf)
+                    if (n > 0) String(buf, 0, n, Charsets.UTF_8) else ""
+                }
+            }.getOrDefault("")
             detectDestructivePython(src)?.let { return ToolResult.fail(it) }
         }
 

@@ -18,6 +18,15 @@ object NotificationHelper {
     private const val DOWNLOAD_ID_BASE = 2003
 
     /**
+     * 下载槽位 ID 的可用区间 [BASE, BASE + SLOT_COUNT)。
+     *
+     * 上限 1000 是为了不撞上 APK_INSTALL_ID(2999) 和系统通知 ID 段，
+     * 同时保证游标即使因为异常路径没复位也不会无限增长。
+     */
+    private const val DOWNLOAD_SLOT_COUNT = 1000
+    private const val DOWNLOAD_ID_MAX = DOWNLOAD_ID_BASE + DOWNLOAD_SLOT_COUNT - 1
+
+    /**
      * 更新包安装通知的独立 ID。
      *
      * 旧实现复用 DOWNLOAD_ID_BASE（2003），而 acquireDownloadSlot 也从 2003 起自增，
@@ -48,12 +57,17 @@ object NotificationHelper {
      */
     fun acquireDownloadSlot(key: String): Int = synchronized(downloadSlotLock) {
         downloadSlots[key]?.let { return@synchronized it }
-        // 找一个没被占用的 ID（从 nextDownloadId 开始往后扫）
+        // 找一个没被占用的 ID（从 nextDownloadId 开始往后扫，扫到上限回绕）
         val used = downloadSlots.values.toHashSet()
-        var id = nextDownloadId
-        while (id in used) id++
+        var id = nextDownloadId.coerceIn(DOWNLOAD_ID_BASE, DOWNLOAD_ID_MAX)
+        var scanned = 0
+        while (id in used && scanned < DOWNLOAD_SLOT_COUNT) {
+            id = if (id >= DOWNLOAD_ID_MAX) DOWNLOAD_ID_BASE else id + 1
+            scanned++
+        }
         downloadSlots[key] = id
-        nextDownloadId = id + 1
+        // 游标回绕到区间内，避免长期运行后无限增长
+        nextDownloadId = if (id >= DOWNLOAD_ID_MAX) DOWNLOAD_ID_BASE else id + 1
         id
     }
 

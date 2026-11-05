@@ -74,9 +74,12 @@ object AgentSession {
         if (call == null) return
         synchronized(lock) {
             calls.add(call)
-            while (calls.size > 16) {
+            // 只删 1 个超额即可（超过 16 个时调 1 次删除就是 16）。
+            // 旧实现在 while 里每次都重建 iterator，虽然 17 个时也只删 1 个，
+            // 但写法是错的，容易复制到别处。
+            if (calls.size > 16) {
                 val it = calls.iterator()
-                if (it.hasNext()) { it.next(); it.remove() } else break
+                if (it.hasNext()) { it.next(); it.remove() }
             }
         }
     }

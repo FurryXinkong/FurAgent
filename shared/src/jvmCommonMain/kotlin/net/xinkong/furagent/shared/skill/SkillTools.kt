@@ -53,6 +53,10 @@ object SkillTools {
                     "（格式同 params，额外支持 secret:true 打码、default 默认值），" +
                     "再用 op=config 写入实际值。运行时配置会以 args[\"_config\"] 和环境变量 " +
                     "FURAGENT_SKILL_CONFIG 注入脚本，脚本里读 args.get(\"_config\", {}) 即可。" +
+                    "\n【密钥安全】声明 secret:true 的配置项必须写清楚 description（如「GitHub Personal Access Token」），" +
+                    "否则 create 会被拒绝。密钥值由用户在自定义脚本页手动填写，" +
+                    "**你不要也不要尝试用 op=config 写入密钥值**，更不要用 read_file 去读 scripts/ 下的配置文件。" +
+                    "敏感值落盘时已加密，你读到也只会是混淆串。" +
                     "\n创建后建议用 pytool(op=run) 实测一次，再告知用户用法。",
             paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["list","info","run","create","delete","config"]},"name":{"type":"string"},"args":{"type":"object"},"description":{"type":"string"},"params":{"type":"object"},"config":{"type":"object"},"values":{"type":"object"},"enabled":{"type":"boolean"},"code":{"type":"string"},"timeout":{"type":"integer"}},"required":["op"]}"""
         )
@@ -141,6 +145,15 @@ object SkillTools {
             c.optJSONObject("values")?.let { v ->
                 v.keys().forEach { k -> values[k] = v.opt(k) }
             }
+            // 安全：敏感项（secret=true）只能由用户在 UI 里填，AI 不得覆盖。
+            val rejected = values.keys.filter { meta.configSpec[it]?.secret == true }
+            if (rejected.isNotEmpty()) {
+                return ToolResult.fail(
+                    "拒绝写入敏感配置项：${rejected.joinToString(", ")}\n\n" +
+                            "这些项声明了 secret=true，只能由用户在「自定义脚本 → 配置」里手动填写。" +
+                            "AI 不得读写密钥。"
+                )
+            }
             SkillConfig(
                 enabled = c.optBoolean("enabled", cur.enabled),
                 timeout = if (c.has("timeout") && !c.isNull("timeout")) {
@@ -150,8 +163,19 @@ object SkillTools {
             )
         } else {
             val values = cur.values.toMutableMap()
+            val rejected = mutableListOf<String>()
             args.optJSONObject("values")?.let { v ->
-                v.keys().forEach { k -> values[k] = v.opt(k) }
+                v.keys().forEach { k ->
+                    if (meta.configSpec[k]?.secret == true) rejected.add(k)
+                    else values[k] = v.opt(k)
+                }
+            }
+            if (rejected.isNotEmpty()) {
+                return ToolResult.fail(
+                    "拒绝写入敏感配置项：${rejected.joinToString(", ")}\n\n" +
+                            "这些项声明了 secret=true，只能由用户在「自定义脚本 → 配置」里手动填写。" +
+                            "AI 不得读写密钥。"
+                )
             }
             SkillConfig(
                 enabled = if (args.has("enabled")) args.optBoolean("enabled", cur.enabled) else cur.enabled,
@@ -178,7 +202,8 @@ object SkillTools {
         sb.append("超时：")
             .append(cfg.timeout?.let { "$it 秒（配置覆盖）" } ?: "${meta.timeout} 秒（脚本默认）")
             .append("\n")
-        sb.append("配置文件：").append(SkillStore.configFile(meta.name).absolutePath).append("\n")
+        // 不暴露配置文件路径：避免引导 AI 去 read_file 读 scripts/ 下的文件。
+        // 密钥已加密，但没必要给 AI 指路。
         if (meta.configSpec.isEmpty() && cfg.values.isEmpty()) {
             sb.append("配置项：无（脚本头部没有 CONFIG 声明）")
             return sb.toString()
@@ -211,8 +236,8 @@ object SkillTools {
         return sb.toString().trim()
     }
 
-    /** 敏感值打码：只留前 4 后 4。 */
-    private fun maskSecret(s: String): String {
+    /** 敏感值打码：只留前 4 后 4。UI 与工具描述共用。 */
+    fun maskSecret(s: String): String {
         if (s.length <= 8) return "****"
         return s.take(4) + "****" + s.takeLast(4)
     }

@@ -30,7 +30,7 @@ object ImagePathExtractor {
      * 避免把“已生成图片：D:\a.png（12KB）”里的括号也吃进去。
      */
     private val INLINE_ABS = Regex(
-        """(?:[A-Za-z]:[\\/]|/)[^\s（）()\[\]{}<>"'`,;|]+?""" +
+        """(?:[A-Za-z]:[\\/]|/)[^\s（）()\[\]{}<>"'`,;|、。]+?""" +
                 """\.(?:png|jpe?g|gif|webp|bmp)""",
         RegexOption.IGNORE_CASE
     )
@@ -40,7 +40,9 @@ object ImagePathExtractor {
         val out = linkedSetOf<String>()
 
         // Markdown ![alt](path)
-        val mdRegex = Regex("""!\[[^\]]*]\(([^)\s]+)\)""")
+        // 路径里可能含括号（如 https://x.com/(y)/a.png），所以不能简单用 [^)]+，
+        // 改用平衡括号匹配：允许一层嵌套括号。
+        val mdRegex = Regex("""!\[[^\]]*]\(((?:[^()\s]|\([^()\s]*\))+)\)""")
         mdRegex.findAll(content).forEach { m ->
             val p = m.groupValues[1].trim()
             if (p.isNotBlank() && IMAGE_EXT_REGEX.containsMatchIn(p)) {

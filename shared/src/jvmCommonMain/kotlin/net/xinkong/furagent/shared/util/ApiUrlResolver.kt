@@ -68,6 +68,14 @@ object ApiUrlResolver {
         return noScheme.substring(slash).substringBefore('?').trimEnd('/')
     }
 
+    /** 路径最后一段是不是版本号（v1 / v2 / v1beta / v4 等）。 */
+    private fun endsWithVersionSegment(url: String): Boolean {
+        val path = pathOf(url)
+        if (path.isBlank()) return false
+        val last = path.substringAfterLast('/')
+        return Regex("""^v\d+[a-z0-9]*$""", RegexOption.IGNORE_CASE).matches(last)
+    }
+
     /**
      * 把用户填的 base 补全成完整的对话请求地址。
      *
@@ -84,7 +92,10 @@ object ApiUrlResolver {
                 u.endsWith("/messages") -> u
                 // /anthropic → /anthropic/v1/messages
                 u.endsWith("/anthropic", ignoreCase = true) -> "$u/v1/messages"
-                // 裸域名或 /v1 → 补 /v1/messages
+                // 已带版本号（/v1、/v1beta、/anthropic/v1 等）→ 只补 /messages，
+                // 否则会出现 .../anthropic/v1/v1/messages 这种重复。
+                endsWithVersionSegment(u) -> "$u/messages"
+                // 裸域名 → 补 /v1/messages
                 else -> "$u/v1/messages"
             }
         } else {

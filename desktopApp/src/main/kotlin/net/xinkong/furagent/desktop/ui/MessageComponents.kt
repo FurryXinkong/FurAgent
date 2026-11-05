@@ -1097,6 +1097,7 @@ internal fun ModifiedFilesCard(files: List<SessionAnalytics.ModifiedFile>) {
                                 "edit" -> "编辑"
                                 "delete" -> "删除"
                                 "move" -> "移动"
+                                "download" -> "下载"
                                 else -> f.lastAction
                             }
                             Text(

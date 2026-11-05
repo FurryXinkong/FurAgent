@@ -1,6 +1,7 @@
 package net.xinkong.furagent.desktop.system
 
 import net.xinkong.furagent.desktop.data.DesktopPaths
+import net.xinkong.furagent.desktop.system.TempCleaner.PROTECTED_NAMES
 import java.io.File
 import java.util.*
 import java.util.concurrent.TimeUnit
@@ -11,40 +12,33 @@ import java.util.concurrent.TimeUnit
  * 背景：temp 目录（~/.furagent/temp）此前没有任何自动清理逻辑，
  * 程序生成的临时脚本 / concat 清单 / 中间产物会一直堆积。
  *
- * 策略：
- *  - temp/ 目录：只清理「程序生成的」文件，按已知前缀白名单匹配。
- *    用户自己放进 temp 的文件（如手动拷进去的视频）不会被删。
- *  - received/ 目录：只清理 `.part` 后缀的残留文件
+ * 旧策略（已废弃）：按「已知前缀白名单」匹配，只删 run_ / concat_ / tmp_ 等前缀的文件。
+ * 问题：AI 生成的文件名不会遵守前缀约定（AI 不会记得规定），
+ * 导致大量文件永远不被清理，temp 目录无限膨胀。
+ *
+ * 新策略：**黑名单保护 + 其余全删**。
+ *  - temp/ 目录：除了 [PROTECTED_NAMES] 里列出的运行时依赖文件，其余全部按时间清理。
+ *  - received/ 目录：只清 `.part` 后缀的残留文件
  *    （上传/下载中途中断会残留，HttpFileServer 用 .part 做临时文件后缀）。
  *  - 按「最后修改时间」判断，超过 N 天的才删。
  *  - N = 0 表示永久不清理。
  *  - 启动时执行一次；也可由设置页手动触发。
+ *
+ * 为什么用黑名单而不是白名单：
+ * 白名单要求「所有写入方都遵守命名约定」，而写入方包括 AI（不可控）；
+ * 黑名单只要求「保护少数几个固定文件」，这些文件由程序自己写入，可控。
+ * 默认安全（默认删）比默认保留更符合 temp 目录的语义。
  */
 object TempCleaner {
 
     /**
-     * 程序生成的临时文件前缀白名单。
-     *
-     * 新增临时文件时，命名必须以此处任一前缀开头，否则不会被自动清理。
-     */
-    private val GENERATED_PREFIXES = listOf(
-        "run_",          // PythonTools.run_code 的临时脚本
-        "concat_",       // FfmpegTools concat 清单
-        "ffmpeg_",       // FfmpegTools 中间产物
-        "ffprobe_",      // FfmpegTools 探测输出
-        "tmp_",          // 通用临时文件
-        "furagent_"      // 通用前缀
-    )
-
-    /**
-     * 固定名脚本黑名单：这些文件虽然以 `furagent_` 开头，
-     * 但是程序**运行时依赖**的固定脚本（每次用前会覆盖写入，但删除后
-     * 若正好在用会出问题）。它们**永不自动清理**。
+     * 受保护文件名：这些文件是程序**运行时依赖**的固定脚本，
+     * 每次用前会覆盖写入，但删除后若正好在用会出问题。它们**永不自动清理**。
      *
      * 对应：UiaScreenController / SmtcController / SystemIntegrationTools /
      *       DesktopSpeechHelper / ScheduleStore 里的固定脚本。
      */
-    private val NEVER_DELETE_NAMES = setOf(
+    private val PROTECTED_NAMES = setOf(
         "furagent_uia.ps1",
         "furagent_smtc.ps1",
         "furagent_sys.ps1",
@@ -53,6 +47,19 @@ object TempCleaner {
         "furagent_tts_probe.ps1",
         // Chaquopy / 桌面端共用的固定解析脚本，程序运行时依赖，删了会直接报错
         "_skill_parser.py"
+    )
+
+    /**
+     * 受保护文件名前缀：以这些前缀开头的文件永不清理。
+     * 用于程序自己写入、名字带动态后缀的固定文件（如 furagent_uia_<pid>.ps1）。
+     */
+    private val PROTECTED_PREFIXES = listOf(
+        "furagent_uia",
+        "furagent_smtc",
+        "furagent_sys",
+        "furagent_speak",
+        "furagent_cond",
+        "furagent_tts_probe"
     )
 
     data class Result(
@@ -64,7 +71,7 @@ object TempCleaner {
         fun summary(): String {
             val size = formatSize(freedBytes)
             val sb = StringBuilder("已清理 $deleted 个临时文件，释放 $size")
-            if (skipped > 0) sb.append("；跳过 $skipped 个（非程序生成或未到期）")
+            if (skipped > 0) sb.append("；跳过 $skipped 个（受保护或未到期）")
             if (errors > 0) sb.append("；$errors 个删除失败")
             return sb.toString()
         }
@@ -80,11 +87,11 @@ object TempCleaner {
 
         val cutoff = System.currentTimeMillis() - TimeUnit.DAYS.toMillis(days.toLong())
 
-        // temp/：只清程序生成的前缀白名单
+        // temp/：除受保护文件外全部清理
         val r1 = cleanupDir(
             dir = DesktopPaths.tempDir(),
             cutoff = cutoff,
-            shouldDelete = { name -> isGenerated(name) }
+            shouldDelete = { name -> !isProtected(name) }
         )
 
         // received/：只清 .part 残留（HttpFileServer 上传/下载中途中断留下的）
@@ -119,14 +126,14 @@ object TempCleaner {
         }
     }
 
-    /** 统计 temp 目录中「程序生成的」文件占用（用于设置页展示）。 */
+    /** 统计 temp 目录中「会被清理的」文件占用（用于设置页展示）。 */
     fun generatedUsage(): Pair<Int, Long> {
         val dir = DesktopPaths.tempDir()
         if (!dir.exists()) return 0 to 0L
         var count = 0
         var bytes = 0L
         dir.listFiles()?.forEach { f ->
-            if (f.isFile && isGenerated(f.name)) {
+            if (f.isFile && !isProtected(f.name)) {
                 count++
                 bytes += f.length()
             }
@@ -151,6 +158,17 @@ object TempCleaner {
         val files = dir.listFiles() ?: return Result(0, 0L, 0, 0)
         for (f in files) {
             try {
+                // 子目录：递归清理（AI 可能建子目录放中间产物）
+                if (f.isDirectory) {
+                    val sub = cleanupDir(f, cutoff, shouldDelete)
+                    deleted += sub.deleted
+                    freed += sub.freedBytes
+                    skipped += sub.skipped
+                    errors += sub.errors
+                    // 子目录空了就一并删掉
+                    if (f.listFiles()?.isEmpty() == true) f.delete()
+                    continue
+                }
                 if (!f.isFile) continue
                 if (!shouldDelete(f.name)) { skipped++; continue }
                 if (f.lastModified() >= cutoff) { skipped++; continue }
@@ -169,9 +187,9 @@ object TempCleaner {
         return Result(deleted, freed, skipped, errors)
     }
 
-    private fun isGenerated(name: String): Boolean {
-        if (name in NEVER_DELETE_NAMES) return false
-        return GENERATED_PREFIXES.any { name.startsWith(it) }
+    private fun isProtected(name: String): Boolean {
+        if (name in PROTECTED_NAMES) return true
+        return PROTECTED_PREFIXES.any { name.startsWith(it) }
     }
 
     fun formatSize(bytes: Long): String = when {

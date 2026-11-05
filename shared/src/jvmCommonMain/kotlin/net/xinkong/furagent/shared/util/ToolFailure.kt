@@ -39,8 +39,10 @@ fun isToolFailure(result: String): Boolean {
  */
 fun extractFailureReason(result: String): String {
     if (result == "已取消") return "已取消"
-    // 取第一行，截断到 50 字符
-    val firstLine = result.lineSequence().firstOrNull()?.trim() ?: return ""
+    // 取第一行非空内容，截断到 50 字符。
+    // 用 firstOrNull { it.isNotBlank() } 与 isToolFailure 口径一致——
+    // 后者只看非空首行，前者若取到空白行会导致判定为"失败"但提取不出原因。
+    val firstLine = result.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: return ""
     if (firstLine.length <= 50) return firstLine
     return firstLine.substring(0, 47) + "…"
 }

@@ -99,6 +99,12 @@ class FloatingService : Service() {
     /** 上一次 isRunning 状态，用于检测"刚刚结束" */
     private var lastRunning: Boolean = false
 
+    // 气泡预览缓存：snapshot 高频 emit，takeLast(300) 每次都新建字符串纯浪费。
+    // 只有源文本（长度 + 尾部内容）真的变了才重新截取。
+    private var previewSrcLen: Int = -1
+    private var previewSrcTail: String = ""
+    private var previewCached: String = ""
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -462,8 +468,8 @@ class FloatingService : Service() {
         // 预览：优先流式输出，其次思考内容。
         // 保留换行（不压成一行）：少量多行比一长串更好读
         val preview = when {
-            snap.streaming.isNotBlank() -> snap.streaming.takeLast(300).trim()
-            snap.reasoning.isNotBlank() -> snap.reasoning.takeLast(300).trim()
+            snap.streaming.isNotBlank() -> cachedTail(snap.streaming)
+            snap.reasoning.isNotBlank() -> cachedTail(snap.reasoning)
             else -> ""
         }
         val pv = bubblePreviewText
@@ -475,6 +481,22 @@ class FloatingService : Service() {
                 if (pv.text?.toString() != preview) pv.text = preview
             }
         }
+    }
+
+    /**
+     * 取文本末尾 300 字（trim 后）。
+     *
+     * 流式输出时 snapshot 每来一个 token 就 emit 一次，直接 takeLast(300) 会
+     * 每次都分配一个新字符串。这里用「长度 + 尾部 64 字」做指纹，指纹没变就复用上次结果。
+     */
+    private fun cachedTail(src: String): String {
+        val tail = if (src.length <= 64) src else src.substring(src.length - 64)
+        if (src.length == previewSrcLen && tail == previewSrcTail) return previewCached
+        val v = if (src.length <= 300) src.trim() else src.substring(src.length - 300).trim()
+        previewSrcLen = src.length
+        previewSrcTail = tail
+        previewCached = v
+        return v
     }
 
     // 操作

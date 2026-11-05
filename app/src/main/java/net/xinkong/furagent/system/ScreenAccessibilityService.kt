@@ -590,8 +590,8 @@ class ScreenAccessibilityService : AccessibilityService() {
             UiAction.SCROLL_RIGHT -> AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_RIGHT.id
             UiAction.SET_TEXT -> AccessibilityNodeInfo.ACTION_SET_TEXT
             UiAction.CLEAR_TEXT -> AccessibilityNodeInfo.ACTION_SET_TEXT
-            // CHECK / UNCHECK 已在上面 return，不会走到这里
-            UiAction.CHECK, UiAction.UNCHECK -> AccessibilityNodeInfo.ACTION_CLICK
+            // CHECK / UNCHECK 已在上面（554 行）无条件 return，不会走到这里，
+            // 因此 when 不再为它们提供分支；sealed 穷尽性由上面的提前返回保证。
         }
 
         val args = if (action == UiAction.SET_TEXT || action == UiAction.CLEAR_TEXT) {

@@ -90,6 +90,24 @@ fun ChatInputCard(
     DisposableEffect(Unit) {
         val dispatcher = object : java.awt.KeyEventDispatcher {
             override fun dispatchKeyEvent(e: KeyEvent): Boolean {
+                // 耗时探针：这个 dispatcher 挂在 AWT 全局，每次按键都在 EDT 上跑。
+                // 用户反馈「打字时整个 JVM 卡死」，如果单次 dispatch 耗时异常，
+                // 说明卡在按键路径上（剪贴板/IME/EDT 阻塞），记日志便于定位。
+                val t0 = System.nanoTime()
+                try {
+                    return dispatchKeyEventInner(e)
+                } finally {
+                    val costMs = (System.nanoTime() - t0) / 1_000_000
+                    if (costMs >= 200) {
+                        net.xinkong.furagent.desktop.system.DesktopLogger.warn(
+                            "INPUT",
+                            "按键处理耗时 ${costMs}ms（key=${e.keyCode} id=${e.id}）"
+                        )
+                    }
+                }
+            }
+
+            private fun dispatchKeyEventInner(e: KeyEvent): Boolean {
                 if (!ChatFocusTracker.chatPageVisible) return false
                 if (e.id == KeyEvent.KEY_PRESSED &&
                     e.keyCode == KeyEvent.VK_V &&

@@ -141,13 +141,35 @@ object TaskScheduler {
             // 派发执行
             runningIds.add(task.id)
             scope.launch {
+                // 超时 kill 不能用 withTimeout：
+                //   withTimeout 只 cancel 协程，而 DesktopTools.executeCommand 内部
+                //   的 Process.waitFor(30s) 是 Java 阻塞调用，不响应协程 cancel，
+                //   要等它自然结束才抛 CancellationException —— 那时工具早跑完了，kill 晚了。
+                // 正解：独立 timer 协程，到点先 TaskRuntime.cancelBySession 触发
+                //   destroyForcibly + taskkill（阻塞读立即返回），再 cancel 主协程。
+                val taskJob = currentCoroutineContext()[Job]
+                val timeoutJob = launch {
+                    try {
+                        delay(TASK_TIMEOUT_MS.milliseconds)
+                        log("任务执行超时（${TASK_TIMEOUT_MS / 1000}s）：${task.id}")
+                        TaskRuntime.cancelBySession("schedule_${task.id}")
+                        taskJob?.cancel()
+                    } catch (_: CancellationException) {
+                    } catch (e: Exception) {
+                        log("超时 kill 异常：${e.javaClass.simpleName}: ${e.message}")
+                    }
+                }
                 try {
-                    withTimeoutOrNull(TASK_TIMEOUT_MS.milliseconds) {
-                        executeTask(task)
-                    } ?: log("任务执行超时（${TASK_TIMEOUT_MS / 1000}s）：${task.id}")
+                    executeTask(task)
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     log("任务执行异常：${e.javaClass.simpleName}: ${e.message}")
                 } finally {
+                    timeoutJob.cancel()
+                    // 兜底清理：正常结束路径下 withTask 的 finally 已移除 task；
+                    // cancel 路径下 timer 已 kill 过。这里再调一次防御残留子进程。
+                    try { TaskRuntime.cancelBySession("schedule_${task.id}") } catch (_: Exception) { }
                     runningIds.remove(task.id)
                     totalExecutions++
                 }
@@ -173,9 +195,9 @@ object TaskScheduler {
                 ScheduleStore.batchUpdate(pendingUpdates, pendingDeletes)
             }
             // 不用解构赋值（字段顺序一变就静默错位），改用属性访问。
-            for (t in pendingUpdates) {
-                val label = t.description.ifBlank { t.id.take(8) }
-                log("「$label」下次：${DateFormats.formatDateTime(t.triggerTime)}")
+            for ((id, triggerTime, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, description) in pendingUpdates) {
+                val label = description.ifBlank { id.take(8) }
+                log("「$label」下次：${DateFormats.formatDateTime(triggerTime)}")
             }
             for (id in pendingDeletes) {
                 log("「${id.take(8)}」已完成，移除")
@@ -208,8 +230,9 @@ object TaskScheduler {
                     log("toolArgs 解析失败：${e.message}")
                     return
                 }
-                // 定时任务不属于任何会话，显式传空，防止用户点"停止"时误杀
-                val result = DesktopTools.execute(task.toolName, args.toString(), sessionId = "")
+                // sessionId 用 schedule_ 前缀：超时 timer 到点后调 cancelBySession
+                // 精确 kill 本任务启动的进程，不会误杀用户手动的会话工具。
+                val result = DesktopTools.execute(task.toolName, args.toString(), sessionId = "schedule_${task.id}")
                 log("工具 ${task.toolName} 结果：${result.output.take(200)}")
                 if (!result.success) {
                     DesktopNotifier.notify(
@@ -230,8 +253,8 @@ object TaskScheduler {
                     put("op", "run")
                     put("name", task.workflowName)
                 }
-                // 定时任务不属于任何会话，显式传空
-                val result = DesktopTools.execute("workflow", args.toString(), sessionId = "")
+                // sessionId 用 schedule_ 前缀，超时可精确取消本任务启动的工具
+                val result = DesktopTools.execute("workflow", args.toString(), sessionId = "schedule_${task.id}")
                 log("工作流 ${task.workflowName} 结果：${result.output.take(200)}")
                 if (!result.success) {
                     DesktopNotifier.notify(
@@ -252,8 +275,8 @@ object TaskScheduler {
                     put("op", "open")
                     put("path", task.appPath)
                 }
-                // 定时任务不属于任何会话，显式传空
-                val result = DesktopTools.execute("apps", args.toString(), sessionId = "")
+                // sessionId 用 schedule_ 前缀，超时可精确取消本任务启动的工具
+                val result = DesktopTools.execute("apps", args.toString(), sessionId = "schedule_${task.id}")
                 log("打开应用结果：${result.output.take(200)}")
                 if (!result.success) {
                     DesktopNotifier.notify(
@@ -272,8 +295,8 @@ object TaskScheduler {
                     put("command", task.command)
                     put("timeout", 60)
                 }
-                // 定时任务不属于任何会话，显式传空
-                val result = DesktopTools.execute("execute_command", args.toString(), sessionId = "")
+                // sessionId 用 schedule_ 前缀，超时可精确取消本任务启动的工具
+                val result = DesktopTools.execute("execute_command", args.toString(), sessionId = "schedule_${task.id}")
                 log("命令结果：${result.output.take(200)}")
             }
 
@@ -314,9 +337,14 @@ object TaskScheduler {
         // 走完整的 Agent 循环（工具 + 记忆 + 多轮），而不是单次非流式请求。
         // 旧实现只发一次 chat/completions，AI 无法调工具、看不到记忆，
         // 定时任务能做的事被锁死在「纯文本问答」。
-        val history = listOf(
-            ChatMessage(role = "user", content = prompt)
-        )
+        // 与 Android 端对齐 绑定了 sessionId 时把该会话历史作为上下文，
+        // 之前只把结果写回会话、不带上下文，用户期望的「AI 记得之前聊过什么」落空。
+        val baseHistory = if (task.sessionId.isNotBlank()) {
+            withContext(Dispatchers.IO) {
+                DesktopSessionStore.load(task.sessionId)?.messages.orEmpty()
+            }
+        } else emptyList()
+        val history = baseHistory + ChatMessage(role = "user", content = prompt)
         val result = try {
             DesktopAgent.runTurn(
                 settings = settings,
@@ -327,8 +355,8 @@ object TaskScheduler {
                 onReasoning = { },
                 onStream = { },
                 onStreamCommit = { },
-                // 定时任务不归属任何会话，避免工具调用写进用户正在看的会话
-                sessionId = "",
+                // sessionId 用 schedule_ 前缀：不写进用户会话，但超时 timer 能精确 cancel
+                sessionId = "schedule_${task.id}",
                 // 定时任务必须限轮：无人盯着，跑飞了就是纯烧钱
                 maxLoopsOverride = MAX_SCHEDULED_LOOPS
             )

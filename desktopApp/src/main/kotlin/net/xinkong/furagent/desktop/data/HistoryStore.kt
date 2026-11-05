@@ -25,7 +25,7 @@ object HistoryStore {
     private var conn: Connection? = null
     private val lock = Any()
 
-    private fun dbFile() = File(File(System.getProperty("user.home"), ".furagent"), "history.db")
+    private fun dbFile() = File(DesktopPaths.rootDir(), "history.db")
 
     private fun connection(): Connection {
         conn?.takeIf { !it.isClosed }?.let { return it }

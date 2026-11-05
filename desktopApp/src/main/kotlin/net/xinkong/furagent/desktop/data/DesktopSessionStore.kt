@@ -239,17 +239,28 @@ object DesktopSessionStore {
                 runCatching { loadIndexIntoMemory()[session.id]?.optString("parentId", "") }
                     .getOrNull()?.takeIf { it.isNotBlank() }
             }
-            // systemPrompt=null 表示未携带（persist 重造对象不带它）：保留磁盘原值，避免被抹掉
-            val systemPrompt = session.systemPrompt ?: runCatching {
+            // systemPrompt / titleLocked 三态兜底：null=未携带（persist 重造对象不带），需读磁盘原值。
+            // 关键修复 旧实现读失败时 getOrDefault 会覆盖成空/false。磁盘临时不可读
+            // （杀软锁文件、瞬时 IO 错误）会静默清空用户的会话提示词和标题锁。
+            // 现在一次读盘同时拿两个字段；读失败且文件存在时**跳过整个保存**。
+            var diskFallback: Pair<String, Boolean>? = null
+            if (session.systemPrompt == null || session.titleLocked == null) {
                 val f = sessionFile(session.id)
-                if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optString("systemPrompt", "") else ""
-            }.getOrDefault("")
-            // titleLocked 三态兜底：null 保留磁盘原值（同 systemPrompt 语义）
-            val titleLocked = session.titleLocked ?: runCatching {
-                val f = sessionFile(session.id)
-                if (f.exists()) JSONObject(f.readText(Charsets.UTF_8)).optBoolean("titleLocked", false)
-                else false
-            }.getOrDefault(false)
+                if (f.exists()) {
+                    diskFallback = try {
+                        val o = JSONObject(f.readText(Charsets.UTF_8))
+                        o.optString("systemPrompt", "") to o.optBoolean("titleLocked", false)
+                    } catch (e: Exception) {
+                        DesktopLogger.error(
+                            "Session",
+                            "读取会话 ${session.id} 元数据失败，跳过保存以避免覆盖：${e.javaClass.simpleName}: ${e.message}"
+                        )
+                        return
+                    }
+                }
+            }
+            val systemPrompt = session.systemPrompt ?: diskFallback?.first ?: ""
+            val titleLocked = session.titleLocked ?: diskFallback?.second ?: false
             val o = JSONObject().apply {
                 put("id", session.id)
                 put("title", session.title)

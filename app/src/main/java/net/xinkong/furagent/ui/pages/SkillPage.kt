@@ -14,16 +14,15 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import net.xinkong.furagent.shared.icons.Icons
-import net.xinkong.furagent.shared.skill.BrokenSkill
-import net.xinkong.furagent.shared.skill.SkillConfig
-import net.xinkong.furagent.shared.skill.SkillMeta
-import net.xinkong.furagent.shared.skill.SkillStore
+import net.xinkong.furagent.shared.skill.*
 import net.xinkong.furagent.system.notifyToast
 import net.xinkong.furagent.ui.*
 import net.xinkong.furagent.ui.theme.AppRadius
@@ -426,11 +425,44 @@ private fun SkillConfigDialog(
                             append(" · ").append(spec.description)
                         }
                     }
-                    PocoTextField(
-                        value = values[k] ?: "",
-                        onValueChange = { values = values + (k to it) },
-                        label = labelText
-                    )
+                    if (spec.secret) {
+                        // 敏感项：默认显示打码值（能看出已配置），点小眼睛才显示完整明文
+                        var revealed by remember(meta.name, k) { mutableStateOf(false) }
+                        val actual = config.valueOf(k, meta.configSpec)?.toString().orEmpty()
+                        val shown = when {
+                            revealed -> values[k] ?: ""
+                            actual.isNotEmpty() -> SkillTools.maskSecret(actual)
+                            else -> ""
+                        }
+                        PocoTextField(
+                            value = shown,
+                            onValueChange = { values = values + (k to it) },
+                            label = labelText,
+                            visualTransformation = if (revealed) VisualTransformation.None
+                                else PasswordVisualTransformation(),
+                            trailingContent = {
+                                IconButton(
+                                    onClick = {
+                                        if (!revealed && (values[k] ?: "").isEmpty()) {
+                                            values = values + (k to actual)
+                                        }
+                                        revealed = !revealed
+                                    }
+                                ) {
+                                    Icon(
+                                        if (revealed) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                        contentDescription = if (revealed) "隐藏" else "显示"
+                                    )
+                                }
+                            }
+                        )
+                    } else {
+                        PocoTextField(
+                            value = values[k] ?: "",
+                            onValueChange = { values = values + (k to it) },
+                            label = labelText
+                        )
+                    }
                     Spacer(Modifier.height(8.dp))
                 }
                 PocoTextField(
@@ -445,6 +477,11 @@ private fun SkillConfigDialog(
             val newValues = mutableMapOf<String, Any?>()
             meta.configSpec.forEach { (k, spec) ->
                 val raw = values[k]?.trim().orEmpty()
+                // 敏感项留空 = 保留原值（与桌面端一致）
+                if (spec.secret && raw.isEmpty()) {
+                    config.values[k]?.let { newValues[k] = it }
+                    return@forEach
+                }
                 if (raw.isNotEmpty()) {
                     newValues[k] = when (spec.type) {
                         "integer" -> raw.toLongOrNull() ?: raw

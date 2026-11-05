@@ -414,6 +414,7 @@ fun AndroidModifiedFilesCard(
                                 "edit" -> "编辑"
                                 "delete" -> "删除"
                                 "move" -> "移动"
+                                "download" -> "下载"
                                 "other" -> "操作"
                                 else -> f.lastAction
                             }

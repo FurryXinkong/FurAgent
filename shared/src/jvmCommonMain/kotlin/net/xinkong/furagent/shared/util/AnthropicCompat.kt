@@ -143,22 +143,64 @@ object AnthropicCompat {
         // 收尾：还有没落盘的 tool_result
         flushPending()
 
-        return out to systemParts.joinToString("\n\n")
+        // 清洗 pass：合并连续 user 消息。
+        // Anthropic 严格要求 user/assistant 交替，连续 user 会 400。
+        // 常见触发：tool_result 转出的 user 块之后紧跟一条 user（用户连发 / system_note 转 user）；
+        // 用户连发两条消息（极少，但历史数据可能损坏成这样）。
+        val cleaned = JSONArray()
+        for (i in 0 until out.length()) {
+            val cur = out.optJSONObject(i) ?: continue
+            val last = if (cleaned.length() > 0) cleaned.optJSONObject(cleaned.length() - 1) else null
+            if (last != null && last.optString("role") == "user" && cur.optString("role") == "user") {
+                mergeUserContent(last, cur.opt("content"))
+            } else {
+                cleaned.put(cur)
+            }
+        }
+
+        return cleaned to systemParts.joinToString("\n\n")
+    }
+
+    /**
+     * 把新内容合并进已有的 Anthropic user 消息。
+     *
+     * content 可能是 String（纯文本）或 JSONArray（图文混合 / tool_result 块）。
+     * 两边都是 String 时直接拼，否则统一转 array（Anthropic 的 user content 支持 array）。
+     */
+    private fun mergeUserContent(prev: JSONObject, addContent: Any?) {
+        if (addContent == null) return
+        val prevContent = prev.opt("content")
+        if (prevContent is String && addContent is String) {
+            prev.put("content", prevContent + "\n\n" + addContent)
+            return
+        }
+        val merged = JSONArray()
+        when (prevContent) {
+            is String -> if (prevContent.isNotBlank()) merged.put(JSONObject().apply {
+                put("type", "text")
+                put("text", prevContent)
+            })
+            is JSONArray -> for (j in 0 until prevContent.length()) merged.put(prevContent.opt(j))
+        }
+        when (addContent) {
+            is String -> if (addContent.isNotBlank()) merged.put(JSONObject().apply {
+                put("type", "text")
+                put("text", addContent)
+            })
+            is JSONArray -> for (j in 0 until addContent.length()) merged.put(addContent.opt(j))
+        }
+        prev.put("content", merged)
     }
 
     /**
      * 判断工具结果文本是否表示失败。
      *
-     * 与 AgentShared 的 isToolFailure 保持同一口径：
-     * 以「失败」开头，或包含常见错误前缀。
+     * 直接委托给同模块的 [isToolFailure]，保证与 Agent 主循环、UI 的判定口径完全一致
+     * （bad base-64 / 执行异常 / 首行「异常：」「权限不足」「操作取消」等）。
+     * 之前这里只查「失败」「执行异常」「错误」三个前缀，比主口径窄，
+     * 会出现「主循环判定失败、发给 Anthropic 却没带 is_error」的不一致。
      */
-    private fun isToolFailureText(text: String): Boolean {
-        val t = text.trimStart()
-        if (t.startsWith("失败")) return true
-        if (t.startsWith("执行异常")) return true
-        if (t.startsWith("错误")) return true
-        return false
-    }
+    private fun isToolFailureText(text: String): Boolean = isToolFailure(text)
     /** 转换 user 消息的 content（支持纯文本和图文混合）。 */
     private fun convertUserContent(m: JSONObject): Any {
         val content = m.opt("content")

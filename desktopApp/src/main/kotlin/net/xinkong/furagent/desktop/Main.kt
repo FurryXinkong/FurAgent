@@ -101,6 +101,10 @@ fun main() {
     // 最先装全局崩溃处理器，拦住 JVM 原生错误弹窗
     installGlobalCrashHandler()
 
+    // UI 卡死看门狗：独立守护线程，UI 超过 5 秒无心跳就把全线程栈 dump 到
+    // ~/.furagent/logs/stuck-*.log。卡死时日志写不进去，只能靠这个抓现场。
+    net.xinkong.furagent.desktop.system.UiWatchdog.start()
+
     val renderApi = System.getenv("FURAGENT_RENDER")?.takeIf { it.isNotBlank() } ?: "OPENGL"
     System.setProperty("skiko.renderApi", renderApi)
 
@@ -146,6 +150,28 @@ fun main() {
                     SessionSummarizer.runOnStartup(s)
                 } catch (e: Exception) {
                     DesktopLogger.warn("SYS", "会话摘要启动失败：${e.message}")
+                }
+            }
+
+            // 重启恢复：上次退出时还在跑的子会话 = 被中断的，报告给用户。
+            // 之前子代理跑在内存协程里，软件一重启全部丢失，
+            // 用户连「刚才在跑什么」都不知道，只能重新派一遍。
+            launch {
+                try {
+                    val interrupted = SubSessionRegistry.takeInterrupted()
+                    if (interrupted.isNotEmpty()) {
+                        DesktopLogger.warn(
+                            "SYS",
+                            "检测到 ${interrupted.size} 个被中断的子会话：" +
+                                    interrupted.joinToString("、") { it.title }
+                        )
+                        ToastBus.info(
+                            "上次有 ${interrupted.size} 个子代理被中断（软件重启），" +
+                                    "可在「子代理」列表查看已完成的进度"
+                        )
+                    }
+                } catch (e: Exception) {
+                    DesktopLogger.warn("SYS", "子会话恢复检测失败：${e.message}")
                 }
             }
 
@@ -404,6 +430,15 @@ fun main() {
 
 @Composable
 fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) {
+    // UI 心跳：每帧给看门狗报一次。UI 线程被阻塞时帧循环停摆，心跳就断，
+    // 看门狗 5 秒后自动 dump 全线程栈。开销只有一次 volatile 写。
+    LaunchedEffect(Unit) {
+        while (true) {
+            net.xinkong.furagent.desktop.system.UiWatchdog.beat()
+            withFrameNanos { }
+        }
+    }
+
     var messages by remember { mutableStateOf<List<DesktopMessage>>(emptyList()) }
     var currentSessionId by remember { mutableStateOf<String?>(null) }
     var sessionCreatedAt by remember { mutableStateOf(0L) }
@@ -467,16 +502,34 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
     LaunchedEffect(currentSessionId) {
         val prev = draftOwner
         if (prev == currentSessionId) return@LaunchedEffect
-        prev?.let { writeDraft(it, inputText) }
+        // 切会话时把上一个会话的草稿落盘，同样不能在 UI 线程做同步 IO
+        if (prev != null) {
+            val text = inputText
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                writeDraft(prev, text)
+            }
+        }
         draftOwner = currentSessionId
-        inputText = currentSessionId?.let { readDraft(it) } ?: ""
+        // readDraft 也是同步文件 IO，同样切到 IO 线程
+        inputText = currentSessionId?.let { sid ->
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { readDraft(sid) }
+        } ?: ""
     }
     LaunchedEffect(inputText, currentSessionId) {
         delay(400.milliseconds)
         // 只写回「自己的」会话：切换瞬间 inputText 可能还是旧的，
         // 不加这个判断会把 A 的草稿写进 B
         if (draftOwner == currentSessionId) {
-            currentSessionId?.let { writeDraft(it, inputText) }
+            // 必须切到 IO 线程：writeDraft 是同步文件 IO（写临时文件 + rename），
+            // 跑在 Compose 的 main 调度器上会直接阻塞 UI 线程。
+            // 打字时每 400ms 触发一次，磁盘慢或杀软扫描时就会卡顿甚至卡死。
+            val sid = currentSessionId
+            val text = inputText
+            if (sid != null) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    writeDraft(sid, text)
+                }
+            }
         }
     }
 

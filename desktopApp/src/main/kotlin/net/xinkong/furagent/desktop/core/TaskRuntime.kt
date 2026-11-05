@@ -56,6 +56,15 @@ object TaskRuntime {
     private val map = ConcurrentHashMap<String, RunningTask>()
     private val cancelCallbacks = ConcurrentHashMap<String, () -> Unit>()
 
+    /**
+     * 输出累积缓冲。
+     *
+     * 不用 `old.output + line` 直接拼：那样每次 append 都要复制整个字符串，
+     * 接近 80KB 上限时整体退化成 O(n²)。用 StringBuilder 追加是摊还 O(1)，
+     * 只在超过上限时一次性裁掉前半段。
+     */
+    private val outputBuilders = ConcurrentHashMap<String, StringBuilder>()
+
     suspend fun currentId(): String? =
         currentCoroutineContext()[TaskIdElement]?.id
 
@@ -164,9 +173,14 @@ object TaskRuntime {
     fun appendOutput(id: String, line: String) {
         val old = map[id] ?: return
         if (!old.running) return
-        val merged = (old.output + line + "\n").takeLast(MAX_OUTPUT_LEN)
+        val sb = outputBuilders.getOrPut(id) { StringBuilder(old.output) }
+        sb.append(line).append('\n')
+        // 超过上限时裁掉前半段，保留后半段（摊还成本：每写 80KB 才裁一次）
+        if (sb.length > MAX_OUTPUT_LEN) {
+            sb.delete(0, sb.length - MAX_OUTPUT_LEN)
+        }
         map[id] = old.copy(
-            output = merged,
+            output = sb.toString(),
             detail = line.take(300)
         )
         refresh()
@@ -194,12 +208,14 @@ object TaskRuntime {
     fun remove(id: String) {
         map.remove(id)
         cancelCallbacks.remove(id)
+        outputBuilders.remove(id)
         refresh()
     }
 
     fun clear() {
         map.clear()
         cancelCallbacks.clear()
+        outputBuilders.clear()
         refresh()
     }
 
@@ -212,7 +228,10 @@ object TaskRuntime {
         val stale = map.values.filter {
             !it.running && now - it.finishedAt > KEEP_FINISHED_MS
         }.map { it.id }
-        stale.forEach { map.remove(it) }
+        stale.forEach {
+            map.remove(it)
+            outputBuilders.remove(it)
+        }
         _tasks.value = map.values.sortedBy { it.startedAt }
     }
 }

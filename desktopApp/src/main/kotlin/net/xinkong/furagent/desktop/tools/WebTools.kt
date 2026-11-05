@@ -40,7 +40,7 @@ object WebTools {
             }
             "fetch" -> {
                 val url = args.optString("url", "").trim()
-                val maxLength = args.optInt("max_length", 2000).coerceIn(500, 20000)
+                val maxLength = args.optInt("max_length", 8000).coerceIn(500, 20000)
                 wrapResult(WebSearchEngine.fetchContent(url, maxLength))
             }
             else -> ToolResult.fail("op 只能是 search / fetch")

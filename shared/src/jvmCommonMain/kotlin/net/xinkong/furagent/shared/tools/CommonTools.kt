@@ -1233,16 +1233,15 @@ object CommonTools {
         val sb = StringBuilder()
         sb.append("目录：$path\n共 ${files.size} 项\n\n")
 
-        var sorted = files.sortedWith(compareBy<FileEntry> { it.isDirectory }.reversed())
         val comparator: Comparator<FileEntry> = when (sortBy) {
             "time" -> compareBy { java.io.File(it.absolutePath).lastModified() }
             "size" -> compareBy { it.size }
             else -> compareBy { it.name.lowercase(Locale.ROOT) }
         }
-        sorted = if (descending) {
-            sorted.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.then(comparator.reversed()))
+        val sorted = if (descending) {
+            files.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.then(comparator.reversed()))
         } else {
-            sorted.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.then(comparator))
+            files.sortedWith(compareByDescending<FileEntry> { it.isDirectory }.then(comparator))
         }
 
         for (entry in sorted) {
@@ -1720,11 +1719,16 @@ object CommonTools {
                 val content = args.optString("content", "")
                 val append = args.optBoolean("append", false)
                 if (append) {
-                    val existing = host.readTextFile(path) ?: ""
-                    if (host.writeTextFile(path, existing + content)) {
+                    // 性能 原实现 readTextFile + writeTextFile 会把整个文件读进内存，
+                    // 追加 1 行也要全量 IO。改用 File.appendText 流式追加，
+                    // 与批量写入路径保持一致。
+                    try {
+                        val f = java.io.File(path)
+                        f.parentFile?.mkdirs()
+                        f.appendText(content, Charsets.UTF_8)
                         ToolResult.ok("已追加 ${content.length} 字符到 $path")
-                    } else {
-                        ToolResult.fail("写入失败")
+                    } catch (e: Exception) {
+                        ToolResult.fail("追加失败：${e.javaClass.simpleName}: ${e.message}")
                     }
                 } else {
                     val existed = host.exists(path)

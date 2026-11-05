@@ -221,9 +221,11 @@ object SessionSummarizer {
         }
 
         val signals = extractSignals(session)
-        // 守门员：看总信号量（工具 + 路径 + 高频词），不是只看中文词。
+        // 守门员：看总信号量（工具 + 路径 + 命令 + 高频词），不是只看中文词。
         // 纯代码调试会话可能没有中文正文，但工具/路径很丰富，恰恰最该摘要。
-        val signalCount = signals.tools.size + signals.paths.size + signals.words.size
+        // 旧实现漏算 commands：纯命令会话（execute_command 跑多次）会被跳过。
+        val signalCount = signals.tools.size + signals.paths.size +
+                signals.commands.size + signals.words.size
         if (signalCount < MIN_SIGNAL_WORDS) {
             AgentLogger.log(TAG, "会话 ${session.id} 信号太弱（$signalCount 项），跳过")
             return null

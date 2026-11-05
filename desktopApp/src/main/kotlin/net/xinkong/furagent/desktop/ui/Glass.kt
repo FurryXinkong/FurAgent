@@ -5,13 +5,8 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.*
 import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.interaction.collectIsPressedAsState
@@ -33,6 +28,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -514,7 +510,8 @@ fun GlassTextField(
     enabled: Boolean = true, singleLine: Boolean = true,
     minLines: Int = 1, maxLines: Int = if (singleLine) 1 else 8,
     monospace: Boolean = false, leadingIcon: ImageVector? = null,
-    trailingContent: @Composable (() -> Unit)? = null
+    trailingContent: @Composable (() -> Unit)? = null,
+    visualTransformation: VisualTransformation = VisualTransformation.None
 ) {
     Column(modifier) {
         if (label != null) {
@@ -527,6 +524,7 @@ fun GlassTextField(
             placeholder = { if (placeholder.isNotEmpty()) Text(placeholder, fontSize = 12.sp, color = TextMuted()) },
             leadingIcon = leadingIcon?.let { { Icon(it, null, tint = TextSecondary(), modifier = Modifier.size(16.dp)) } },
             trailingIcon = trailingContent,
+            visualTransformation = visualTransformation,
             textStyle = TextStyle(color = TextPrimary(), fontSize = 13.sp,
                 fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default),
             colors = OutlinedTextFieldDefaults.colors(
@@ -884,16 +882,24 @@ fun MarkdownText(
         )
     } else {
         // 富文本：组件化渲染
-        ComposeMarkdownRenderer(
-            text = text,
-            colors = MarkdownColors(
+        // MarkdownColors 必须 remember：每次重组 new 一个对象会让下游
+        // pointerInput 的 key 变化，手势检测器反复重建，拖选会被打断。
+        // BorderSubtle()/BorderColor() 是 @Composable，必须在 remember 外先取值。
+        val dividerColor = BorderSubtle()
+        val tableBorderColor = BorderColor()
+        val mdColors = remember(color, linkColor, codeBg, dividerColor, tableBorderColor) {
+            MarkdownColors(
                 textColor = color,
                 linkColor = linkColor,
                 codeBg = codeBg,
                 quoteColor = color.copy(alpha = 0.4f),
-                dividerColor = BorderSubtle(),
-                tableBorderColor = BorderColor()
-            ),
+                dividerColor = dividerColor,
+                tableBorderColor = tableBorderColor
+            )
+        }
+        ComposeMarkdownRenderer(
+            text = text,
+            colors = mdColors,
             modifier = modifier,
             onLinkClick = onLinkClick,
             maxLines = maxLines

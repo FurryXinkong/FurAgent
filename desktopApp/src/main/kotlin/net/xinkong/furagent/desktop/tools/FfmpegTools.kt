@@ -138,7 +138,15 @@ object FfmpegTools {
         )
         for (c in unixCandidates) {
             val f = File(c)
-            if (f.exists() && f.canExecute()) return c
+            if (!f.exists() || !f.canExecute()) continue
+            // 真正跑一次 -version 验证：坏符号链接 / 架构不匹配的二进制
+            // canExecute() 会返回 true，但执行会失败。
+            try {
+                val p = ProcessBuilder(c, "-version").redirectErrorStream(true).start()
+                val finished = p.waitFor(5, TimeUnit.SECONDS)
+                if (finished && p.exitValue() == 0) return c
+                p.destroyForcibly()
+            } catch (_: Exception) { }
         }
 
         return null
@@ -589,6 +597,10 @@ object FfmpegTools {
 
             if (!finished) {
                 p.destroyForcibly()
+                // 超时路径也必须 join readerThread：outputSb 是 StringBuilder，
+                // 非线程安全。readerThread 可能还在 append，直接 toString 会抛
+                // ArrayIndexOutOfBoundsException 或输出乱码。
+                try { readerThread.join(500) } catch (_: Exception) { }
                 ExecResult(false, "命令超时（${timeoutSec}s），已强制终止\n$outputSb", elapsed)
             } else {
                 val exit = p.exitValue()

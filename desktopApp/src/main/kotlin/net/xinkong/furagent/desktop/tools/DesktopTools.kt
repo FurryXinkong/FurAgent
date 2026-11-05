@@ -472,8 +472,6 @@ object DesktopTools {
             refresh()
         }
 
-        @Synchronized fun lastTool(id: String): String = entries[id]?.lastTool ?: ""
-
         @Synchronized fun finish(id: String) {
             entries.remove(id)
             refresh()
@@ -505,6 +503,10 @@ object DesktopTools {
     private val subSessionActive = java.util.concurrent.atomic.AtomicInteger(0)
     // 从 shared 统一常量，双端一致
     private const val MAX_PARALLEL_SUB = net.xinkong.furagent.shared.data.SubSessionLimits.MAX_PARALLEL_SUB
+
+    /** 实际生效的并行上限：优先读设置，未设置时回退到常量。 */
+    private fun maxParallelSub(): Int =
+        DesktopSettingsHolder.current.maxParallelSub.coerceIn(1, 16)
     /**
      * 子会话硬上限 子代理最多跑多少轮。
      *
@@ -562,6 +564,35 @@ object DesktopTools {
     }
 
     /** 子会话收尾摘要：必须能看出它干了什么、停在哪。 */
+    /**
+     * 从子会话历史里抽出「工具调用明细」：工具名 + 关键参数摘要。
+     *
+     * 为什么需要：主对话只看最后一段文本时，子代理干了 30 步活
+     * 但最后一句可能是「我会先定位这些文件」，等于什么都没说。
+     * 把工具调用列出来，主对话才能判断它到底做了什么、卡在哪。
+     */
+    private fun buildToolTrace(h: List<DesktopMessage>, limit: Int = 40): String {
+        val calls = h.filter { it.type == "tool_call" }
+        if (calls.isEmpty()) return ""
+        val sb = StringBuilder()
+        calls.take(limit).forEachIndexed { idx, m ->
+            val lines = m.content.lineSequence().toList()
+            val name = lines.firstOrNull()?.trim().orEmpty()
+            // 参数行：取第二行起，压成一行，截断到 120 字符
+            val argLine = lines.drop(1).joinToString(" ") { it.trim() }
+                .replace(Regex("\\s+"), " ")
+                .trim()
+                .take(120)
+            sb.append("  ${idx + 1}. $name")
+            if (argLine.isNotBlank()) sb.append(" | ").append(argLine)
+            sb.append('\n')
+        }
+        if (calls.size > limit) {
+            sb.append("  ...（还有 ${calls.size - limit} 次调用未列出）\n")
+        }
+        return sb.toString()
+    }
+
     private fun buildSubSummary(h: List<DesktopMessage>, hitLimit: Boolean): String {
         val toolCalls = h.filter { it.type == "tool_call" }
         val lastText = h.lastOrNull { it.type == "text" && it.role == "assistant" }
@@ -578,8 +609,13 @@ object DesktopTools {
         }.distinct().take(8)
         if (tools.isNotEmpty()) sb.append("：").append(tools.joinToString("、"))
         sb.append("\n")
+        // 工具调用明细：让主对话能看出它到底做了什么，而不是只看到一句总结
+        val trace = buildToolTrace(h, limit = 20)
+        if (trace.isNotBlank()) {
+            sb.append("调用明细：\n").append(trace)
+        }
         if (lastText.isNotBlank()) {
-            sb.append(lastText.take(600))
+            sb.append("最终输出：\n").append(lastText.take(600))
         } else {
             sb.append("（子会话没有文本回答——只调了工具，点入子会话看完整过程）")
         }
@@ -611,8 +647,18 @@ object DesktopTools {
      * 不传则新建。这样主代理可以追问同一个子代理，而不是每次都开新的。
      */
     private suspend fun runSubSession(args: JSONObject): ToolResult {
-        val task = args.optString("task", "").trim()
-        if (task.isBlank()) return ToolResult.fail("run_sub_session 需要 task 参数")
+        val rawTask = args.optString("task", "").trim()
+        if (rawTask.isBlank()) return ToolResult.fail("run_sub_session 需要 task 参数")
+        // expect：期望的返回格式约定。
+        // 不传时子代理可能只回一句「我会先定位这些文件」，主对话拿不到可用结论。
+        // 传了就追加到任务末尾，强制它按格式输出。
+        val expect = args.optString("expect", "").trim()
+        val task = if (expect.isBlank()) rawTask else buildString {
+            append(rawTask)
+            append("\n\n【返回格式要求】\n")
+            append(expect)
+            append("\n请严格按上述格式输出最终结果，不要只描述你打算做什么。")
+        }
         val reuseId = args.optString("session_id", "").trim()
 
         // ============ 复用已有子会话 ============
@@ -626,9 +672,9 @@ object DesktopTools {
             if (SubSessionProgress.snapshot().containsKey(reuseId)) {
                 return ToolResult.fail("子会话 $reuseId 正在执行中，请等它完成后再追问")
             }
-            if (subSessionActive.incrementAndGet() > MAX_PARALLEL_SUB) {
+            if (subSessionActive.incrementAndGet() > maxParallelSub()) {
                 subSessionActive.decrementAndGet()
-                return ToolResult.fail("并行子会话已达上限（$MAX_PARALLEL_SUB 个），请等待完成后再派发")
+                return ToolResult.fail("并行子会话已达上限（${maxParallelSub()} 个），请等待完成后再派发")
             }
 
             val now = System.currentTimeMillis()
@@ -711,9 +757,9 @@ object DesktopTools {
         val title = args.optString("title", "").trim().ifBlank { task.take(30) }
 
         // 并行槽位：原子检查+占位，杜绝同毫秒并发绕过检查
-        if (subSessionActive.incrementAndGet() > MAX_PARALLEL_SUB) {
+        if (subSessionActive.incrementAndGet() > maxParallelSub()) {
             subSessionActive.decrementAndGet()
-            return ToolResult.fail("并行子会话已达上限（$MAX_PARALLEL_SUB 个），请等待完成后再派发")
+            return ToolResult.fail("并行子会话已达上限（${maxParallelSub()} 个），请等待完成后再派发")
         }
 
         // ID：毫秒时间戳 + 4 位随机 hex，并发派发不撞
@@ -748,6 +794,14 @@ object DesktopTools {
             return ToolResult.fail("子会话初始存盘失败：${e.message}")
         }
 
+        // 登记到重启恢复表：软件重启后能知道哪些子会话被中断了
+        net.xinkong.furagent.desktop.data.SubSessionRegistry.register(
+            id = subId,
+            title = title,
+            task = task,
+            parentId = parentSessionId
+        )
+
         // 后台异步执行：主对话立即返回、互不阻塞；完成后覆盖保存全量过程
         SubSessionProgress.start(subId, title)
         val job = subSessionScope.launch {
@@ -756,6 +810,8 @@ object DesktopTools {
             // 子会话的每个工具、每次历史写入都归属 subId，
             // 不再需要临时改写全局，也不会与并行子会话/主会话互相覆盖。
             var subHistory: List<DesktopMessage> = initial
+            // 异常信息：非空表示子代理崩了，要回流给主对话
+            var subError: String? = null
             // 可见性 持续累积流式内容，让用户能看到它在写什么
             val streamBuf = StringBuilder()
             // 硬上限 子会话不继承用户的高轮数设置
@@ -803,6 +859,9 @@ object DesktopTools {
                 // 异常 / 被主 AI 主动中断（CancellationException）：
                 // 同样要求它把现有结果总结完再存盘。
                 // NonCancellable：父任务已经被 cancel，不加这个请求会立刻被打断。
+                // 关键：异常不能静默吞掉。之前 catch 里什么都不记，
+                // 主对话只看到「未产生文本输出」，完全不知道子代理是崩了还是没干活。
+                subError = "${e.javaClass.simpleName}: ${e.message ?: "无消息"}"
                 try {
                     subHistory = withContext(kotlinx.coroutines.NonCancellable) {
                         summarizeIfTruncated(subHistory, DesktopSettingsHolder.current)
@@ -825,19 +884,24 @@ object DesktopTools {
                 SubSessionProgress.finish(subId)
                 subSessionActive.decrementAndGet()
                 subSessionJobs.remove(subId)
+                // 正常结束，从重启恢复表里注销
+                net.xinkong.furagent.desktop.data.SubSessionRegistry.unregister(subId)
                 // 完成事件回流：主对话收到「子代理完成」通知
+                val baseSummary = buildSubSummary(
+                    subHistory,
+                    hitLimit = subHistory.isNotEmpty() &&
+                            subHistory.lastOrNull { it.type == "text" }?.content
+                                ?.contains("已达到最大工具调用轮数") == true
+                )
                 SubSessionProgress.emitCompleted(
                     SubSessionProgress.Completed(
                         originId = parentSessionId ?: "",
                         subId = subId,
                         title = title,
                         msgCount = subHistory.size,
-                        summary = buildSubSummary(
-                            subHistory,
-                            hitLimit = subHistory.isNotEmpty() &&
-                                    subHistory.lastOrNull { it.type == "text" }?.content
-                                        ?.contains("已达到最大工具调用轮数") == true
-                        )
+                        summary = if (subError != null) {
+                            "【子代理异常终止】$subError\n\n$baseSummary"
+                        } else baseSummary
                     )
                 )
             }
@@ -846,7 +910,7 @@ object DesktopTools {
 
         return ToolResult.ok(
             "SUB_SESSION:$subId\n标题：↳ $title\n" +
-                    "状态：已在后台启动（可并行最多 $MAX_PARALLEL_SUB 个），主对话继续执行，互不阻塞。\n" +
+                    "状态：已在后台启动（可并行最多 ${maxParallelSub()} 个），主对话继续执行，互不阻塞。\n" +
                     "完成后系统会自动在主对话注入「子代理完成」通知；也可用 sub_session 工具查询：" +
                     "op=status 看进度、op=result 配套 id 取结果。\n\n子会话结果摘要：\n" +
                     "（后台执行中——完成后完整过程写入该子会话。）"
@@ -891,10 +955,22 @@ object DesktopTools {
                 val finalText = s.messages.lastOrNull {
                     it.type == "text" && it.role == "assistant"
                 }?.content ?: "（子会话未产生文本结果）"
-                ToolResult.ok(
-                    "子会话 $id「${s.title}」共 ${s.messages.size} 条消息。\n最终结果：\n" +
-                            finalText.take(1500)
-                )
+                // 关键：不能只返回最后一段文本。子代理可能跑了 30 步，
+                // 最后一句却是「我会先定位这些文件」，主对话等于什么都没拿到。
+                // 把工具调用明细一并返回，主对话才能判断它做了什么、卡在哪。
+                val trace = buildToolTrace(s.messages, limit = 60)
+                val errCount = s.messages.count {
+                    it.type == "tool_result" && it.content.startsWith("失败")
+                }
+                val sb = StringBuilder()
+                sb.append("子会话 $id「${s.title}」共 ${s.messages.size} 条消息")
+                if (errCount > 0) sb.append("，其中 $errCount 次工具失败")
+                sb.append("。\n")
+                if (trace.isNotBlank()) {
+                    sb.append("\n工具调用明细：\n").append(trace)
+                }
+                sb.append("\n最终结果：\n").append(finalText.take(1500))
+                ToolResult.ok(sb.toString())
             }
             "stop" -> {
                 if (id.isBlank()) return ToolResult.fail("op=stop 需要 id 参数")
