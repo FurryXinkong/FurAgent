@@ -35,11 +35,6 @@ dependencies {
     // 文档生成 Apache POI：纯 Java，无外部依赖，同时支持 docx / xlsx / pptx。
     // 仅桌面端引入（Android 端不引，POI 在 Android 上兼容性差且体积大）。
     implementation("org.apache.poi:poi-ooxml:6.0.0")
-
-    // 投屏 H.264 解码：jcodec 纯 Java，无原生依赖（不引入 FFmpeg/JavaCV 那种几百 MB 的原生库）。
-    // jcodec 负责解码手机 MediaCodec 硬编码的 H.264；jcodec-javase 提供 Picture → BufferedImage。
-    implementation("org.jcodec:jcodec:0.2.5")
-    implementation("org.jcodec:jcodec-javase:0.2.5")
 }
 
 kotlin {

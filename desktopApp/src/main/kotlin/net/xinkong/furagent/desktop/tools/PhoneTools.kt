@@ -68,30 +68,6 @@ object PhoneTools {
     /** 第一台在线手机的 client_id，供投屏面板默认选中。 */
     fun firstPhoneClientId(): String? = findPhoneClient()
 
-    /** 手机端本地 HTTP 的基础地址（含已配对 token），投屏流与元数据都走它。 */
-    private fun phoneHttpBase(clientId: String?): String? {
-        val id = clientId?.takeIf { it.isNotBlank() } ?: findPhoneClient() ?: return null
-        val host = findHostByClientId(id) ?: return null
-        val info = clientHttpMap[id] ?: return null
-        if (info.port <= 0 || info.token.isBlank()) return null
-        return "http://$host:${info.port}?token=${URLEncoder.encode(info.token, "UTF-8")}"
-    }
-
-    /** 实时投屏二进制流地址（连续帧，不是单张图片）。 */
-    fun screenStreamUrl(clientId: String? = null): String? {
-        val base = phoneHttpBase(clientId) ?: return null
-        // 把 path 插到 ?token 之前
-        val q = base.indexOf('?')
-        return base.substring(0, q) + "/screen/stream" + base.substring(q)
-    }
-
-    /** 屏幕元数据：真实宽高 / 采集帧宽高 / 是否运行中。 */
-    fun screenInfoUrl(clientId: String? = null): String? {
-        val base = phoneHttpBase(clientId) ?: return null
-        val q = base.indexOf('?')
-        return base.substring(0, q) + "/screen/info" + base.substring(q)
-    }
-
     data class PhoneTool(
         val name: String, val displayName: String,
         val description: String, val paramsSchema: String
@@ -144,11 +120,10 @@ object PhoneTools {
                     "op=text 输入文字（带 node_id 可精确写入输入框）；op=key(back/home/recents/enter) 按键；" +
                     "op=screencap 截屏并返回手机端路径，随后用 phone_receive_file 拉取；" +
                     "op=scroll(x,y,dx,dy) 滚动（对应鼠标滚轮）；" +
-                    "op=shell 执行 shell 命令（需 Shizuku，手机端会弹确认）；op=apps 列应用；op=launch(package) 启动应用；" +
-                    "op=mirror_start 开启手机实时屏幕投屏（可带 resolution/fps/quality 自定义参数，手机弹一次系统录屏授权）、op=mirror_stop 停止、op=mirror_status 查状态。" +
+                    "op=shell 执行 shell 命令（需 Shizuku，手机端会弹确认）；op=apps 列应用；op=launch(package) 启动应用。" +
                     "典型流程：phone_remote(op=status) → dump/find → tap/text → 再 dump 验证。" +
                     "手机端需开启无障碍服务或 Shizuku；可选 client_id 指定设备。",
-            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["status","dump","find","tap","long_press","swipe","text","key","screencap","scroll","shell","apps","launch","mirror_start","mirror_stop","mirror_status"]},"x":{"type":"integer"},"y":{"type":"integer"},"dx":{"type":"integer"},"dy":{"type":"integer"},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"duration_ms":{"type":"integer"},"text":{"type":"string"},"node_id":{"type":"string"},"key":{"type":"string"},"command":{"type":"string"},"timeout":{"type":"integer"},"package":{"type":"string"},"resolution":{"type":"integer"},"fps":{"type":"integer"},"quality":{"type":"integer"},"max_depth":{"type":"integer"},"max_nodes":{"type":"integer"},"client_id":{"type":"string"}},"required":["op"]}"""
+            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["status","dump","find","tap","long_press","swipe","text","key","screencap","scroll","shell","apps","launch"]},"x":{"type":"integer"},"y":{"type":"integer"},"dx":{"type":"integer"},"dy":{"type":"integer"},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"duration_ms":{"type":"integer"},"text":{"type":"string"},"node_id":{"type":"string"},"key":{"type":"string"},"command":{"type":"string"},"timeout":{"type":"integer"},"package":{"type":"string"},"max_depth":{"type":"integer"},"max_nodes":{"type":"integer"},"client_id":{"type":"string"}},"required":["op"]}"""
         )
     )
 

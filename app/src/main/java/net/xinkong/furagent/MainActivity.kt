@@ -1989,34 +1989,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
-                                // 实时屏幕投屏开关（手机端本地入口）。
-                                // 桌面端也能通过 phone_remote(op=mirror_start) 远程触发，
-                                // 但部分系统限制后台启动页面，所以这里保留一个必定可用的开关。
-                                TextButton(onClick = {
-                                    val frames = net.xinkong.furagent.service.ScreenMirrorFrames
-                                    if (frames.isActive()) {
-                                        net.xinkong.furagent.service.ScreenMirrorService.stop(context)
-                                        notifyToast(context, "已停止实时投屏")
-                                    } else {
-                                        try {
-                                            context.startActivity(
-                                                Intent(
-                                                    context,
-                                                    ScreenMirrorPermissionActivity::class.java
-                                                )
-                                            )
-                                            notifyToast(context, "请在系统弹窗点「立即开始」开启投屏")
-                                        } catch (e: Exception) {
-                                            notifyToast(context, "开启投屏失败：${e.message}")
-                                        }
-                                    }
-                                }) {
-                                    Text(
-                                        "投屏",
-                                        fontSize = 11.sp,
-                                        color = MaterialTheme.colorScheme.primary
-                                    )
-                                }
                             },
                             colors = TopAppBarDefaults.topAppBarColors(
                                 containerColor = Color.Transparent,

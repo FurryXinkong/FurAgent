@@ -59,43 +59,8 @@ object RemoteControlTools {
             "shell" -> doShell(args, settings)
             "apps" -> doApps(args, settings)
             "launch" -> doLaunch(args, settings)
-            "mirror_start" -> doMirrorStart(args, context)
-            "mirror_stop" -> doMirrorStop(context)
-            "mirror_status" -> doMirrorStatus()
             else -> "失败：op 只能是 status / dump / find / tap / long_press / swipe / text / " +
-                    "key / screencap / scroll / shell / apps / launch / mirror_start / mirror_stop / mirror_status"
-        }
-    }
-
-    /**
-     * 发起实时投屏。MediaProjection 授权必须由前台 Activity 弹系统对话框，
-     * 这里只负责拉起透明中转页；用户点一次「立即开始」后由服务长期推流。
-     */
-    private fun doMirrorStart(args: JSONObject, context: Context): String {
-        if (net.xinkong.furagent.service.ScreenMirrorFrames.isActive()) {
-            return "实时投屏已在运行，无需重复启动。如需改分辨率/帧率/质量，请先 mirror_stop 再重新启动。\n" +
-                    mirrorEndpointHint()
-        }
-        return try {
-            val intent = android.content.Intent(
-                context, net.xinkong.furagent.ScreenMirrorPermissionActivity::class.java
-            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-            // 分辨率(目标宽度) / 帧率 / 质量，由桌面端选择后经桥下发；缺省则手机用默认值
-            val res = args.optInt("resolution", 0)
-            val fps = args.optInt("fps", 0)
-            val quality = args.optInt("quality", 0)
-            if (res > 0) intent.putExtra(net.xinkong.furagent.service.ScreenMirrorService.EXTRA_RESOLUTION, res)
-            if (fps > 0) intent.putExtra(net.xinkong.furagent.service.ScreenMirrorService.EXTRA_FPS, fps)
-            if (quality > 0) intent.putExtra(net.xinkong.furagent.service.ScreenMirrorService.EXTRA_QUALITY, quality)
-            context.startActivity(intent)
-            "已向手机发起录屏授权请求（分辨率=${if (res > 0) "${res}px" else "默认"}，" +
-                    "帧率=${if (fps > 0) "${fps}fps" else "默认"}，质量=${if (quality > 0) "$quality" else "默认"}）。" +
-                    "请在手机上点「立即开始」完成一次系统授权；授权后电脑端即可连接实时画面。\n" +
-                    "若手机没弹出授权框（部分系统限制后台启动页面），请在 App 顶栏点「投屏」按钮手动开启。\n" +
-                    mirrorEndpointHint()
-        } catch (e: Exception) {
-            "失败：无法拉起录屏授权页（${e.javaClass.simpleName}: ${e.message}）。" +
-                    "请在手机 App 顶栏点「投屏」按钮手动开启。"
+                    "key / screencap / scroll / shell / apps / launch"
         }
     }
 
@@ -129,29 +94,6 @@ object RemoteControlTools {
         return shizukuInput("input swipe $x $y $ex $ey 40")
             ?: "失败：无障碍与 Shizuku 均不可用，无法滚动。"
     }
-
-    private fun doMirrorStop(context: Context): String {
-        net.xinkong.furagent.service.ScreenMirrorService.stop(context)
-        return "已停止实时投屏。"
-    }
-
-    private fun doMirrorStatus(): String {
-        val frames = net.xinkong.furagent.service.ScreenMirrorFrames
-        val port = net.xinkong.furagent.bridge.AndroidHttpFileServer.getPort()
-        return if (frames.isActive()) {
-            "投屏状态：运行中\n采集帧：${frames.frameWidth}x${frames.frameHeight}\n" +
-                    "真实屏幕：${frames.realWidth}x${frames.realHeight}\n" +
-                    "HTTP 端口：$port\n${mirrorEndpointHint()}"
-        } else {
-            "投屏状态：未运行\nHTTP 端口：$port\n" +
-                    "用 op=mirror_start 发起，或在 App 顶栏点「投屏」。"
-        }
-    }
-
-    /** 只给端口，不把 token 交给模型；桌面端自己从已配对的设备信息里取 token。 */
-    private fun mirrorEndpointHint(): String =
-        "电脑端取流地址：http://<手机IP>:${net.xinkong.furagent.bridge.AndroidHttpFileServer.getPort()}" +
-                "/screen/stream?token=<配对token>；屏幕元数据在 /screen/info。"
 
     private fun doStatus(context: Context): String {
         val dm = context.resources.displayMetrics

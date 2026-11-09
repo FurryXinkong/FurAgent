@@ -58,7 +58,6 @@ fun RemoteAssistDialog(onDismiss: () -> Unit) {
     var inputText by remember { mutableStateOf("") }
     var result by remember { mutableStateOf("先点「查看状态」确认手机端控制通道是否就绪。") }
     var busy by remember { mutableStateOf(false) }
-    var mirrorOpen by remember { mutableStateOf(false) }
 
     fun runOp(op: String, extra: JSONObject.() -> Unit = {}) {
         if (busy) return
@@ -113,13 +112,6 @@ fun RemoteAssistDialog(onDismiss: () -> Unit) {
                 GlassTextField(
                     value = clientId, onValueChange = { clientId = it },
                     placeholder = "client_id（可留空，默认第一台在线手机）"
-                )
-                Spacer(Modifier.height(8.dp))
-
-                PrimaryButton(
-                    "打开实时投屏（连续画面，可直接操控）",
-                    modifier = Modifier.fillMaxWidth(),
-                    onClick = { mirrorOpen = true }
                 )
                 Spacer(Modifier.height(10.dp))
 
@@ -198,12 +190,4 @@ fun RemoteAssistDialog(onDismiss: () -> Unit) {
         }
     }
 
-    // 与远程协助面板并列（不嵌套在 Dialog content 里），避免多窗口层级问题
-    if (mirrorOpen) {
-        ScreenMirrorDialog(
-            clientId = clientId.trim().takeIf { it.isNotBlank() }
-                ?: PhoneTools.firstPhoneClientId(),
-            onDismiss = { mirrorOpen = false }
-        )
-    }
 }
