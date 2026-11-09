@@ -66,6 +66,12 @@ object PcBridgeClient {
      */
     private const val STABLE_CONNECTION_THRESHOLD_MS = 15_000L
 
+    /** 远端调用需要额外人工确认的写/执行类工具（adb 的连续手势不在此列）。 */
+    private val REMOTE_CONFIRM_TOOLS = setOf(
+        "write_file", "delete_file", "file_op", "execute_shell", "ffmpeg", "zip",
+        "download_file", "code_edit", "python", "pytool"
+    )
+
     /** 缓存本机 MAC（避免每次查网络接口） */
     @Volatile private var cachedLocalMac: String? = null
 
@@ -969,6 +975,49 @@ object PcBridgeClient {
                 )
             }
             return
+        }
+
+        // 远端工具调用的显式授权层（默认关闭，桥接本身已有 token 认证）。
+        // 只覆盖写/执行类工具：adb 的 tap/swipe 等高频控制不在此列，
+        // 否则实时投屏时每次点击都要手机端确认，体验会崩。
+        if (settings.requireConfirmRemoteCall && tool in REMOTE_CONFIRM_TOOLS) {
+            val approved = net.xinkong.furagent.core.ConfirmationBroker.request(
+                "电脑端远程调用确认",
+                "电脑端 FurAgent 请求在手机上执行工具「$tool」。\n\n" +
+                        "参数：${rawArgs.take(400)}\n\n是否允许？"
+            )
+            if (!approved) {
+                try {
+                    ws.send(
+                        BridgeMessage.toolResult(
+                            msg.id, EndpointId.PHONE, false,
+                            "手机端用户已拒绝远程工具调用（requireConfirmRemoteCall 已开启）"
+                        ).encodeToString()
+                    )
+                } catch (_: Exception) { }
+                return
+            }
+        }
+
+        // execute_shell 走 PRIVATE_ROUTER 不过 PathGuard：这里补一道命中
+        // blockedPaths 的绝对路径检查，避免远端借 shell 绕开路径策略。
+        if (tool == "execute_shell") {
+            val command = try { JSONObject(rawArgs).optString("command", "") } catch (_: Exception) { "" }
+            val blocked = settings.blockedPaths.firstOrNull { bp ->
+                Regex("""(?<![\w./-])/[\w./\-*]+""")
+                    .findAll(command).any { it.value.startsWith(bp) }
+            }
+            if (blocked != null) {
+                try {
+                    ws.send(
+                        BridgeMessage.toolResult(
+                            msg.id, EndpointId.PHONE, false,
+                            "失败：shell 命令命中禁止路径 $blocked"
+                        ).encodeToString()
+                    )
+                } catch (_: Exception) { }
+                return
+            }
         }
 
         val argsJson = rewriteWriteArgs(tool, rawArgs, settings)

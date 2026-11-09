@@ -229,7 +229,7 @@ fun HistoryPage(onBack: () -> Unit) {
                 } else {
                     // 垂直时间线
                     LazyColumn(Modifier.fillMaxSize()) {
-                        itemsIndexed(filtered) { i, e ->
+                        itemsIndexed(filtered, key = { _, e -> "${e.ts}|${e.path}" }) { i, e ->
                             TimelineRow(
                                 entry = e,
                                 isLast = i == filtered.lastIndex,

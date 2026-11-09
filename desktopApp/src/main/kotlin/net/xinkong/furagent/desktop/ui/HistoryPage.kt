@@ -191,7 +191,7 @@ fun HistoryPage() {
             ) {
                 // 时间线（IntelliJ 左上：动作 + 时间 两行式）
                 LazyColumn(Modifier.weight(1f)) {
-                    itemsIndexed(filtered) { idx, e ->
+                    itemsIndexed(filtered, key = { _, e -> "${e.ts}|${e.path}" }) { idx, e ->
                         HistoryTimelineItem(
                             entry = e,
                             selected = idx == selectedIdx,
@@ -221,7 +221,7 @@ fun HistoryPage() {
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                 )
                 LazyColumn(Modifier.weight(0.7f)) {
-                    itemsIndexed(fileGroups) { _, (path, count) ->
+                    itemsIndexed(fileGroups, key = { _, group -> group.first }) { _, (path, count) ->
                         val fname = File(path).name
                         val hit = selected?.path == path
                         Row(

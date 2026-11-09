@@ -40,6 +40,25 @@ object ScreenTools {
         }
 
         val op = args.optString("op", "").lowercase()
+
+        // 写类屏幕操作（点击/输入/滑动/系统按键）可加一道人工确认。
+        // 默认关闭：Agent 自动化需要连续操作，逐次弹窗会让无人值守失效。
+        // dump/find/status 是只读，永远不弹。
+        if (settings.requireConfirmUiAction && op in setOf("action", "gesture", "global")) {
+            val detail = when (op) {
+                "action" -> "对节点 ${args.optString("node_id", "")} 执行 ${args.optString("action", "")}" +
+                        if (args.has("text")) "，输入文本：${args.optString("text", "").take(80)}" else ""
+                "gesture" -> "手势 ${args.optString("type", "")} 坐标 " +
+                        "(${args.optInt("x", -1)},${args.optInt("y", -1)})"
+                else -> "系统动作 ${args.optString("action", "")}"
+            }
+            val approved = net.xinkong.furagent.core.ConfirmationBroker.request(
+                "屏幕操作确认",
+                "AI 请求对手机屏幕执行以下操作：\n\n$detail\n\n是否允许？"
+            )
+            if (!approved) return "用户已拒绝屏幕操作（requireConfirmUiAction 已开启）"
+        }
+
         return when (op) {
             "status" -> doStatus(context)
             "dump" -> doDump(args)

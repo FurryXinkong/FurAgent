@@ -32,6 +32,8 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import dev.chrisbanes.haze.hazeSource
+import dev.chrisbanes.haze.rememberHazeState
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Shadow
 import net.xinkong.furagent.shared.icons.Icons
@@ -87,6 +89,8 @@ fun glassShadowColor() = net.xinkong.furagent.shared.ui.glassShadowColor()
 // 背景
 @Composable
 fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
+    // 真模糊：把渐变背景注册为 Haze 源，卡片通过 LocalHazeState 采样它。
+    val hazeState = rememberHazeState()
     val top = BgGradientTop()
     val bottom = BgGradientBottom()
     val accent = AccentColor()
@@ -109,6 +113,7 @@ fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
                     1f to bottom
                 )
             )
+            .hazeSource(hazeState)
     ) {
         val rawW = constraints.maxWidth
         val rawH = constraints.maxHeight
@@ -195,7 +200,11 @@ fun GlassBackground(content: @Composable BoxScope.() -> Unit) {
                 )
         )
 
-        content()
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalHazeState provides hazeState
+        ) {
+            content()
+        }
     }
 }
 
@@ -250,6 +259,11 @@ fun GlassCard(
         label = "cardElevation"
     )
     val shadowColor = glassShadowColor()
+    // 有 hazeSource 时把卡片底色降到半透明，让下面的实时模糊透出来；
+    // 没有时（独立窗口 / 降级路径）保持原来的不透明底色。
+    val hasHaze = LocalHazeState.current != null
+    val cardBg = if (hasHaze) bg.copy(alpha = 0.78f) else bg
+    val blurModifier = Modifier.glassCardBlur()
 
     Box(
         modifier = modifier
@@ -261,7 +275,8 @@ fun GlassCard(
                 spotColor = shadowColor
             )
             .clip(RoundedCornerShape(Radius.MD))
-            .background(bg)
+            .background(cardBg)
+            .then(blurModifier)
             .border(1.dp, BorderColor(), RoundedCornerShape(Radius.MD))
             .then(
                 if (onClick != null) Modifier.clickable(

@@ -170,7 +170,7 @@ object Type {
     val TitleM: TextUnit = 14.sp
 
     /** 正文 */
-    val Body: TextUnit = 13.sp
+    val Body: TextUnit = 14.sp
 
     /** 次要文本 */
     val BodyS: TextUnit = 12.sp

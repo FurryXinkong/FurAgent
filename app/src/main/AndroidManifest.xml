@@ -34,6 +34,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- 实时屏幕投屏：MediaProjection 类型的前台服务（API 34+ 必须单独声明） -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
 
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS" />
 
@@ -94,6 +96,14 @@
                 android:taskAffinity=""
                 android:theme="@style/Theme.FurAgent.Translucent" />
 
+        <!-- 录屏授权中转页：透明、不进最近任务；桌面端请求投屏时由手机端拉起 -->
+        <activity
+                android:name=".ScreenMirrorPermissionActivity"
+                android:exported="false"
+                android:launchMode="singleTask"
+                android:excludeFromRecents="true"
+                android:theme="@style/Theme.FurAgent.Translucent" />
+
         <receiver
                 android:name=".TaskReceiver"
                 android:exported="false" />
@@ -113,6 +123,12 @@
                 android:name=".service.AgentService"
                 android:exported="false"
                 android:foregroundServiceType="dataSync" />
+
+        <!-- 实时屏幕投屏采集服务：持续抓帧并通过本地 HTTP 流推给电脑端 -->
+        <service
+                android:name=".service.ScreenMirrorService"
+                android:exported="false"
+                android:foregroundServiceType="mediaProjection" />
 
         <!-- 定时任务执行服务：TaskReceiver 转发到此，避免 BroadcastReceiver 10 秒超时窗口 -->
         <service

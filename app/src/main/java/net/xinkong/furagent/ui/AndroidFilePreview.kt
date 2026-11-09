@@ -311,31 +311,51 @@ private fun normalizeWebUrl(raw: String): String {
     return "https://$t"
 }
 
+/** 阅读器单次最多加载的行数：按行分页，不再按字节数截断（避免把一行拦腰砍断）。 */
+private const val READER_MAX_LINES = 20_000
+
 /**
- * 内置文本阅读器：等宽字体、可滚动、可选中复制。
- * 超过 512KB 截断显示前段（AI 修改产物通常是全文可读的规模）。
+ * 内置文本阅读器：带行号、等宽字体、可选中复制、深色主题自适应。
+ *
+ * 与桌面端共用 shared/ui/LineNumberedText.kt 的渲染组件，两端观感一致。
+ * 读盘在 IO 线程按行迭代，超大文件只取前 [READER_MAX_LINES] 行并提示，
+ * 不再把整块文本塞进一个 Text（长文件会卡死组合与滚动）。
  */
 @Composable
 fun AndroidTextFileDialog(path: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
-    var content by remember { mutableStateOf<String?>(null) }
-    var truncated by remember { mutableStateOf(false) }
+    var lines by remember { mutableStateOf<List<String>?>(null) }
+    var hasMore by remember { mutableStateOf(false) }
+    var loadedText by remember { mutableStateOf("") }
     val fileName = remember(path) { File(path).name }
 
     LaunchedEffect(path) {
-        content = withContext(Dispatchers.IO) {
+        val result = withContext(Dispatchers.IO) {
             try {
-                val text = File(path).readText(Charsets.UTF_8)
-                if (text.length > 512 * 1024) {
-                    truncated = true
-                    text.take(512 * 1024)
-                } else {
-                    text
+                val acc = ArrayList<String>()
+                val copyBuf = StringBuilder()
+                var total = 0
+                File(path).useLines { seq ->
+                    val it = seq.iterator()
+                    while (it.hasNext()) {
+                        val line = it.next()
+                        total++
+                        if (acc.size < READER_MAX_LINES) {
+                            acc.add(line)
+                            copyBuf.append(line).append('\n')
+                        }
+                    }
                 }
+                Triple<List<String>, Boolean, String>(acc, total > acc.size, copyBuf.toString())
             } catch (e: Exception) {
-                "读取失败：${e.javaClass.simpleName}: ${e.message}"
+                Triple<List<String>, Boolean, String>(
+                    listOf("读取失败：${e.javaClass.simpleName}: ${e.message}"), false, ""
+                )
             }
         }
+        lines = result.first
+        hasMore = result.second
+        loadedText = result.third
     }
 
     PocoAlertDialog(
@@ -351,7 +371,7 @@ fun AndroidTextFileDialog(path: String, onDismiss: () -> Unit) {
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(Modifier.height(8.dp))
-                val c = content
+                val c = lines
                 if (c == null) {
                     Text(
                         "加载中…",
@@ -359,30 +379,11 @@ fun AndroidTextFileDialog(path: String, onDismiss: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = 100.dp, max = 420.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        if (truncated) {
-                            Text(
-                                "超过 512KB，仅显示前段",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.error
-                            )
-                            Spacer(Modifier.height(6.dp))
-                        }
-                        SelectionContainer {
-                            Text(
-                                c,
-                                fontSize = 12.sp,
-                                lineHeight = 17.sp,
-                                fontFamily = FontFamily.Monospace,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                        }
-                    }
+                    net.xinkong.furagent.shared.ui.LineNumberedTextViewer(
+                        lines = c,
+                        hasMore = hasMore,
+                        loadedLineCount = c.size
+                    )
                 }
             }
         },
@@ -392,7 +393,7 @@ fun AndroidTextFileDialog(path: String, onDismiss: () -> Unit) {
         onDismissClick = {
             val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
                     as android.content.ClipboardManager
-            cm.setPrimaryClip(android.content.ClipData.newPlainText("file", content ?: ""))
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("file", loadedText))
             notifyToast(context, "已复制")
         }
     )

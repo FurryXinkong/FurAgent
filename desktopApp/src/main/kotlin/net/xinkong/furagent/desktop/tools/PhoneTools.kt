@@ -65,6 +65,33 @@ object PhoneTools {
 
     fun hasPhoneHttp(): Boolean = clientHttpMap.values.any { it.port > 0 && it.token.isNotBlank() }
 
+    /** 第一台在线手机的 client_id，供投屏面板默认选中。 */
+    fun firstPhoneClientId(): String? = findPhoneClient()
+
+    /** 手机端本地 HTTP 的基础地址（含已配对 token），投屏流与元数据都走它。 */
+    private fun phoneHttpBase(clientId: String?): String? {
+        val id = clientId?.takeIf { it.isNotBlank() } ?: findPhoneClient() ?: return null
+        val host = findHostByClientId(id) ?: return null
+        val info = clientHttpMap[id] ?: return null
+        if (info.port <= 0 || info.token.isBlank()) return null
+        return "http://$host:${info.port}?token=${URLEncoder.encode(info.token, "UTF-8")}"
+    }
+
+    /** 实时投屏二进制流地址（连续帧，不是单张图片）。 */
+    fun screenStreamUrl(clientId: String? = null): String? {
+        val base = phoneHttpBase(clientId) ?: return null
+        // 把 path 插到 ?token 之前
+        val q = base.indexOf('?')
+        return base.substring(0, q) + "/screen/stream" + base.substring(q)
+    }
+
+    /** 屏幕元数据：真实宽高 / 采集帧宽高 / 是否运行中。 */
+    fun screenInfoUrl(clientId: String? = null): String? {
+        val base = phoneHttpBase(clientId) ?: return null
+        val q = base.indexOf('?')
+        return base.substring(0, q) + "/screen/info" + base.substring(q)
+    }
+
     data class PhoneTool(
         val name: String, val displayName: String,
         val description: String, val paramsSchema: String
@@ -107,6 +134,21 @@ object PhoneTools {
             description = "把手机上的文件拉取到电脑。大文件自动走 HTTP 通道（异步下载，不阻塞）。" +
                     "可选 client_id 指定设备；不填时默认用第一台在线设备。",
             paramsSchema = """{"type":"object","properties":{"remote_path":{"type":"string"},"local_path":{"type":"string"},"client_id":{"type":"string"}},"required":["remote_path"]}"""
+        ),
+        PhoneTool(
+            name = "phone_remote",
+            displayName = "远程协助控制手机",
+            description = "Windows 通过现有双向桥接远程协助控制安卓手机，等价于 adb 的常用能力，无需 USB。" +
+                    "op=status 查控制通道/屏幕尺寸；op=dump 取 UI 元素树；op=find 按文本找元素；" +
+                    "op=tap(x,y) 点击；op=long_press 长按；op=swipe(start_x/start_y/end_x/end_y) 滑动；" +
+                    "op=text 输入文字（带 node_id 可精确写入输入框）；op=key(back/home/recents/enter) 按键；" +
+                    "op=screencap 截屏并返回手机端路径，随后用 phone_receive_file 拉取；" +
+                    "op=scroll(x,y,dx,dy) 滚动（对应鼠标滚轮）；" +
+                    "op=shell 执行 shell 命令（需 Shizuku，手机端会弹确认）；op=apps 列应用；op=launch(package) 启动应用；" +
+                    "op=mirror_start 开启手机实时屏幕投屏（可带 resolution/fps/quality 自定义参数，手机弹一次系统录屏授权）、op=mirror_stop 停止、op=mirror_status 查状态。" +
+                    "典型流程：phone_remote(op=status) → dump/find → tap/text → 再 dump 验证。" +
+                    "手机端需开启无障碍服务或 Shizuku；可选 client_id 指定设备。",
+            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["status","dump","find","tap","long_press","swipe","text","key","screencap","scroll","shell","apps","launch","mirror_start","mirror_stop","mirror_status"]},"x":{"type":"integer"},"y":{"type":"integer"},"dx":{"type":"integer"},"dy":{"type":"integer"},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"duration_ms":{"type":"integer"},"text":{"type":"string"},"node_id":{"type":"string"},"key":{"type":"string"},"command":{"type":"string"},"timeout":{"type":"integer"},"package":{"type":"string"},"resolution":{"type":"integer"},"fps":{"type":"integer"},"quality":{"type":"integer"},"max_depth":{"type":"integer"},"max_nodes":{"type":"integer"},"client_id":{"type":"string"}},"required":["op"]}"""
         )
     )
 
@@ -146,6 +188,7 @@ object PhoneTools {
                 "phone_call" -> phoneCall(args)
                 "phone_send_file" -> phoneSendFile(args)
                 "phone_receive_file" -> phoneReceiveFile(args)
+                "phone_remote" -> phoneRemote(args)
                 else -> ToolResult.fail("未知手机工具：$name")
             }
         } catch (e: Exception) { ToolResult.fail("执行异常：${e.message}") }
@@ -323,6 +366,32 @@ object PhoneTools {
                 "未找到目标手机（可能未连接，或 client_id 无效）。先用 phone_status 查看在线设备。"
             )
         return callRemoteTool(clientId, tool, toolArgs, timeoutSec)
+    }
+
+    /**
+     * Windows → 安卓远程协助：把 adb 风格的 op 透传给手机端的 `adb` 工具。
+     *
+     * 链路完全复用现有 BridgeServer → PcBridgeClient 的 toolCall/toolResult，
+     * 不新增协议、不依赖 USB。手机端 RemoteControlTools 负责把 op 翻译成
+     * 无障碍手势或 Shizuku 命令。
+     */
+    private suspend fun phoneRemote(args: JSONObject): ToolResult {
+        val op = args.optString("op", "").trim().lowercase()
+        if (op.isBlank()) return ToolResult.fail("未提供 op 参数")
+        val clientId = resolveClientId(args)
+            ?: return ToolResult.fail(
+                "未找到目标手机（可能未连接，或 client_id 无效）。先用 phone_status 查看在线设备。"
+            )
+        // 透传全部参数（手机端忽略不认识的字段），避免这里再维护一份参数白名单。
+        val remoteArgs = JSONObject(args.toString())
+        remoteArgs.put("op", op)
+        val timeoutSec = args.optInt("timeout", 60).coerceIn(5, 300)
+        val result = callRemoteTool(clientId, "adb", remoteArgs, timeoutSec)
+        return if (result.success) {
+            ToolResult.ok("「${clientDisplayName(clientId)}」远程操作 $op 结果：\n${result.output}")
+        } else {
+            ToolResult.fail("远程操作 $op 失败：${result.output}")
+        }
     }
 
     private suspend fun phoneSendFile(args: JSONObject): ToolResult {

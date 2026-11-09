@@ -23,12 +23,23 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.5.1")
     implementation("org.java-websocket:Java-WebSocket:1.6.0")
     implementation("org.json:json:20260814")
+
+    // Haze 2：Compose Multiplatform 的实时背景模糊（桌面端真毛玻璃）。
+    // 必须保持 core 与 effect 模块同一版本；blur 模块单独引入，glass 暂不用。
+    implementation("dev.chrisbanes.haze:haze:2.1.0")
+    implementation("dev.chrisbanes.haze:haze-blur:2.1.0")
+    implementation("dev.chrisbanes.haze:haze-blur-materials:2.1.0")
     // 修改历史 SQLite 存储：历史一条表（元数据+patch+改前备份），替代 manifest.jsonl
     implementation("org.xerial:sqlite-jdbc:3.53.4.0")
 
     // 文档生成 Apache POI：纯 Java，无外部依赖，同时支持 docx / xlsx / pptx。
     // 仅桌面端引入（Android 端不引，POI 在 Android 上兼容性差且体积大）。
     implementation("org.apache.poi:poi-ooxml:6.0.0")
+
+    // 投屏 H.264 解码：jcodec 纯 Java，无原生依赖（不引入 FFmpeg/JavaCV 那种几百 MB 的原生库）。
+    // jcodec 负责解码手机 MediaCodec 硬编码的 H.264；jcodec-javase 提供 Picture → BufferedImage。
+    implementation("org.jcodec:jcodec:0.2.5")
+    implementation("org.jcodec:jcodec-javase:0.2.5")
 }
 
 kotlin {

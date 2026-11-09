@@ -94,7 +94,7 @@ val FurLightColors = FurColors(
 
 // 深色（中性灰，参考 Codex / VS Code Dark）
 val FurDarkColors = FurColors(
-    bg = Color(0xFF1B1D21),
+    bg = Color(0xFF0A0A0C),
     bgGradientTop = Color(0xFF1F2125),
     bgGradientBottom = Color(0xFF16181C),
 
@@ -125,7 +125,8 @@ val FurDarkColors = FurColors(
     tool = Color(0xFFF59E0B),
     // 改 原来 #4ADE80 太亮，改成 iOS 系统绿，和 Android 端对齐
     result = Color(0xFF34C759),
-    error = Color(0xFFEF4444),
+    // 与安卓端 DarkError(#FF453A) 对齐；浅色模式仍用 LightError(#FF3B30)
+    error = Color(0xFFFF453A),
     // 改 和 tool 保持一致
     warning = Color(0xFFF59E0B),
 

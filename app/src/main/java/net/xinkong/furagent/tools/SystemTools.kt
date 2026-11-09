@@ -1132,7 +1132,15 @@ object SystemTools {
             Regex("""(^|[\s&|;(])find\b.*\s-delete"""),
             Regex("""(^|[\s&|;(])find\b.*\s-exec\s+(rm|rmdir|shred)\b"""),
             // shred（不可恢复的删除）
-            Regex("""(^|[\s&|;(])shred(\s|$)""")
+            Regex("""(^|[\s&|;(])shred(\s|$)"""),
+            // 补全绕过写法：绝对路径调用、toybox/busybox 前缀、unlink、
+            // find -exec sh -c 内嵌删除、以及把文件 mv 到 /dev/null 丢弃。
+            Regex("""(^|[\s&|;(])/[\w/.-]+/(rm|rmdir|shred|unlink)(\s|$)"""),
+            Regex("""(^|[\s&|;(])(toybox|busybox)\s+(rm|rmdir|shred|unlink)\b"""),
+            Regex("""(^|[\s&|;(])unlink(\s|$)"""),
+            Regex("""find\b.*\s-exec\b.*\bsh\s+-c"""),
+            Regex("""(^|[\s&|;(])mv\b.*\s/dev/null(\s|$)"""),
+            Regex("""(^|[\s&|;(])cp\b\s+/dev/null\b""")
         )
         val hit = patterns.firstOrNull { it.containsMatchIn(c) } ?: return null
         return "失败：已拦截，命令包含删除/覆盖操作（${hit.pattern}）。\n" +

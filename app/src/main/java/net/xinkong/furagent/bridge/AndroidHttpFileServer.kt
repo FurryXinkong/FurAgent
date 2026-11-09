@@ -4,6 +4,7 @@ import net.xinkong.furagent.shared.util.DateFormats
 import android.content.Context
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.shared.tools.PathResolver
+import java.io.DataOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -185,6 +186,9 @@ object AndroidHttpFileServer {
         var url = "?"
         try {
             socket.soTimeout = 60_000
+            // 关键：关闭 Nagle 算法。投屏每帧是一个小包，Nagle 会攒包导致几十毫秒的额外延迟，
+            // 实时画面必须开 TCP_NODELAY 才能低延迟。
+            try { socket.tcpNoDelay = true } catch (_: Exception) { }
             val input = socket.getInputStream().buffered()
             val output = socket.getOutputStream().buffered()
 
@@ -367,6 +371,23 @@ object AndroidHttpFileServer {
                     respondText(output, if (r.ok) 200 else 500, if (r.ok) "ok" else "delete failed: ${r.message}")
                 }
 
+                "GET" if path == "/screen/info" -> {
+                    respondText(
+                        output, 200,
+                        net.xinkong.furagent.service.ScreenMirrorFrames.infoJson()
+                    )
+                }
+
+                // 单帧端点已随 H.264 改造废弃：投屏统一走 /screen/stream 连续流。
+                "GET" if path == "/screen/frame" -> {
+                    respondText(output, 410, "screen/frame deprecated, use /screen/stream")
+                }
+
+                // 实时投屏：H.264 连续流，包格式 = [1字节类型][4字节大端长度][数据]。
+                //   0 = 编码器配置(SPS/PPS, Annex-B)  1 = 关键帧(IDR)  3 = 增量帧(P)  2 = 心跳(长度0)
+                // 不写 Content-Length，用 close-delimited 响应；电脑端用 jcodec 解码。
+                "GET" if path == "/screen/stream" -> streamScreen(output)
+
                 else -> respondText(output, 404, "not found")
             }
         } catch (e: Exception) {
@@ -376,6 +397,60 @@ object AndroidHttpFileServer {
             )
         } finally {
             try { socket.close() } catch (_: Exception) { }
+        }
+    }
+
+    /**
+     * 实时屏幕投屏流（H.264）。
+     *
+     * 包格式：`[1字节类型][4字节大端长度][数据]`
+     *   0 = 编码器配置（SPS/PPS，Annex-B），连接建立后先发一次
+     *   1 = 关键帧（IDR）
+     *   3 = 增量帧（P）
+     *   2 = 心跳（长度 0）
+     * 不写 Content-Length，用 close-delimited 响应；连接断开时自然结束。
+     * 静态屏幕不产生新帧 → 不推流，只每 1 秒发一次心跳保活。
+     */
+    private fun streamScreen(out: OutputStream) {
+        out.write("HTTP/1.1 200 OK\r\n".toByteArray())
+        out.write("Content-Type: application/octet-stream\r\n".toByteArray())
+        out.write("Cache-Control: no-store, no-cache\r\n".toByteArray())
+        out.write("Access-Control-Allow-Origin: *\r\n".toByteArray())
+        out.write("Connection: close\r\n\r\n".toByteArray())
+        out.flush()
+
+        val frames = net.xinkong.furagent.service.ScreenMirrorFrames
+        val data = DataOutputStream(out)
+        var lastVersion = -1L
+        var configSent = false
+        var lastSentAt = System.currentTimeMillis()
+        val startedAt = lastSentAt
+
+        while (frames.isActive()) {
+            // 先等编码器吐出 SPS/PPS，否则解码器无法初始化
+            if (!configSent) {
+                val c = frames.currentConfig()
+                if (c != null) {
+                    data.writeByte(0); data.writeInt(c.size); data.write(c); data.flush()
+                    configSent = true
+                } else {
+                    try { Thread.sleep(20) } catch (_: InterruptedException) { break }
+                    continue
+                }
+            }
+            val frame = frames.awaitNext(lastVersion, 150)
+            if (frame != null) {
+                lastVersion = frame.version
+                data.writeByte(if (frame.keyframe) 1 else 3)
+                data.writeInt(frame.data.size)
+                data.write(frame.data)
+                data.flush()
+                lastSentAt = System.currentTimeMillis()
+            } else if (System.currentTimeMillis() - lastSentAt > 1000L) {
+                data.writeByte(2); data.writeInt(0); data.flush()
+                lastSentAt = System.currentTimeMillis()
+            }
+            if (System.currentTimeMillis() - startedAt > 6L * 60 * 60 * 1000) break
         }
     }
 

@@ -386,9 +386,9 @@ object DesktopAgent {
             } catch (e: Exception) {
                 DesktopLogger.error("Agent", "SSE 流式解析失败：${e.javaClass.simpleName}: ${e.message}")
                 onThinking("")
-                val err = DesktopMessage(role = "assistant", content = "流式解析失败：${e.message}")
-                current = current + err
-                onUpdate(current)
+                // 解析错误不再作为 assistant 回复落库进会话历史，
+                // 与网络/API 错误一致，交给 onError 走状态气泡路径。
+                onError("流式解析失败 · ${e.message}")
                 return@withContext current
             }
 
@@ -582,6 +582,14 @@ object DesktopAgent {
                     }.awaitAll()
                 }
                 executed.forEach { (idx, r, dur) -> results[idx] = r to dur }
+                // 并行分支同样推进 lastToolSig：否则下一轮仍复用进入并行前的旧签名，
+                // 「同签名连续重复」的清零判断会基于过期基准，造成误判/漏拦。
+                // 不在 async 内写共享变量（避免竞态），统一在 awaitAll 之后取排序后
+                // 最后一个工具更新一次，语义与串行分支「取最后一个」一致。
+                lastToolSig = try {
+                    val lastAcc = sortedCalls.last().second
+                    toolSignature(lastAcc.name, JSONObject(lastAcc.arguments.toString().ifBlank { "{}" }))
+                } catch (_: Exception) { null }
             }
 
             // 串行收尾：UI 更新 + messages.put + 图片附加（保持顺序，drain 只做一次）
@@ -656,6 +664,13 @@ object DesktopAgent {
                     })
                 } else {
                     DesktopLogger.warn("Agent", "本轮 ${pending.size} 张图片全部附加失败，未注入上下文")
+                    // 不静默丢弃：以一段文本把失败事实回告模型，避免模型误以为
+                    // 已经看到图片。中途不能插 system 角色（见 buildHistoryMessages），
+                    // 用 user 身份附带，与 attached>0 分支的 user 图片消息结构一致。
+                    messages.put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", "【系统提示】本轮获取的 ${pending.size} 张图片全部未能附加（文件过大或读取失败），你并未看到这些图片内容，请勿假设已看到；可重新截图或缩小后再试。")
+                    })
                 }
             } else {
                 DesktopLogger.info(
@@ -977,8 +992,15 @@ object DesktopAgent {
             val effectiveMaxDim = if (settings.imageCompress) settings.imageCompressMaxDim else 1920
             val effectiveQuality = if (settings.imageCompress) settings.imageCompressQuality else 90
 
+            var reencodedToJpeg = false
             val bytes = if (isImageExtension(f.extension.lowercase())) {
-                compressImageBytes(f, effectiveQuality, effectiveMaxDim) ?: f.readBytes()
+                val compressed = compressImageBytes(f, effectiveQuality, effectiveMaxDim)
+                if (compressed != null) {
+                    reencodedToJpeg = true
+                    compressed
+                } else {
+                    f.readBytes()
+                }
             } else {
                 f.readBytes()
             }
@@ -990,7 +1012,11 @@ object DesktopAgent {
                 return null
             }
             val ext = path.substringAfterLast('.', "jpg").lowercase()
-            val mime = when (ext) {
+            // compressImageBytes 统一用 JPEG writer 重编码，得到的字节就是 JPEG；
+            // 此时不能再按原扩展名声明 mime，否则 png/gif/webp 会「声明 image/png
+            // 却是 JPEG 字节」。仅当压缩失败回落到原始字节（或非图片扩展名）时，
+            // 才按原扩展名推断。
+            val mime = if (reencodedToJpeg) "image/jpeg" else when (ext) {
                 "png" -> "image/png"; "gif" -> "image/gif"; "webp" -> "image/webp"
                 else -> "image/jpeg"
             }

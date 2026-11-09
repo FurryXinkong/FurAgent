@@ -32,12 +32,11 @@ import kotlin.time.Duration.Companion.seconds
 object ConfirmationBroker {
 
     /**
-     * 5 与桌面端对齐 子会话（后台子代理）协程名。
+     * 与桌面端对齐 子会话（后台子代理）协程名。
      *
-     * 该上下文里的确认请求没人能点，会一直排队到 300s 超时，
-     * 表现为「子会话卡住 5 分钟」。这里做一件事：
-     * 给标题加"子代理 ·"前缀，用户知道是谁在请求，
-     * 不会误以为是主会话在要权限。
+     * 该上下文里没有人工确认入口，request() 会检测到此标记并快速拒绝，
+     * 避免旧版「排队等到 300s 超时、子会话卡住 5 分钟」的问题。
+     * 标题前缀仍保留，便于日志里区分请求来源。
      */
     const val SUBSESSION_COROUTINE_NAME = "FurAgentSubSession"
 
@@ -59,6 +58,20 @@ object ConfirmationBroker {
         ]?.name == SUBSESSION_COROUTINE_NAME
         val displayTitle = if (fromSub) "子代理 · $title" else title
         AgentLogger.log("SYS", "[确认] 请求：$displayTitle")
+
+        // 子代理在后台跑，UI 上没人能点这个弹窗。旧行为是入队后干等 300 秒
+        // 超时才判为拒绝，表现为「子会话莫名卡住 5 分钟」。这里直接快速拒绝，
+        // 让主流程立刻拿到明确的失败原因，而不是被拖死。
+        // 注意：write_file 类确认本来就在 ToolRegistry 里对子会话跳过，
+        // 这条只兜住 execute_shell / ffmpeg / file_op 等仍会走到这里的分支。
+        if (fromSub) {
+            AgentLogger.log(
+                "SYS",
+                "[确认] 子代理请求无人工确认入口，已快速拒绝：$displayTitle"
+            )
+            return false
+        }
+
         val entry = Entry(PendingConfirm(displayTitle, message), CompletableDeferred())
 
         val toPublish: PendingConfirm?

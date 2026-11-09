@@ -107,6 +107,7 @@ fun MemoryPage(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding())
+                .imePadding()
         ) {
             GlassSheen(
                 modifier = Modifier.fillMaxWidth(),

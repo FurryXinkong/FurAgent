@@ -57,7 +57,7 @@ object RemoteTools {
         return when (op) {
             "status" -> doPcStatus()
             "list_tools" -> doPcListTools()
-            "call" -> doPcCall(args)
+            "call" -> doPcCall(args, settings)
             "send_file" -> doPcSendFile(args, settings)
             "receive_file" -> doPcReceiveFile(args, settings)
             "wake" -> doPcWake(args, context)
@@ -123,9 +123,22 @@ object RemoteTools {
         return sb.toString()
     }
 
-    private suspend fun doPcCall(args: JSONObject): String {
+    private suspend fun doPcCall(
+        args: JSONObject, settings: AppSettings, skipConfirm: Boolean = false
+    ): String {
         val tool = args.optString("tool", "").trim()
         if (tool.isBlank()) return "失败：未提供 tool 参数"
+
+        // 远程调用确认（默认关闭）。桥接本身已有 token 认证，
+        // 这里补的是「AI 主动发起」这一侧的显式人工授权。
+        if (settings.requireConfirmRemoteCall && !skipConfirm) {
+            val preview = args.optJSONObject("args")?.toString()?.take(400) ?: "{}"
+            val approved = net.xinkong.furagent.core.ConfirmationBroker.request(
+                "远程工具调用确认",
+                "AI 请求让电脑端 FurAgent 执行工具「$tool」。\n\n参数：$preview\n\n是否允许？"
+            )
+            if (!approved) return "用户已拒绝远程工具调用（requireConfirmRemoteCall 已开启）"
+        }
 
         val toolArgs = args.optJSONObject("args") ?: JSONObject()
         val timeoutSec = args.optInt("timeout", 120).coerceIn(5, 600)
@@ -179,7 +192,7 @@ object RemoteTools {
                     })
                     put("timeout", 60)
                 }
-                val result = doPcCall(callArgs)
+                val result = doPcCall(callArgs, settings, skipConfirm = true)
                 if (result.startsWith("失败")) result
                 else "已发送到电脑：$localPath（${formatFileSize(bytes.size.toLong())}）"
             } catch (e: Exception) {
@@ -252,7 +265,7 @@ object RemoteTools {
                     })
                     put("timeout", 60)
                 }
-                val result = doPcCall(callArgs)
+                val result = doPcCall(callArgs, settings, skipConfirm = true)
                 if (result.startsWith("失败")) {
                     // 点破原因：大文件被挡是回退通道的限制，不是网络坏了
                     return@withContext if (result.contains("文件过大")) {

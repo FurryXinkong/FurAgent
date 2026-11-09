@@ -75,6 +75,8 @@ object SettingsStore {
             requireConfirmShell = prefs.getBoolean("confirm_shell", true),
             requireConfirmPython = prefs.getBoolean("confirm_python", true),
             requireConfirmFfmpegOverwrite = prefs.getBoolean("confirm_ffmpeg_overwrite", true),
+            requireConfirmUiAction = prefs.getBoolean("confirm_ui_action", false),
+            requireConfirmRemoteCall = prefs.getBoolean("confirm_remote_call", false),
             enableMemory = prefs.getBoolean("enable_memory", true),
             allowedPaths = prefs.getString("allowed_paths", "/sdcard")?.split("|")
                 ?: listOf("/sdcard"),
@@ -151,6 +153,8 @@ object SettingsStore {
                 .putBoolean("confirm_shell", s.requireConfirmShell)
                 .putBoolean("confirm_python", s.requireConfirmPython)
                 .putBoolean("confirm_ffmpeg_overwrite", s.requireConfirmFfmpegOverwrite)
+                .putBoolean("confirm_ui_action", s.requireConfirmUiAction)
+                .putBoolean("confirm_remote_call", s.requireConfirmRemoteCall)
                 .putBoolean("enable_memory", s.enableMemory)
                 .putString("allowed_paths", s.allowedPaths.joinToString("|"))
                 .putString("blocked_paths", s.blockedPaths.joinToString("|"))

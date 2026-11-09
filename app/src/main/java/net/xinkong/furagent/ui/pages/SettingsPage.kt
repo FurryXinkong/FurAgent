@@ -718,6 +718,18 @@ fun SettingsPage(
                             subtitle = "输出文件已存在时弹窗",
                             checked = local.requireConfirmFfmpegOverwrite
                         ) { quickSave(local.copy(requireConfirmFfmpegOverwrite = it)) }
+                        PocoDivider(startIndent = 16.dp)
+                        PocoSwitchRow(
+                            title = "屏幕操作前确认",
+                            subtitle = "点击 / 滑动 / 输入 / 系统按键每次弹窗；开启后无人值守自动化会中断。读取 UI 树不受影响",
+                            checked = local.requireConfirmUiAction
+                        ) { quickSave(local.copy(requireConfirmUiAction = it)) }
+                        PocoDivider(startIndent = 16.dp)
+                        PocoSwitchRow(
+                            title = "远程调用前确认",
+                            subtitle = "手机调电脑工具、电脑调手机写/执行类工具时弹窗。桥接 token 认证之外的额外授权层",
+                            checked = local.requireConfirmRemoteCall
+                        ) { quickSave(local.copy(requireConfirmRemoteCall = it)) }
                     }
                 }
                 item { Spacer(Modifier.height(8.dp)) }

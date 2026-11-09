@@ -294,6 +294,7 @@ fun EnvStorePage(onBack: () -> Unit) {
             Modifier
                 .fillMaxSize()
                 .padding(top = padding.calculateTopPadding())
+                .imePadding()
         ) {
             GlassSheen(
                 modifier = Modifier.align(Alignment.TopCenter),

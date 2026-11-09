@@ -18,7 +18,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.data.*
 import net.xinkong.furagent.desktop.system.DesktopVersion
 import net.xinkong.furagent.desktop.system.TempCleaner
@@ -1461,16 +1463,20 @@ private fun EnvStatusBlock() {
     val envKey = remember(refreshKey) {
         try { System.getenv(ApiKeyResolver.ENV_NAME) } catch (_: Throwable) { null }
     }
-    val configKey = remember(refreshKey) {
-        try {
-            val f = ApiKeyResolver.configFile()
-            if (f.exists()) {
-                f.readText(Charsets.UTF_8).lineSequence()
-                    .map { it.trim() }
-                    .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
-            } else null
-        } catch (_: Exception) { null }
+    val configKeyState = remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(refreshKey) {
+        configKeyState.value = withContext(Dispatchers.IO) {
+            try {
+                val f = ApiKeyResolver.configFile()
+                if (f.exists()) {
+                    f.readText(Charsets.UTF_8).lineSequence()
+                        .map { it.trim() }
+                        .firstOrNull { it.isNotBlank() && !it.startsWith("#") }
+                } else null
+            } catch (_: Exception) { null }
+        }
     }
+    val configKey = configKeyState.value
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (!envKey.isNullOrBlank()) {

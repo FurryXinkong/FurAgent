@@ -41,6 +41,7 @@ import net.xinkong.furagent.ui.theme.AppRadius
  */
 @Composable
 fun SkillPage(onBack: () -> Unit) {
+    ApplyBackgroundBlur(true)
     val context = androidx.compose.ui.platform.LocalContext.current
     // 用 Composable 作用域的 scope，避免每次执行脚本新建 MainScope() 泄漏
     val scope = rememberCoroutineScope()

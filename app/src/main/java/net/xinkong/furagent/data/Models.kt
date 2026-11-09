@@ -123,6 +123,18 @@ data class AppSettings(
     val requireConfirmPython: Boolean = true,
     /* FFmpeg 输出文件已存在时是否弹覆盖确认 */
     val requireConfirmFfmpegOverwrite: Boolean = true,
+    /**
+     * 屏幕控制（ui 工具的 action/gesture/global）是否每次弹人工确认。
+     * 默认关闭：Agent 自动化依赖连续点击/输入，逐次确认会让无人值守失效；
+     * 需要更严格管控时由用户在设置里打开。dump/find/status 属只读，永不受影响。
+     */
+    val requireConfirmUiAction: Boolean = false,
+    /**
+     * 远程调用确认：手机端 pc(op=call) 调电脑工具、以及电脑端经桥接调手机端
+     * 工具时是否弹人工确认。默认关闭以保持现有自动化；
+     * 桥接本身已有 token 认证，本开关是额外的显式授权层。
+     */
+    val requireConfirmRemoteCall: Boolean = false,
     val enableMemory: Boolean = true,
     val allowedPaths: List<String> = listOf("/sdcard"),
     val blockedPaths: List<String> = listOf("/data", "/system", "/vendor", "/proc", "/sys"),

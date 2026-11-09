@@ -695,10 +695,14 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         }
         isSwitchingSession = true
         currentSessionId = id
-        val loaded = SessionStore.load(context, id)
-        chatHistory = loaded?.messages ?: emptyList()
-        currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
-        isSwitchingSession = false
+        // 与 switchToSession 一致：让出一帧让占位符真正显示，读盘移到 IO。
+        scope.launch {
+            delay(16.milliseconds)
+            val loaded = withContext(Dispatchers.IO) { SessionStore.load(context, id) }
+            chatHistory = loaded?.messages ?: emptyList()
+            currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
+            isSwitchingSession = false
+        }
     }
 
     // 首次运行引导
@@ -810,10 +814,17 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
         if (isLoading) interruptAgent()
         isSwitchingSession = true
         currentSessionId = id
-        val loaded = SessionStore.load(context, id)
-        chatHistory = loaded?.messages ?: emptyList()
-        currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
-        isSwitchingSession = false
+        // 旧实现是 true → 同步读盘 → false，全在同一个点击回调里，
+        // 中间没有一帧，Compose 永远看不到 true，切换占位符是死代码；
+        // 而且长会话读盘在主线程会卡住动画。改成让出一帧 + IO 线程读盘，
+        // 占位符真正生效，滚动也不会被同步 IO 打断。
+        scope.launch {
+            delay(16.milliseconds)
+            val loaded = withContext(Dispatchers.IO) { SessionStore.load(context, id) }
+            chatHistory = loaded?.messages ?: emptyList()
+            currentSessionCreatedAt = loaded?.createdAt ?: System.currentTimeMillis()
+            isSwitchingSession = false
+        }
     }
 
     fun duplicateSession(id: String) {
@@ -1978,6 +1989,34 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                         tint = MaterialTheme.colorScheme.onBackground
                                     )
                                 }
+                                // 实时屏幕投屏开关（手机端本地入口）。
+                                // 桌面端也能通过 phone_remote(op=mirror_start) 远程触发，
+                                // 但部分系统限制后台启动页面，所以这里保留一个必定可用的开关。
+                                TextButton(onClick = {
+                                    val frames = net.xinkong.furagent.service.ScreenMirrorFrames
+                                    if (frames.isActive()) {
+                                        net.xinkong.furagent.service.ScreenMirrorService.stop(context)
+                                        notifyToast(context, "已停止实时投屏")
+                                    } else {
+                                        try {
+                                            context.startActivity(
+                                                Intent(
+                                                    context,
+                                                    ScreenMirrorPermissionActivity::class.java
+                                                )
+                                            )
+                                            notifyToast(context, "请在系统弹窗点「立即开始」开启投屏")
+                                        } catch (e: Exception) {
+                                            notifyToast(context, "开启投屏失败：${e.message}")
+                                        }
+                                    }
+                                }) {
+                                    Text(
+                                        "投屏",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                             },
                             colors = TopAppBarDefaults.topAppBarColors(
                                 containerColor = Color.Transparent,
@@ -2083,7 +2122,11 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         }
                         itemsIndexed(
                             items = chatItems,
-                            key = { _, it -> it.key },
+                            // 跨会话隔离：日期分隔线等固定 key（如 "date_今天"）在 A/B 两个
+                            // 会话里完全相同，会被 Compose 判定为「保留项」并做位移动画，
+                            // 旧会话的 item 因此可能留在新列表里。加上会话前缀后，切会话时
+                            // 全部 item 换新 key → 旧项立即移除、新项淡入，不再有复用与残影。
+                            key = { _, it -> "${currentSessionId}_${it.key}" },
                             contentType = { _, item ->
                                 when (item) {
                                     is ChatListItem.ToolsGroup -> "tools_group"
@@ -2094,7 +2137,12 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             }
                         ) { index, item ->
                             // 新消息淡入 + 位移动画（参考主流 AI 客户端）
-                            Box(Modifier.animateItem()) {
+                            // 切会话时 chatItems 会整表替换：若保留默认淡出，旧会话所有气泡
+                            // 会以半透明状态留在布局里（气泡底色本身也是半透明），再被切会话
+                            // 后的 scrollToItem 打断动画，就会卡成「烧屏」残影。
+                            // 与桌面端 ChatPage.animateItem(fadeOutSpec = null) 对齐：
+                            // 被移除的 item 立即消失，新消息淡入照常保留。
+                            Box(Modifier.animateItem(fadeOutSpec = null)) {
                             when (item) {
                                 is ChatListItem.Single -> {
                                     val msg = item.msg

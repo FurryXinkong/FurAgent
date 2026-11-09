@@ -81,6 +81,7 @@ fun outputDir(context: android.content.Context, sub: String): java.io.File {
     "media_session" to "媒体控制",
     "notifications" to "通知",
     "ui" to "屏幕控制",
+    "adb" to "远程协助",
     "generate_image" to "AI 生图"
 )
 
@@ -103,6 +104,7 @@ private const val RAW_PRIVATE_TOOLS_JSON = """
   {"type":"function","function":{"name":"get_location","description":"获取当前经纬度和可读地址。","parameters":{"type":"object","properties":{}}}},
   {"type":"function","function":{"name":"add_contact","description":"打开系统新建联系人页面。","parameters":{"type":"object","properties":{"name":{"type":"string"},"phone":{"type":"string"}},"required":["name"]}}},
   {"type":"function","function":{"name":"download_file","description":"从 URL 下载文件。支持多线程分片加速、断点续传、代理（走梯子）。【线程数】threads 参数由你（AI）按情况判断：小文件（<1MB）用 1；大文件（>10MB）且服务器支持 Range 时可用 4~8；不确定就用 1（最稳）。服务器不支持 Range 时会自动降级为单线程。【代理】需要走梯子时传 proxy，如 http://127.0.0.1:7890；不传则自动读环境变量 HTTP_PROXY/HTTPS_PROXY。需确认。","parameters":{"type":"object","properties":{"url":{"type":"string","description":"下载地址"},"save_path":{"type":"string","description":"保存路径"},"threads":{"type":"integer","description":"下载线程数，由 AI 判断。默认 1。大文件可 4~8，服务器不支持 Range 时自动降级为 1"},"proxy":{"type":"string","description":"可选代理，如 http://127.0.0.1:7890（走梯子）。不传则读环境变量 HTTP_PROXY/HTTPS_PROXY"},"resume":{"type":"boolean","description":"断点续传，默认 false"}},"required":["url","save_path"]}}},
+  {"type":"function","function":{"name":"adb","description":"安卓设备远程协助（也可由电脑端经 phone_remote 调用，等价于 adb 的常用能力）。op=status 查看控制通道与屏幕参数；op=dump 取 UI 元素树；op=find 按文本查找元素；op=tap 点击坐标（x/y）；op=long_press 长按；op=swipe 滑动（start_x/start_y/end_x/end_y/duration_ms）；op=text 输入文本（带 node_id 时精确写入输入框，否则走 input text）；op=key 发按键（back/home/recents/enter 或数字 keycode）；op=screencap 截屏并返回手机端文件路径（电脑端可用 phone_receive_file 拉取）；op=shell 执行任意 shell 命令（需 Shizuku，沿用 requireConfirmShell 确认）；op=apps 列出已装应用；op=launch 按包名启动应用。屏幕操作优先走无障碍服务，Shizuku 作兜底。op=mirror_start 发起实时屏幕投屏（手机会弹一次系统录屏授权，之后持续推流，不是单张截图）；op=mirror_stop 停止投屏；op=mirror_status 查询投屏状态、帧尺寸与取流端口。","parameters":{"type":"object","properties":{"op":{"type":"string","enum":["status","dump","find","tap","long_press","swipe","text","key","screencap","shell","apps","launch","mirror_start","mirror_stop","mirror_status"]},"x":{"type":"integer"},"y":{"type":"integer"},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"duration_ms":{"type":"integer"},"text":{"type":"string"},"node_id":{"type":"string"},"key":{"type":"string"},"command":{"type":"string"},"timeout":{"type":"integer"},"package":{"type":"string"},"third_party":{"type":"boolean"},"max_depth":{"type":"integer"},"max_nodes":{"type":"integer"},"regex":{"type":"string"},"class_name":{"type":"string"},"resource_id":{"type":"string"},"max_results":{"type":"integer"}},"required":["op"]}}},
   {"type":"function","function":{"name":"generate_image","description":"用 AI 生成图片并保存到本地。需要先在「设置 → 文生图模型」里选中一个生图模型。生成后返回图片路径，可用 view_image 查看。【保存位置】建议存到 /sdcard/FurAgent/images/。save_path 可省略，省略时自动存到 /sdcard/FurAgent/images/ 下（时间戳命名）。","parameters":{"type":"object","properties":{"prompt":{"type":"string","description":"图片描述（越具体越好）"},"save_path":{"type":"string","description":"保存路径。推荐存到 /sdcard/FurAgent/images/xxx.png。可省略"},"size":{"type":"string","description":"尺寸，如 1024x1024 / 1024x1536 / 1792x1024，默认 1024x1024"},"model":{"type":"string","description":"可选，覆盖配置里的生图模型名"}},"required":["prompt"]}}},
   {"type":"function","function":{"name":"screenshot","description":"截取当前屏幕并附加到下一轮上下文。需要 Shizuku 权限 + 当前模型支持图片输入。","parameters":{"type":"object","properties":{}}}},
   {"type":"function","function":{"name":"view_image","description":"加载本地图片并附加到下一轮上下文。需要当前模型支持图片输入。","parameters":{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}}},
@@ -156,6 +158,7 @@ object ToolRegistry {
         MediaTools.TOOLS.forEach { n -> map[n] = { a, c, s -> MediaTools.execute(n, a, c, s) } }
         RemoteTools.TOOLS.forEach { n -> map[n] = { a, c, s -> RemoteTools.execute(n, a, c, s) } }
         ScreenTools.TOOLS.forEach { n -> map[n] = { a, c, s -> ScreenTools.execute(n, a, c, s) } }
+        RemoteControlTools.TOOLS.forEach { n -> map[n] = { a, c, s -> RemoteControlTools.execute(n, a, c, s) } }
         ImageGenTools.TOOLS.forEach { n -> map[n] = { a, c, s -> ImageGenTools.execute(n, a, c, s) } }
         map
     }
@@ -1340,6 +1343,21 @@ object ToolRegistry {
                 if (name == "write_file") {
                     confirmThenWrite(args, host, settings, context)
                 } else {
+                    // execute_shell 走 PRIVATE_ROUTER，绕过了 CommonTools 的 PathGuard。
+                    // 这里补一道：命令里出现的绝对路径若命中 blockedPaths 就拒绝，
+                    // 防止借 shell 读写 /data /system 等目录。只拦禁止路径，
+                    // 不强制要求路径必须在 allowedPaths 内，避免误杀正常系统命令。
+                    if (name == "execute_shell") {
+                        val command = args.optString("command", "")
+                        val blocked = settings.blockedPaths.firstOrNull { bp ->
+                            Regex("""(?<![\w./-])/[\w./\-*]+""")
+                                .findAll(command).any { it.value.startsWith(bp) }
+                        }
+                        if (blocked != null) {
+                            return@withContext "失败：shell 命令命中禁止路径 $blocked"
+                        }
+                    }
+
                     val commonResult = CommonTools.execute(name, args, host)
 
                     if (commonResult != null) {

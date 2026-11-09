@@ -169,8 +169,12 @@ fun FurAgentTheme(
         label = "darkFactor"
     )
 
-    val colorScheme = remember(darkFactor) {
-        lerpColorScheme(LightColors, DarkColors, darkFactor)
+    // 480ms 主题动画期间 darkFactor 每帧都变，旧实现每帧重建整套 ColorScheme
+    //（30+ Color 对象）并触发下游全量重组。量化到 20 档后色阶仍平滑，
+    // 但整段动画最多重建 21 次而不是每帧一次。
+    val darkStep = (darkFactor * 20f).toInt().coerceIn(0, 20)
+    val colorScheme = remember(darkStep) {
+        lerpColorScheme(LightColors, DarkColors, darkStep / 20f)
     }
 
     val view = LocalView.current

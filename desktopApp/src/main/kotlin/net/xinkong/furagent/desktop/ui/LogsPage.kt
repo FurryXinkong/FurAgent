@@ -22,6 +22,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
@@ -76,11 +78,13 @@ fun LogsPage() {
     var contextMenuFor by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(refreshKey) {
-        availableDates = DesktopLogger.listLogDates()
+        availableDates = withContext(Dispatchers.IO) { DesktopLogger.listLogDates() }
     }
 
     LaunchedEffect(selectedDate, refreshKey) {
-        fileEntries = if (selectedDate != null) DesktopLogger.loadFromFile(selectedDate!!) else emptyList()
+        fileEntries = if (selectedDate != null) {
+            withContext(Dispatchers.IO) { DesktopLogger.loadFromFile(selectedDate!!) }
+        } else emptyList()
     }
 
     val sourceEntries = if (selectedDate == null) liveEntries else fileEntries
