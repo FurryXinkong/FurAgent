@@ -376,7 +376,10 @@ object ScreenMirrorFrames {
 
     data class Frame(val version: Long, val data: ByteArray, val keyframe: Boolean)
 
-    private const val MAX_QUEUE = 90   // ~3 秒 @30fps，正常根本用不满
+    // 队列必须很小：解码端只要略慢于编码端，队列就会以「生产−消费」的速率越堆越满，
+    // 而且消费=生产时永远排不空（单向棘轮）→ 延迟从 0 涨到几秒。砍到 6 帧（~200ms @30fps）
+    // 把延迟钉死在上限，慢时丢最旧帧（解码端等下一个关键帧恢复），绝不累积。
+    private const val MAX_QUEUE = 6
 
     @Suppress("PLATFORM_CLASS_MAPPED_TO_KOTLIN")
     private val lock = java.lang.Object()
