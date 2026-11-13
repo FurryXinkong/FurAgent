@@ -194,10 +194,9 @@ object HttpFileServer {
     /**
      * 解析 HTTP 请求里的 path 参数。
      *
-     *   1. canonicalPath 展开 `..` 与软链，得到真实访问路径
-     *   2. 明确拒绝系统敏感目录（Linux /proc /sys /dev /boot + Windows System32）
-     *   3. 返回 null 表示拒绝访问（不改 resolveRemotePath 的"绝对路径原样访问"能力，
-     *      桌面端设计上允许用户下载任意文件，只做最低限度系统目录防护）
+     * 仅做 canonicalPath 展开（`..` 与软链），得到规范化绝对路径；
+     * 不对任何目录做拒绝，桌面端允许用户下载任意文件，
+     * 路径能否读取交由操作系统权限决定。
      */
     private fun resolveRemotePath(rawPath: String): String? {
         if (rawPath.isBlank()) return null
@@ -206,25 +205,11 @@ object HttpFileServer {
         } else {
             File(DesktopSettingsHolder.current.receiveDir, rawPath)
         }
-        val canonical = try {
+        return try {
             file.canonicalPath
         } catch (_: Exception) {
             file.absolutePath
         }
-        val lower = canonical.lowercase(Locale.ROOT).replace('\\', '/')
-        // Linux / macOS 系统敏感目录
-        for (s in listOf("/proc", "/sys", "/dev", "/boot")) {
-            if (lower == s || lower.startsWith("$s/")) {
-                DesktopLogger.warn("HttpServer", "拒绝访问系统目录：$s（请求 $rawPath）")
-                return null
-            }
-        }
-        // Windows 系统敏感目录
-        if (lower.contains("/windows/system32") || lower.contains("/windows/syswow64")) {
-            DesktopLogger.warn("HttpServer", "拒绝访问 Windows 系统目录（请求 $rawPath）")
-            return null
-        }
-        return canonical
     }
 
     private fun handleDownload(ex: HttpExchange) {
@@ -243,9 +228,9 @@ object HttpFileServer {
                 respond(ex, 400, "missing path", "text/plain")
                 return
             }
-            // resolveRemotePath 返回 null 表示拒绝访问（系统敏感目录或规范化失败）
+            // resolveRemotePath 仅在空路径时返回 null
             val actualPath = resolveRemotePath(rawPath) ?: run {
-                respond(ex, 403, "path not allowed", "text/plain")
+                respond(ex, 400, "path is empty", "text/plain")
                 return
             }
             val file = File(actualPath)
@@ -428,9 +413,9 @@ object HttpFileServer {
                 respond(ex, 400, "missing path", "text/plain")
                 return
             }
-            // resolveRemotePath 返回 null 表示拒绝访问
+            // resolveRemotePath 仅在空路径时返回 null
             val actualPath = resolveRemotePath(rawPath) ?: run {
-                respond(ex, 403, "path not allowed", "text/plain")
+                respond(ex, 400, "path is empty", "text/plain")
                 return
             }
             val file = File(actualPath)

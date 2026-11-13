@@ -136,8 +136,6 @@ data class AppSettings(
      */
     val requireConfirmRemoteCall: Boolean = false,
     val enableMemory: Boolean = true,
-    val allowedPaths: List<String> = listOf("/sdcard"),
-    val blockedPaths: List<String> = listOf("/data", "/system", "/vendor", "/proc", "/sys"),
     val profiles: List<ModelProfile> = DEFAULT_PROFILES,
     val currentProfileId: String = DEFAULT_PROFILES.first().id,
     val customSystemPrompt: String = "",

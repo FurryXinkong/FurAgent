@@ -29,10 +29,6 @@ object AndroidHttpFileServer {
 
     @Volatile private var appContext: Context? = null
 
-    @Volatile private var allowedPaths: List<String> = listOf("/sdcard")
-    @Volatile private var blockedPaths: List<String> =
-        listOf("/data", "/system", "/vendor", "/proc", "/sys")
-
     @Volatile private var fileReceivedCallback: ((String) -> Unit)? = null
 
     /**
@@ -171,11 +167,6 @@ object AndroidHttpFileServer {
 
     fun setReceiveDir(dir: String) { if (dir.isNotBlank()) receiveDir = dir }
 
-    fun setPathPolicy(allowed: List<String>, blocked: List<String>) {
-        allowedPaths = allowed.map { it.trim() }.filter { it.isNotBlank() }
-        blockedPaths = blocked.map { it.trim() }.filter { it.isNotBlank() }
-    }
-
     fun setFileReceivedCallback(cb: (String) -> Unit) {
         fileReceivedCallback = cb
     }
@@ -245,8 +236,8 @@ object AndroidHttpFileServer {
                 "GET" if path == "/download" -> {
                     val remoteRaw = params["path"] ?: ""
                     val remote = resolveRemotePath(remoteRaw)
-                    val resolved = PathResolver.check(remote, allowedPaths, blockedPaths).resolved
-                    if (resolved == null) { respondText(output, 403, "path not allowed"); return }
+                    val resolved = PathResolver.check(remote).resolved
+                    if (resolved == null) { respondText(output, 400, "path is empty"); return }
                     val f = File(resolved)
                     if (!f.exists() || !f.isFile) { respondText(output, 404, "not found"); return }
                     respondFile(output, f)
@@ -263,34 +254,12 @@ object AndroidHttpFileServer {
                         if (dirParam.isBlank()) {
                             File(receiveDir)
                         } else if (dirParam.startsWith("/") || dirParam.contains(":\\")) {
-                            // 绝对路径：能过白名单就用，否则回退 receiveDir
-                            val resolved = PathResolver.check(
-                                dirParam, allowedPaths, blockedPaths
-                            ).resolved
-                            if (resolved != null) {
-                                File(resolved)
-                            } else {
-                                AgentLogger.log(
-                                    "BRIDGE",
-                                    "upload dir 不在白名单，回退到 receiveDir：$dirParam → $receiveDir"
-                                )
-                                File(receiveDir)
-                            }
+                            // 绝对路径：直接规范化使用，不再做目录白名单校验
+                            File(PathResolver.check(dirParam).resolved ?: dirParam)
                         } else {
                             // 相对路径：拼到 receiveDir 下
                             val candidate = File(receiveDir, dirParam)
-                            val resolved = PathResolver.check(
-                                candidate.absolutePath, allowedPaths, blockedPaths
-                            ).resolved
-                            if (resolved == null) {
-                                AgentLogger.log(
-                                    "BRIDGE",
-                                    "upload 相对 dir 被拒，回退到 receiveDir：$dirParam"
-                                )
-                                File(receiveDir)
-                            } else {
-                                File(resolved)
-                            }
+                            File(PathResolver.check(candidate.absolutePath).resolved ?: candidate.absolutePath)
                         }
                     }
                     if (!targetDir.exists()) targetDir.mkdirs()
@@ -354,8 +323,8 @@ object AndroidHttpFileServer {
                 "POST" if path == "/delete" -> {
                     val remoteRaw = params["path"] ?: ""
                     val remote = resolveRemotePath(remoteRaw)
-                    val resolved = PathResolver.check(remote, allowedPaths, blockedPaths).resolved
-                    if (resolved == null) { respondText(output, 403, "path not allowed"); return }
+                    val resolved = PathResolver.check(remote).resolved
+                    if (resolved == null) { respondText(output, 400, "path is empty"); return }
 
                     val f = File(resolved)
                     if (!f.exists()) { respondText(output, 404, "not found"); return }

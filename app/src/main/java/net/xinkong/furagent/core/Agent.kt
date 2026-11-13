@@ -109,7 +109,7 @@ object AgentSession {
 
 object Prompts {
     val DEFAULT_SYSTEM = """
-你是 FurAgent，运行在用户 Android 手机上。时间 {TIME}，可访问 {PATHS}。工具用法见各 description。
+你是 FurAgent，运行在用户 Android 手机上。时间 {TIME}。工具用法见各 description。
 
 【工具发现】tools 只含核心工具 + tool_search/tool_load。
 缺工具→先看 tool_search 目录，再 tool_load(name=) 或 tool_search(query=)。加载后下轮可用，本轮勿重复搜。
@@ -639,7 +639,8 @@ suspend fun runAgentLoop(
     val now = DateFormats.formatDate()
     var systemPrompt = Prompts.DEFAULT_SYSTEM
         .replace("{TIME}", now)
-        .replace("{PATHS}", settings.allowedPaths.joinToString(", "))
+        // 保留 {PATHS} 占位符替换以兼容用户自定义提示词；不再注入任何目录限制清单。
+        .replace("{PATHS}", "设备上的文件")
 
     if (settings.customSystemPrompt.isNotBlank()) {
         systemPrompt += "\n\n【用户附加指令】\n" + settings.customSystemPrompt

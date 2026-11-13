@@ -999,27 +999,6 @@ object PcBridgeClient {
             }
         }
 
-        // execute_shell 走 PRIVATE_ROUTER 不过 PathGuard：这里补一道命中
-        // blockedPaths 的绝对路径检查，避免远端借 shell 绕开路径策略。
-        if (tool == "execute_shell") {
-            val command = try { JSONObject(rawArgs).optString("command", "") } catch (_: Exception) { "" }
-            val blocked = settings.blockedPaths.firstOrNull { bp ->
-                Regex("""(?<![\w./-])/[\w./\-*]+""")
-                    .findAll(command).any { it.value.startsWith(bp) }
-            }
-            if (blocked != null) {
-                try {
-                    ws.send(
-                        BridgeMessage.toolResult(
-                            msg.id, EndpointId.PHONE, false,
-                            "失败：shell 命令命中禁止路径 $blocked"
-                        ).encodeToString()
-                    )
-                } catch (_: Exception) { }
-                return
-            }
-        }
-
         val argsJson = rewriteWriteArgs(tool, rawArgs, settings)
 
         val pair: Pair<String, Boolean> = try {

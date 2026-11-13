@@ -119,9 +119,6 @@ object ToolRegistry {
     @Volatile
     private var cachedHost: AndroidToolHost? = null
 
-    @Volatile
-    private var cachedHostKey: String = ""
-
     // MCP 工具列表每次从 McpManager.allTools() 重建，displayName / findToolNameByDisplay
     // 是高频调用路径。加 2 秒 TTL 缓存。
     @Volatile private var cachedMcpForward: Map<String, String> = emptyMap()
@@ -163,18 +160,11 @@ object ToolRegistry {
         map
     }
 
-    private fun getHost(context: Context, settings: AppSettings): AndroidToolHost {
-        val key = settings.allowedPaths.joinToString("|") + "::" +
-                settings.blockedPaths.joinToString("|")
+    private fun getHost(context: Context): AndroidToolHost {
         val existing = cachedHost
-        if (existing != null && cachedHostKey == key) return existing
-        val host = AndroidToolHost(
-            context.applicationContext,
-            settings.allowedPaths,
-            settings.blockedPaths
-        )
+        if (existing != null) return existing
+        val host = AndroidToolHost(context.applicationContext)
         cachedHost = host
-        cachedHostKey = key
         return host
     }
 
@@ -689,7 +679,7 @@ object ToolRegistry {
                 val p = f.optString("path", "").trim()
                 if (p.isBlank()) continue
                 val resolved = host.resolvePath(p)
-                    ?: return "失败：路径不允许访问：$p"
+                    ?: return "失败：路径无效或为空：$p"
                 paths.add(resolved)
             }
             if (paths.isEmpty()) return "失败：files 数组为空或都缺少 path"
@@ -738,7 +728,7 @@ object ToolRegistry {
         if (pathStr.isBlank()) return "失败：未提供 path"
 
         val resolved = host.resolvePath(pathStr)
-            ?: return "失败：路径不允许访问：$pathStr"
+            ?: return "失败：路径无效或为空：$pathStr"
 
         val mode = args.optString("mode", "text")
         val content = args.optString("content", "")
@@ -1243,7 +1233,7 @@ object ToolRegistry {
         if (name == "history") {
             return@withContext HistoryTools.execute(                args,
                 context,
-                BackupHelper.backupDirFor(getHost(context, settings).trashDir())
+                BackupHelper.backupDirFor(getHost(context).trashDir())
             )
         }
 
@@ -1338,26 +1328,11 @@ object ToolRegistry {
                     "未知工具：$name"
                 }
             } else {
-                val host = getHost(context, settings)
+                val host = getHost(context)
 
                 if (name == "write_file") {
                     confirmThenWrite(args, host, settings, context)
                 } else {
-                    // execute_shell 走 PRIVATE_ROUTER，绕过了 CommonTools 的 PathGuard。
-                    // 这里补一道：命令里出现的绝对路径若命中 blockedPaths 就拒绝，
-                    // 防止借 shell 读写 /data /system 等目录。只拦禁止路径，
-                    // 不强制要求路径必须在 allowedPaths 内，避免误杀正常系统命令。
-                    if (name == "execute_shell") {
-                        val command = args.optString("command", "")
-                        val blocked = settings.blockedPaths.firstOrNull { bp ->
-                            Regex("""(?<![\w./-])/[\w./\-*]+""")
-                                .findAll(command).any { it.value.startsWith(bp) }
-                        }
-                        if (blocked != null) {
-                            return@withContext "失败：shell 命令命中禁止路径 $blocked"
-                        }
-                    }
-
                     val commonResult = CommonTools.execute(name, args, host)
 
                     if (commonResult != null) {

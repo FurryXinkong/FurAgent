@@ -7,9 +7,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class AndroidToolHost(
-    private val context: Context,
-    private val allowedPaths: List<String>,
-    private val blockedPaths: List<String>
+    private val context: Context
 ) : ToolHost {
 
     private val sdcardPath: String by lazy {
@@ -36,12 +34,7 @@ class AndroidToolHost(
 
         val expanded = expandAlias(t)
 
-        val result = PathResolver.check(expanded, allowedPaths, blockedPaths)
-        if (!result.ok) {
-            ToolLogger.log("ToolHost", "路径被拒绝：$input（${result.error}）")
-            return null
-        }
-        return result.resolved
+        return PathResolver.check(expanded).resolved
     }
 
     private fun expandAlias(path: String): String =

@@ -838,14 +838,6 @@ object SessionStore {
                     val s = prefs.getString("disabled_tools", "") ?: ""
                     s.split("|").map { it.trim() }.filter { it.isNotBlank() }.forEach { put(it) }
                 })
-                put("allowedPaths", JSONArray().apply {
-                    val s = prefs.getString("allowed_paths", "/sdcard") ?: "/sdcard"
-                    s.split("|").map { it.trim() }.filter { it.isNotBlank() }.forEach { put(it) }
-                })
-                put("blockedPaths", JSONArray().apply {
-                    val s = prefs.getString("blocked_paths", "/data|/system|/vendor|/proc|/sys") ?: ""
-                    s.split("|").map { it.trim() }.filter { it.isNotBlank() }.forEach { put(it) }
-                })
                 put("enableMemory", prefs.getBoolean("enable_memory", true))
                 put("notificationMode", prefs.getString("notification_mode", "off") ?: "off")
                 put("notifyTools", JSONArray().apply {
@@ -1026,22 +1018,6 @@ object SessionStore {
                             if (n.isNotBlank()) l.add(n)
                         }
                         putString("disabled_tools", l.joinToString("|"))
-                    }
-                    s.optJSONArray("allowedPaths")?.let { arr ->
-                        val l = mutableListOf<String>()
-                        for (i in 0 until arr.length()) {
-                            val p = arr.optString(i, "").trim()
-                            if (p.isNotBlank()) l.add(p)
-                        }
-                        if (l.isNotEmpty()) putString("allowed_paths", l.joinToString("|"))
-                    }
-                    s.optJSONArray("blockedPaths")?.let { arr ->
-                        val l = mutableListOf<String>()
-                        for (i in 0 until arr.length()) {
-                            val p = arr.optString(i, "").trim()
-                            if (p.isNotBlank()) l.add(p)
-                        }
-                        putString("blocked_paths", l.joinToString("|"))
                     }
                     putBoolean("enable_memory", s.optBoolean("enableMemory", true))
                     putString("notification_mode", s.optString("notificationMode", "off"))

@@ -149,8 +149,7 @@ object CommonTools {
 
         return try {
             // 优先用 host 提供的 temp 目录（trashDir 的上一级），避免 Android 上 "~"
-            // 展开成 /sdcard 导致落到 /sdcard/.furagent/temp（隐藏目录用户看不见，
-            // 且 allowedPaths 收紧后 resolvePath 会失败）。
+            // 展开成 /sdcard 导致落到 /sdcard/.furagent/temp（隐藏目录用户看不见）。
             val trashDir = host.trashDir()
             val dir = if (trashDir != null) {
                 File(trashDir).parentFile?.absolutePath
@@ -806,7 +805,7 @@ object CommonTools {
     private suspend fun doBatchReplace(args: JSONObject, host: ToolHost): ToolResult {
         val dirRaw = args.optString("dir", "").trim()
         if (dirRaw.isBlank()) return ToolResult.fail("未提供 dir")
-        val dir = host.resolvePath(dirRaw) ?: return ToolResult.fail("路径不允许访问：$dirRaw")
+        val dir = host.resolvePath(dirRaw) ?: return ToolResult.fail("路径无效或为空：$dirRaw")
         val pattern = args.optString("pattern", "").trim()
         if (pattern.isBlank()) return ToolResult.fail("未提供 pattern")
         val replacement = args.optString("replacement", "")
@@ -1126,7 +1125,7 @@ object CommonTools {
             }
         }
 
-        val path = host.resolvePath(pathRaw) ?: return ToolResult.fail("路径不允许访问：$pathRaw")
+        val path = host.resolvePath(pathRaw) ?: return ToolResult.fail("路径无效或为空：$pathRaw")
         if (!host.exists(path)) return ToolResult.fail("文件不存在")
         if (host.isDirectory(path)) return ToolResult.fail("这是目录")
         return try {
@@ -1197,7 +1196,7 @@ object CommonTools {
             host.resolvePath("~") ?: host.resolvePath("sdcard")
             ?: return ToolResult.fail("无法确定根目录")
         } else {
-            host.resolvePath(raw) ?: return ToolResult.fail("路径不允许访问：$raw")
+            host.resolvePath(raw) ?: return ToolResult.fail("路径无效或为空：$raw")
         }
 
         if (mode == "content" || mode == "grep") {
@@ -1363,7 +1362,7 @@ object CommonTools {
         val root = if (raw.isBlank()) {
             host.resolvePath("~") ?: return ToolResult.fail("无法确定根目录")
         } else {
-            host.resolvePath(raw) ?: return ToolResult.fail("路径不允许访问：$raw")
+            host.resolvePath(raw) ?: return ToolResult.fail("路径无效或为空：$raw")
         }
         if (!host.exists(root)) return ToolResult.fail("路径不存在：$root" + pathHint(root, false, host))
 
@@ -1425,7 +1424,7 @@ object CommonTools {
         val length = args.optInt("length", 512).coerceIn(1, 4096)
         if (raw.isBlank()) return ToolResult.fail("未提供 path（批量读多个文件用 paths:[...]）")
 
-        val path = host.resolvePath(raw) ?: return ToolResult.fail("路径不允许访问：$raw")
+        val path = host.resolvePath(raw) ?: return ToolResult.fail("路径无效或为空：$raw")
         if (!host.exists(path)) return ToolResult.fail("文件不存在：$path" + pathHint(path, false, host))
         if (host.isDirectory(path)) return ToolResult.fail("这是一个目录而非文件：$path" + pathHint(path, false, host))
 
@@ -1683,7 +1682,7 @@ object CommonTools {
                 val app = fObj.optBoolean("append", false)
                 val pRes = host.resolvePath(p)
                 if (pRes == null) {
-                    sb.append("[失败] 路径不允许访问：$p\n")
+                    sb.append("[失败] 路径无效或为空：$p\n")
                     continue
                 }
                 val success = if (app) {
@@ -1712,7 +1711,7 @@ object CommonTools {
         val mode = args.optString("mode", "text").lowercase(Locale.ROOT)
         if (raw.isBlank()) return ToolResult.fail("未提供 path")
 
-        val path = host.resolvePath(raw) ?: return ToolResult.fail("路径不允许访问：$raw")
+        val path = host.resolvePath(raw) ?: return ToolResult.fail("路径无效或为空：$raw")
 
         return when (mode) {
             "text" -> {

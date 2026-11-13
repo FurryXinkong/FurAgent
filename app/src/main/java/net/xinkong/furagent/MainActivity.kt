@@ -177,7 +177,6 @@ class MainActivity : ComponentActivity() {
         try {
             val settings = SettingsStore.load(prefs)
             AndroidHttpFileServer.setReceiveDir(settings.pcReceiveDir)
-            AndroidHttpFileServer.setPathPolicy(settings.allowedPaths, settings.blockedPaths)
             AndroidHttpFileServer.setFileReceivedCallback { path ->
                 try {
                     val file = File(path)
@@ -917,14 +916,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         "导入后更新接收目录失败：${e.javaClass.simpleName}: ${e.message}"
                     )
                 }
-                try {
-                    AndroidHttpFileServer.setPathPolicy(restored.allowedPaths, restored.blockedPaths)
-                } catch (e: Exception) {
-                    AgentLogger.log(
-                        "BRIDGE",
-                        "导入后更新路径策略失败：${e.javaClass.simpleName}: ${e.message}"
-                    )
-                }
             }
             if (sessionList.none { it.id == currentSessionId }) {
                 val first = sessionList.firstOrNull()
@@ -1227,15 +1218,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        try {
-            AndroidHttpFileServer.setPathPolicy(settings.allowedPaths, settings.blockedPaths)
-        } catch (e: Exception) {
-            AgentLogger.log(
-                "BRIDGE",
-                "初始化路径策略失败：${e.javaClass.simpleName}: ${e.message}"
-            )
-        }
-
         try {
             FloatingService.setBallVisible(false)
         } catch (e: Exception) {
@@ -2830,14 +2812,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                     "更新接收目录失败：${e.javaClass.simpleName}: ${e.message}"
                                 )
                             }
-                            try {
-                                AndroidHttpFileServer.setPathPolicy(newSettings.allowedPaths, newSettings.blockedPaths)
-                            } catch (e: Exception) {
-                                AgentLogger.log(
-                                    "BRIDGE",
-                                    "更新路径策略失败：${e.javaClass.simpleName}: ${e.message}"
-                                )
-                            }
                         }
                     )
 
@@ -2850,14 +2824,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         onSettingsChanged = { newSettings ->
                             settings = newSettings
                             SettingsStore.save(prefs, newSettings)
-                            try {
-                                AndroidHttpFileServer.setPathPolicy(newSettings.allowedPaths, newSettings.blockedPaths)
-                            } catch (e: Exception) {
-                                AgentLogger.log(
-                                    "BRIDGE",
-                                    "更新路径策略失败：${e.javaClass.simpleName}: ${e.message}"
-                                )
-                            }
                         },
                         onImportRequested = { json ->
                             currentPage = null
@@ -2892,9 +2858,6 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             SettingsStore.save(prefs, newSettings)
                             try {
                                 AndroidHttpFileServer.setReceiveDir(newSettings.pcReceiveDir)
-                            } catch (_: Exception) { }
-                            try {
-                                AndroidHttpFileServer.setPathPolicy(newSettings.allowedPaths, newSettings.blockedPaths)
                             } catch (_: Exception) { }
                         },
                         onBack = { currentPage = null }

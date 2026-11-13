@@ -78,10 +78,6 @@ object SettingsStore {
             requireConfirmUiAction = prefs.getBoolean("confirm_ui_action", false),
             requireConfirmRemoteCall = prefs.getBoolean("confirm_remote_call", false),
             enableMemory = prefs.getBoolean("enable_memory", true),
-            allowedPaths = prefs.getString("allowed_paths", "/sdcard")?.split("|")
-                ?: listOf("/sdcard"),
-            blockedPaths = prefs.getString("blocked_paths", "/data|/system|/vendor|/proc|/sys")?.split("|")
-                ?: listOf("/data", "/system", "/vendor", "/proc", "/sys"),
             profiles = profiles,
             currentProfileId = currentId,
             customSystemPrompt = prefs.getString("custom_system", "") ?: "",
@@ -156,8 +152,6 @@ object SettingsStore {
                 .putBoolean("confirm_ui_action", s.requireConfirmUiAction)
                 .putBoolean("confirm_remote_call", s.requireConfirmRemoteCall)
                 .putBoolean("enable_memory", s.enableMemory)
-                .putString("allowed_paths", s.allowedPaths.joinToString("|"))
-                .putString("blocked_paths", s.blockedPaths.joinToString("|"))
                 .putString("model_profiles", arr.toString())
                 .putString("current_profile_id", s.currentProfileId)
                 .putString("custom_system", s.customSystemPrompt)
