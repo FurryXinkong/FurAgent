@@ -214,7 +214,8 @@ object HttpFileServer {
 
     private fun handleDownload(ex: HttpExchange) {
         try {
-            if (ex.requestMethod != "GET") {
+            // 支持 HEAD：DownloadEngine.probe() 用 HEAD 探测长度，旧实现只认 GET 会 405。
+            if (ex.requestMethod != "GET" && ex.requestMethod != "HEAD") {
                 respond(ex, 405, "method not allowed", "text/plain")
                 return
             }
@@ -244,31 +245,32 @@ object HttpFileServer {
                 "Content-Disposition",
                 "attachment; filename=\"${file.name.replace("\"", "_")}\""
             )
-            // chunked 传输编码（sendResponseHeaders(200, 0)），显式 flush。
-            // 这是 JDK 官方推荐的流式大文件写法，OkHttp 完全支持 chunked 解码。
-            // 副作用：客户端看不到 Content-Length（resp.body.contentLength() 返回 -1），
-            //       下载进度条走不确定动画，功能不受影响。
-            ex.sendResponseHeaders(200, 0)
             val actualLen = file.length()
+            // 用固定长度响应代替 chunked(0)：客户端能拿到 Content-Length，
+            // 进度条可用，且手机端 PcBridgeClient 的「声明长度 vs 实收」完整性校验重新生效。
+            if (ex.requestMethod == "HEAD") {
+                ex.responseHeaders.set("Content-Length", actualLen.toString())
+                ex.sendResponseHeaders(200, -1L)
+                return
+            }
+            ex.sendResponseHeaders(200, actualLen)
             var written = 0L
             file.inputStream().use { input ->
                 ex.responseBody.use { out ->
-                    val buf = ByteArray(64 * 1024)
+                    val buf = ByteArray(128 * 1024)
                     while (true) {
                         val n = input.read(buf)
                         if (n < 0) break
                         if (n == 0) continue
                         out.write(buf, 0, n)
-                        out.flush()
                         written += n
                     }
                 }
             }
-            // 声明长度 > 0 时做个兜底日志（chunked 模式下不再是致命错误，只是记录）
-            if (actualLen > 0 && written != actualLen) {
+            if (written != actualLen) {
                 DesktopLogger.warn(
                     "HttpServer",
-                    "download 字节数不符：声明 $actualLen 实际 $written（chunked 模式，客户端仍能正确接收）"
+                    "download 字节数不符：声明 $actualLen 实际 $written"
                 )
             }
             // 诊断加强 下载完成打完整日志：路径 + 字节数 + 远端地址。

@@ -136,11 +136,10 @@ object DownloadManager {
             val u = java.net.URI(task.url).toURL()
             conn = u.openConnection() as HttpURLConnection
             conn.connectTimeout = 30_000
-            // readTimeout 原为 0（无限）。但 TCP 卡住（对端挂死、中间设备丢包）时
-            // input.read() 会永久阻塞，协程取消里的 ensureActive() 检查不到，
-            // 导致「用户点了取消但下载永远不结束」。改成 60 秒无数据则超时，
-            // 既给慢速网络留余量，又让取消生效。
-            conn.readTimeout = 60_000
+            // readTimeout 原为 0（无限）。但 TCP 卡住时 input.read() 会永久阻塞，
+            // 协程取消里的 ensureActive() 检查不到。保留有限超时让取消生效，
+            // 放宽到 5 分钟以覆盖大文件在慢速 Wi-Fi 下的无数据窗口。
+            conn.readTimeout = 300_000
             conn.instanceFollowRedirects = true
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "FurAgent/1.0")

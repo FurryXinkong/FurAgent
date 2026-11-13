@@ -1172,12 +1172,15 @@ private fun DirectTransferTab(
         scope.launch {
             try {
                 val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                val cacheDir = File(context.cacheDir, "direct_upload")
-                if (!cacheDir.exists()) cacheDir.mkdirs()
-                val dst = File(cacheDir, name)
+                // 与 PcFileTransferTab 一致：几 GB 文件落应用外部私有目录，避免占满内部存储。
+                val stagingDir = File(
+                    context.getExternalFilesDir(null) ?: context.cacheDir,
+                    "upload_staging"
+                ).apply { mkdirs() }
+                val dst = File(stagingDir, name)
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output) }
+                        dst.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
                     }
                 }
                 if (!dst.exists() || dst.length() == 0L) {

@@ -215,7 +215,7 @@ object PhoneTools {
                 "&path=${URLEncoder.encode(remotePath, "UTF-8")}"
 
         val taskId = DownloadManager.download(url, localFile.absolutePath)
-        val result = waitForDownload(taskId, timeoutMs = 10 * 60 * 1000L)
+        val result = waitForDownload(taskId, timeoutMs = 60 * 60 * 1000L)
         return result.success to result.output
     }
 
@@ -456,7 +456,7 @@ object PhoneTools {
                 val fileName = FileNaming.extractFileName(remotePath)
                 val target = FileNaming.resolveReceiveFile(DesktopSettingsHolder.current.receiveDir, fileName)
                 val taskId = DownloadManager.download(url, target.absolutePath)
-                return waitForDownload(taskId, timeoutMs = 5 * 60 * 1000L)
+                return waitForDownload(taskId, timeoutMs = 30 * 60 * 1000L)
             }
         }
 
@@ -468,6 +468,10 @@ object PhoneTools {
         val base64 = readResult.output.trim()
         if (base64.isBlank()) return ToolResult.fail("手机返回空数据")
         return try {
+            // 先按 base64 文本长度估算（4/3 膨胀），避免直接 decode 几 GB 数据先 OOM
+            if (base64.length / 4 * 3 > MAX_FILE_BYTES) {
+                return ToolResult.fail("文件过大且该设备 HTTP 通道未就绪；大文件需通过 HTTP 直连传输")
+            }
             val bytes = Base64.getDecoder().decode(base64)
             if (bytes.size > MAX_FILE_BYTES) return ToolResult.fail("文件过大（${formatFileSize(bytes.size.toLong())}）")
             val fileName = FileNaming.extractFileName(remotePath)
@@ -481,10 +485,13 @@ object PhoneTools {
         val start = System.currentTimeMillis()
         while (true) {
             if (System.currentTimeMillis() - start > timeoutMs) {
-                // 必须取消后台任务：否则报"下载超时"但实际还在耗带宽，
-                // 用户以为断了，实际还在下。
-                try { DownloadManager.cancel(taskId) } catch (_: Exception) { }
-                return ToolResult.fail("下载超时")
+                // 不取消后台任务：几 GB 文件在普通 Wi-Fi 下常超过 10 分钟，
+                // 旧实现主动 cancel 会把正常传输腰斩并误报失败。
+                // 改为返回"仍在进行"，让用户去下载面板看进度。
+                return ToolResult.ok(
+                    "下载仍在进行中（大文件需要更久），任务 id=$taskId；" +
+                            "可在下载面板查看进度，完成后文件会保存到接收目录。"
+                )
             }
             val task = DownloadManager.tasks.value.firstOrNull { it.id == taskId }
                 ?: return ToolResult.fail("下载任务丢失")

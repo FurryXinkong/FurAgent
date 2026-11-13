@@ -63,20 +63,21 @@ fun AdvancedSettingsPage(
         uri?.let {
             scope.launch(Dispatchers.IO) {
                 try {
-                    // 上限 50MB：备份文件含 base64 图片时会很大。不加限制时
-                    // readText() 进内存（Java 字符串 2 字节/字符）+ 后续
-                    // JSONObject(text) 再解析一次，峰值可达文件大小 ×2，
-                    // 中端机（4GB RAM）直接 OOM。
+                    // 放宽到 512MB：备份含 base64 图片时很容易超过旧的 50MB，
+                    // 旧上限会把正常备份直接判为「文件过大」而拒绝导入。
+                    // 仍保留上限：readText() + JSONObject 峰值约为文件大小 ×2。
+                    // 另外 afd.length 可能为 -1（虚拟文件/压缩流），此时下面 size > 上限 为 false，
+                    // 自然跳过检查，不会误拒。
                     val size = try {
                         val afd = context.contentResolver.openAssetFileDescriptor(it, "r")
                         val len = afd?.length ?: -1L
                         afd?.close()
                         len
                     } catch (_: Exception) { -1L }
-                    if (size > 50L * 1024 * 1024) {
+                    if (size > 512L * 1024 * 1024) {
                         notifyToast(
                             context,
-                            "备份文件过大（${size / 1024 / 1024}MB），上限 50MB"
+                            "备份文件过大（${size / 1024 / 1024}MB），上限 512MB"
                         )
                         return@launch
                     }
@@ -462,7 +463,10 @@ fun AdvancedSettingsPage(
                             ) { Text("导出全部配置与会话") }
 
                             OutlinedButton(
-                                onClick = { importLauncher.launch("application/json") },
+                                // 用 */* 而非 application/json：SAF 对下载目录里的 .json
+                                // 常返回 application/octet-stream 或 text/plain，
+                                // 旧的 MIME 过滤会让备份文件根本选不到 / 读不出。
+                                onClick = { importLauncher.launch("*/*") },
                                 shape = RoundedCornerShape(AppRadius.SM),
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("导入配置 (JSON)") }

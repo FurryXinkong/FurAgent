@@ -439,6 +439,9 @@ object DesktopSessionStore {
                     put("title", s.title)
                     put("createdAt", s.createdAt)
                     put("updatedAt", s.updatedAt)
+                    put("parentId", s.parentId ?: "")
+                    put("systemPrompt", s.systemPrompt ?: "")
+                    put("titleLocked", s.titleLocked ?: false)
                     put("messages", JSONArray().apply {
                         s.messages.forEach { m ->
                             put(net.xinkong.furagent.shared.data.SessionCodec.messageToJsonWithImages(

@@ -175,7 +175,8 @@ object AndroidHttpFileServer {
         var method = "?"
         var url = "?"
         try {
-            socket.soTimeout = 60_000
+            // 大文件上传时客户端两次写之间可能间隔较久，放宽到 5 分钟读超时。
+            socket.soTimeout = 300_000
             // 关键：关闭 Nagle 算法。投屏每帧是一个小包，Nagle 会攒包导致几十毫秒的额外延迟，
             // 实时画面必须开 TCP_NODELAY 才能低延迟。
             try { socket.tcpNoDelay = true } catch (_: Exception) { }
@@ -254,8 +255,14 @@ object AndroidHttpFileServer {
                         if (dirParam.isBlank()) {
                             File(receiveDir)
                         } else if (dirParam.startsWith("/") || dirParam.contains(":\\")) {
-                            // 绝对路径：直接规范化使用，不再做目录白名单校验
-                            File(PathResolver.check(dirParam).resolved ?: dirParam)
+                            // 网络侧传入的绝对 dir 一律降级为 receiveDir 下的相对子目录，
+                            // 过滤 . / .. 与盘符，与桌面端 handleUpload 口径一致。
+                            // 收回上一轮移除路径策略时误放开的越权写入能力。
+                            val safeDir = dirParam.split("/")
+                                .filter { it.isNotBlank() && it != "." && it != ".." && !it.contains(":") }
+                                .joinToString(File.separator)
+                            val candidate = File(receiveDir, safeDir)
+                            File(PathResolver.check(candidate.absolutePath).resolved ?: candidate.absolutePath)
                         } else {
                             // 相对路径：拼到 receiveDir 下
                             val candidate = File(receiveDir, dirParam)
@@ -427,7 +434,10 @@ object AndroidHttpFileServer {
             throw RuntimeException("上传不完整：声明 $len 字节，实际写入 $written 字节")
         }
         if (!tmp.renameTo(target)) {
-            target.writeBytes(tmp.readBytes())
+            // rename 跨挂载点失败时流式拷贝，避免 readBytes() 把几 GB 文件整块读进内存导致 OOM
+            tmp.inputStream().use { src ->
+                target.outputStream().use { out -> src.copyTo(out, 128 * 1024) }
+            }
             tmp.delete()
         }
     }
@@ -472,7 +482,9 @@ object AndroidHttpFileServer {
             }
         }
         if (!tmp.renameTo(target)) {
-            target.writeBytes(tmp.readBytes())
+            tmp.inputStream().use { src ->
+                target.outputStream().use { out -> src.copyTo(out, 128 * 1024) }
+            }
             tmp.delete()
         }
     }

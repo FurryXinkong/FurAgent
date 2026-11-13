@@ -23,13 +23,13 @@ object DirectTransfer {
 
     /**
      * 连接超时 15 秒。
-     * readTimeout = 120 秒（防止对方设备卡死导致永久挂起），
+     * readTimeout = 300 秒（防止对方设备卡死导致永久挂起，同时给大文件慢链路留余量），
      * writeTimeout = 0（上传大文件不超时，由调用方控制）。
      */
     private val client: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(300, TimeUnit.SECONDS)
             .writeTimeout(0, TimeUnit.SECONDS)
             .build()
     }
@@ -153,7 +153,10 @@ object DirectTransfer {
                 }
             }
             if (!tmp.renameTo(saveFile)) {
-                saveFile.writeBytes(tmp.readBytes())
+                // 流式拷贝，避免大文件 readBytes() OOM
+                tmp.inputStream().use { src ->
+                    saveFile.outputStream().use { out -> src.copyTo(out, 128 * 1024) }
+                }
                 tmp.delete()
             }
             val size = saveFile.length()

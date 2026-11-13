@@ -599,7 +599,10 @@ object PcBridgeClient {
                 }
             }
             if (!tmp.renameTo(target)) {
-                target.writeBytes(tmp.readBytes())
+                // 流式拷贝，避免大文件 readBytes() OOM
+                tmp.inputStream().use { src ->
+                    target.outputStream().use { out -> src.copyTo(out, 128 * 1024) }
+                }
                 tmp.delete()
             }
             val size = target.length()
@@ -794,7 +797,9 @@ object PcBridgeClient {
                     return@withContext false to "下载不完整：声明 $total 字节，实际 $downloaded 字节"
                 }
                 if (!tmp.renameTo(localFile)) {
-                    localFile.writeBytes(tmp.readBytes())
+                    tmp.inputStream().use { src ->
+                        localFile.outputStream().use { out -> src.copyTo(out, 128 * 1024) }
+                    }
                     tmp.delete()
                 }
                 AgentLogger.log(

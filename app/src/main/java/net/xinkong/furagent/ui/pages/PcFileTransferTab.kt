@@ -66,10 +66,17 @@ fun PcFileTransferTab(
         scope.launch {
             try {
                 val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                val dst = File(context.cacheDir, name)
+                // 几 GB 文件不能先整份拷进内部 cacheDir：双倍占用内部存储，
+                // 剩余空间不足时直接复制失败；且默认 8KB 缓冲会把拷贝拖得极慢。
+                // 落到应用外部私有目录（无需额外权限、空间通常充足），并用 128KB 缓冲。
+                val stagingDir = File(
+                    context.getExternalFilesDir(null) ?: context.cacheDir,
+                    "upload_staging"
+                ).apply { mkdirs() }
+                val dst = File(stagingDir, name)
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output) }
+                        dst.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
                     }
                 }
                 if (dst.exists() && dst.length() > 0) {
@@ -132,10 +139,14 @@ fun PcFileTransferTab(
         scope.launch {
             try {
                 val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                val dst = File(context.cacheDir, name)
+                val stagingDir = File(
+                    context.getExternalFilesDir(null) ?: context.cacheDir,
+                    "upload_staging"
+                ).apply { mkdirs() }
+                val dst = File(stagingDir, name)
                 withContext(Dispatchers.IO) {
                     context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output) }
+                        dst.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
                     }
                 }
                 if (!dst.exists() || dst.length() == 0L) {

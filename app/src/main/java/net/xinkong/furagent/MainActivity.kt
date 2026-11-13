@@ -852,11 +852,13 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     notifyToast(context, "读取文件失败")
                     return@launch
                 }
-                // 保留原文件后缀，供 importSingleSession 分流（.md / .json）
-                val ext = context.contentResolver.getType(uri)
-                    ?.let { if (it.contains("markdown")) "md" else null }
-                    ?: uri.lastPathSegment?.substringAfterLast('.', "")?.takeIf { it.isNotBlank() }
-                    ?: "json"
+                // 按内容判断格式，不依赖 SAF 的 MIME / lastPathSegment：
+                // content:// uri 的 lastPathSegment 常是 document/1234 这类无后缀值，
+                // getType() 对 .md 也常返回 text/plain，旧逻辑会把真 Markdown 存成 .json
+                // 再按 JSON 解析，直接抛异常（表现为「导入失败 / 软件不认」）。
+                val trimmedHead = text.trimStart()
+                val looksJson = trimmedHead.startsWith("{") || trimmedHead.startsWith("[")
+                val ext = if (looksJson) "json" else "md"
                 val tmp = File(context.cacheDir, "import_session_${System.currentTimeMillis()}.$ext")
                 tmp.writeText(text, Charsets.UTF_8)
                 val result = withContext(Dispatchers.IO) {
@@ -888,7 +890,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     fun doImport(json: String, replaceExisting: Boolean) {
         try {
-            val tmp = File(context.cacheDir, "import_temp.json")
+            val tmp = File(context.cacheDir, "import_temp_${System.currentTimeMillis()}.json")
             tmp.writeText(json)
             val importResult = SessionStore.importAll(context, prefs, tmp, replaceExisting)
             tmp.delete()

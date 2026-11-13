@@ -73,7 +73,7 @@ object SessionStore {
         val memoryCount: Int,
         val restoredSettings: AppSettings? = null
     ) {
-        val success: Boolean get() = sessionCount >= 0
+        val success: Boolean get() = sessionCount > 0 || memoryCount > 0 || settingsRestored
         val settingsRestored: Boolean get() = restoredSettings != null
     }
 
@@ -581,12 +581,22 @@ object SessionStore {
      * 单条消息脏数据不再让整个单会话导入失败。
      */
     fun importSingleSession(context: Context, file: File): ImportSingleResult {
-        // 按扩展名分流：.md 走 Markdown 解析，其余走 JSON
-        if (file.extension.equals("md", ignoreCase = true)) {
+        // 扩展名 + 内容双重判断：SAF/content:// 下扩展名经常丢失或错误，
+        // 此时按首字符判断（非 JSON 一律当 Markdown），避免导入文件被判「格式不正确」。
+        // readText 必须在 try 内：文件不可读/损坏时返回导入失败，
+        // 不能把异常抛到调用方（上一版把它移到 try 外，是本次改动引入的回归）。
+        val text = try {
+            file.readText(Charsets.UTF_8)
+        } catch (e: Exception) {
+            return ImportSingleResult(false, error = "读取文件失败：${e.message}")
+        }
+        val trimmed = text.trimStart()
+        val looksJson = trimmed.startsWith("{") || trimmed.startsWith("[")
+        if (file.extension.equals("md", ignoreCase = true) || !looksJson) {
             return importMarkdown(context, file)
         }
         return try {
-            val root = JSONObject(file.readText(Charsets.UTF_8))
+            val root = JSONObject(text)
 
             val sessionJson: JSONObject = when {
                 root.has("sessions") -> {
@@ -798,6 +808,9 @@ object SessionStore {
                     put("title", s.title)
                     put("createdAt", s.createdAt)
                     put("updatedAt", s.updatedAt)
+                    put("parentId", s.parentId ?: "")
+                    put("systemPrompt", s.systemPrompt ?: "")
+                    put("titleLocked", s.titleLocked ?: false)
                     put("messages", JSONArray().apply {
                         s.messages.forEach { m ->
                             put(net.xinkong.furagent.shared.data.SessionCodec.messageToJsonWithImages(
@@ -940,7 +953,19 @@ object SessionStore {
             val importedImagesDir = File(context.filesDir, "imported_images")
             if (!importedImagesDir.exists()) importedImagesDir.mkdirs()
 
-            root.optJSONArray("sessions")?.let { arr ->
+            // 导出补上 parentId 后，导入必须把旧 id 映射到新生成的 id：
+            // 否则子会话的 parentId 指向备份里的旧母会话（本库里不存在），
+            // list() 按 parentId == null 过滤时会把子会话整个隐藏。映射不到的父 id 置 null。
+            val sessionsArr = root.optJSONArray("sessions")
+            val idMap = HashMap<String, String>()
+            sessionsArr?.let { arr ->
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val oldId = o.optString("id", "")
+                    if (oldId.isNotBlank()) idMap[oldId] = UUID.randomUUID().toString()
+                }
+            }
+            sessionsArr?.let { arr ->
                 for (i in 0 until arr.length()) {
                     val o = arr.optJSONObject(i) ?: continue
                     val msgs = mutableListOf<ChatMessage>()
@@ -952,13 +977,19 @@ object SessionStore {
                             if (msg != null) msgs.add(msg)
                         }
                     }
-                    val newId = UUID.randomUUID().toString()
+                    val oldId = o.optString("id", "")
+                    val newId = idMap[oldId] ?: UUID.randomUUID().toString()
+                    val oldParent = o.optString("parentId", "").takeIf { it.isNotBlank() }
+                    val newParent = oldParent?.let { idMap[it] }
                     save(context, Session(
                         id = newId,
                         title = o.optString("title", "导入会话"),
                         createdAt = o.optLong("createdAt", System.currentTimeMillis()),
-                        updatedAt = System.currentTimeMillis(),
-                        messages = msgs
+                        updatedAt = o.optLong("updatedAt", System.currentTimeMillis()),
+                        messages = msgs,
+                        parentId = newParent,
+                        systemPrompt = o.optString("systemPrompt", "").takeIf { it.isNotEmpty() },
+                        titleLocked = if (o.has("titleLocked")) o.optBoolean("titleLocked", false) else null
                     ))
                     sessionCount++
                 }
@@ -1043,6 +1074,9 @@ object SessionStore {
                 restoredSettings = SettingsStore.load(prefs)
             }
 
+            // save() 是 500ms 节流的异步写；不先 flush 就 rebuildIndex 会扫到尚未落盘的
+            // 磁盘状态，把刚导入的会话索引冲成旧值（表现为「导入成功但列表看不到」）。
+            flushPending(context)
             rebuildIndex(context)
             ImportAllResult(sessionCount, memoryCount, restoredSettings)
         } catch (e: Exception) {
@@ -1050,7 +1084,7 @@ object SessionStore {
                 "ERR",
                 "导入备份失败（${file.name}）：${e.javaClass.simpleName}: ${e.message}"
             )
-            ImportAllResult(0, 0, null)
+            ImportAllResult(-1, -1, null)
         }
     }
 }
