@@ -30,7 +30,6 @@ import net.xinkong.furagent.shared.util.formatFileSize
 import net.xinkong.furagent.ui.PocoCard
 import net.xinkong.furagent.ui.SuccessColor
 import net.xinkong.furagent.ui.theme.AppRadius
-import java.io.File
 
 /**
  * PcHub Tab 1：文件传输（从 PcHubPage.kt 拆分）。
@@ -52,8 +51,9 @@ fun PcFileTransferTab(
     val httpReady = connected && httpPort > 0 && httpToken.isNotBlank()
 
     // ============ 发送到电脑 ============
-    var sendLocalPath by remember { mutableStateOf("") }
+    var sendUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var sendLocalName by remember { mutableStateOf("") }
+    var sendSize by remember { mutableLongStateOf(0L) }
     var sendStatus by remember { mutableStateOf("") }
     var sendOk by remember { mutableStateOf(false) }
     var sending by remember { mutableStateOf(false) }
@@ -66,27 +66,13 @@ fun PcFileTransferTab(
         scope.launch {
             try {
                 val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                // 几 GB 文件不能先整份拷进内部 cacheDir：双倍占用内部存储，
-                // 剩余空间不足时直接复制失败；且默认 8KB 缓冲会把拷贝拖得极慢。
-                // 落到应用外部私有目录（无需额外权限、空间通常充足），并用 128KB 缓冲。
-                val stagingDir = File(
-                    context.getExternalFilesDir(null) ?: context.cacheDir,
-                    "upload_staging"
-                ).apply { mkdirs() }
-                val dst = File(stagingDir, name)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
-                    }
-                }
-                if (dst.exists() && dst.length() > 0) {
-                    sendLocalPath = dst.absolutePath
-                    sendLocalName = name
-                    sendStatus = ""
-                } else {
-                    sendStatus = "读取文件失败"
-                    sendOk = false
-                }
+                // 只记录 URI 与元数据，不做任何拷贝：几 GB 文件也能秒选，
+                // 发送时由 StreamRequestBody 边读边传，不再需要本地暂存目录。
+                sendUri = uri
+                sendLocalName = name
+                sendSize = queryFileSize(context, uri)
+                sendStatus = ""
+                sendOk = false
             } catch (e: Exception) {
                 sendStatus = "读取失败：${e.message}"
                 sendOk = false
@@ -95,21 +81,18 @@ fun PcFileTransferTab(
     }
 
     fun doSend() {
+        val uri = sendUri ?: return
         if (sending || !httpReady) return
-        val file = File(sendLocalPath)
-        if (!file.exists() || !file.isFile) {
-            sendStatus = "文件不存在"
-            sendOk = false
-            return
-        }
         sending = true
         sendStatus = "正在上传…"
         sendOk = true
         sendProgress = 0f
 
         scope.launch {
-            val result = uploadFileViaHttp(
-                file = file,
+            val result = PcBridgeClient.uploadStreamToPc(
+                fileName = sendLocalName,
+                contentLength = sendSize,
+                openStream = { context.contentResolver.openInputStream(uri) },
                 onProgress = { read, total ->
                     sendProgress = if (total > 0) read.toFloat() / total else 0f
                 }
@@ -121,7 +104,8 @@ fun PcFileTransferTab(
     }
 
     // 转发给另一台设备（通过电脑中转 relay）
-    var relayFile by remember { mutableStateOf<File?>(null) }
+    var relayUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var relayFileName by remember { mutableStateOf("") }
     var relayFileSize by remember { mutableLongStateOf(0L) }
     var relayTargets by remember { mutableStateOf<List<PcBridgeClient.PeerInfo>?>(null) }
     var relayTargetLoading by remember { mutableStateOf(false) }
@@ -139,22 +123,9 @@ fun PcFileTransferTab(
         scope.launch {
             try {
                 val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                val stagingDir = File(
-                    context.getExternalFilesDir(null) ?: context.cacheDir,
-                    "upload_staging"
-                ).apply { mkdirs() }
-                val dst = File(stagingDir, name)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
-                    }
-                }
-                if (!dst.exists() || dst.length() == 0L) {
-                    onInfo("读取文件失败")
-                    return@launch
-                }
-                relayFile = dst
-                relayFileSize = dst.length()
+                relayUri = uri
+                relayFileName = name
+                relayFileSize = queryFileSize(context, uri)
                 relaySelectedTarget = null
                 relayTargets = null
                 relayTargetError = null
@@ -179,23 +150,26 @@ fun PcFileTransferTab(
     }
 
     fun doRelay() {
-        val file = relayFile ?: return
+        val uri = relayUri ?: return
         val target = relaySelectedTarget ?: return
         if (relaySending) return
         relaySending = true
         scope.launch {
             try {
                 val relayId = withContext(Dispatchers.IO) {
-                    PcBridgeClient.sendRelayFile(target.id, file)
+                    PcBridgeClient.sendRelayStream(
+                        targetClientId = target.id,
+                        fileName = relayFileName,
+                        size = relayFileSize,
+                        openStream = { context.contentResolver.openInputStream(uri) }
+                    )
                 }
                 relaySending = false
                 lastRelayId = relayId
                 lastRelayStatus = "已发起中转（等待对方回执…）"
                 onInfo("已发起中转，relayId=$relayId")
                 showRelayDialog = false
-                // 清理临时文件
-                try { file.delete() } catch (_: Exception) { }
-                relayFile = null
+                relayUri = null
             } catch (e: Exception) {
                 relaySending = false
                 onInfo("发起中转失败：${e.message}")
@@ -284,10 +258,9 @@ fun PcFileTransferTab(
                         )
                     }
 
-                    if (sendLocalPath.isNotBlank()) {
-                        val size = File(sendLocalPath).length()
+                    if (sendUri != null) {
                         Text(
-                            "大小：${formatFileSize(size)}",
+                            "大小：${if (sendSize > 0) formatFileSize(sendSize) else "未知"}",
                             style = MaterialTheme.typography.labelSmall,
                             fontFamily = FontFamily.Monospace,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -295,17 +268,22 @@ fun PcFileTransferTab(
                     }
 
                     if (sending) {
-                        // 上传进度回调未实现（PcBridgeClient.uploadFileToPc 内部只调一次
-                        // onProgress(0, 0) 占位），用不确定模式避免进度条永远停在 0%
-                        // 看起来像卡住。真正的进度回调需要自定义 RequestBody 包装 sink。
+                        // 进度由 StreamRequestBody 每写 128KB 回调一次，现在是真的进度
                         LinearProgressIndicator(
+                            progress = { sendProgress },
                             modifier = Modifier.fillMaxWidth()
+                        )
+                        Text(
+                            if (sendProgress > 0f) "${(sendProgress * 100).toInt()}%"
+                            else "正在建立连接…",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
 
                     Button(
                         onClick = { doSend() },
-                        enabled = !sending && httpReady && sendLocalPath.isNotBlank(),
+                        enabled = !sending && httpReady && sendUri != null,
                         shape = RoundedCornerShape(AppRadius.SM),
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -447,17 +425,17 @@ fun PcFileTransferTab(
 
     // relay 目标选择对话框
     if (showRelayDialog) {
-        val file = relayFile
+        val fileUri = relayUri
         AlertDialog(
             onDismissRequest = { if (!relaySending) showRelayDialog = false },
             shape = RoundedCornerShape(AppRadius.DIALOG),
             title = { Text("转发给另一台设备") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (file != null) {
+                    if (fileUri != null) {
                         Column {
                             Text(
-                                "文件：${file.name}",
+                                "文件：$relayFileName",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface,
                                 maxLines = 2
@@ -648,10 +626,7 @@ fun PcFileTransferTab(
                     TextButton(
                         enabled = !relaySending,
                         onClick = {
-                            relayFile?.let { f ->
-                                try { f.delete() } catch (_: Exception) { }
-                            }
-                            relayFile = null
+                            relayUri = null
                             showRelayDialog = false
                         }
                     ) { Text("取消") }

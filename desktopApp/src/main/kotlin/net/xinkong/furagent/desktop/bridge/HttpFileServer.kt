@@ -21,6 +21,7 @@ object HttpFileServer {
     @Volatile private var server: HttpServer? = null
     @Volatile private var token: String = ""
     @Volatile private var port: Int = 0
+    @Volatile private var preferredPort: Int = 0
     @Volatile private var windowActivator: (() -> Unit)? = null
 
     fun setWindowActivator(action: () -> Unit) {
@@ -29,6 +30,7 @@ object HttpFileServer {
 
     fun start(preferredPort: Int): Pair<Int, String> {
         if (server != null) return port to token
+        this.preferredPort = preferredPort
         // token 从持久化文件读，首次生成后不再变
         token = loadOrCreateToken()
 
@@ -80,6 +82,17 @@ object HttpFileServer {
     fun getPort(): Int = port
     fun getToken(): String = token
     fun isRunning(): Boolean = server != null
+
+    /**
+     * 按需启动 / 重启。
+     *
+     * 启动时若端口全被占用，port 会留在 0，之后 welcome 一直下发 0，
+     * 手机端就会永远认为「HTTP 通道未就绪」。握手时调用本方法就地重试。
+     */
+    fun ensureStarted(): Int {
+        if (server != null && port > 0) return port
+        return start(if (preferredPort > 0) preferredPort else 0).first
+    }
 
     /**
      * 从 token 派生的短码（6 位大写 HEX）。

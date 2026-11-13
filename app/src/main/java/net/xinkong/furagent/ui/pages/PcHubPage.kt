@@ -1172,28 +1172,20 @@ private fun DirectTransferTab(
         scope.launch {
             try {
                 val name = queryFileName(context, uri) ?: "picked_${System.currentTimeMillis()}"
-                // 与 PcFileTransferTab 一致：几 GB 文件落应用外部私有目录，避免占满内部存储。
-                val stagingDir = File(
-                    context.getExternalFilesDir(null) ?: context.cacheDir,
-                    "upload_staging"
-                ).apply { mkdirs() }
-                val dst = File(stagingDir, name)
-                withContext(Dispatchers.IO) {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        dst.outputStream().use { output -> input.copyTo(output, 128 * 1024) }
-                    }
-                }
-                if (!dst.exists() || dst.length() == 0L) {
-                    onInfo("读取文件失败")
-                    return@launch
-                }
-                val (ok, msg) = DirectTransfer.upload(device, dst)
+                val size = queryFileSize(context, uri)
+                // 不再先整份复制到暂存目录：直接从 content:// 流式上传，
+                // 几 GB 文件不会因存储不足而失败，也省掉一倍耗时。
+                val (ok, msg) = DirectTransfer.uploadStream(
+                    device = device,
+                    name = name,
+                    contentLength = size,
+                    openStream = { context.contentResolver.openInputStream(uri) }
+                )
                 onInfo(msg)
                 if (ok) {
                     DirectDeviceStore.touch(context, device.id)
                     devices = DirectDeviceStore.list(context)
                 }
-                try { dst.delete() } catch (_: Exception) { }
             } catch (e: Exception) {
                 onInfo("上传失败：${e.message}")
             }
@@ -1781,4 +1773,14 @@ internal fun queryFileName(context: Context, uri: android.net.Uri): String? {
             if (idx >= 0 && cursor.moveToFirst()) cursor.getString(idx) else null
         }
     } catch (_: Exception) { null }
+}
+
+/** 读取 SAF 文件的字节数；拿不到返回 -1（上传时自动退化为 chunked）。 */
+internal fun queryFileSize(context: Context, uri: android.net.Uri): Long {
+    return try {
+        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+            val idx = cursor.getColumnIndex(android.provider.OpenableColumns.SIZE)
+            if (idx >= 0 && cursor.moveToFirst() && !cursor.isNull(idx)) cursor.getLong(idx) else -1L
+        } ?: -1L
+    } catch (_: Exception) { -1L }
 }

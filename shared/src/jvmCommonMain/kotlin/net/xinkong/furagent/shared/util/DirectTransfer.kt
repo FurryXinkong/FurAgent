@@ -6,7 +6,6 @@ import net.xinkong.furagent.shared.tools.ToolLogger
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.io.File
@@ -95,21 +94,44 @@ object DirectTransfer {
         device: DirectDevice,
         localFile: File,
         remoteName: String = ""
-    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+    ): Pair<Boolean, String> {
         if (!localFile.exists() || !localFile.isFile) {
-            return@withContext false to "本地文件不存在：${localFile.absolutePath}"
+            return false to "本地文件不存在：${localFile.absolutePath}"
         }
+        return uploadStream(
+            device = device,
+            name = remoteName.ifBlank { localFile.name },
+            contentLength = localFile.length(),
+            openStream = { localFile.inputStream() }
+        )
+    }
+
+    /**
+     * 直接从输入流上传，不要求本地已有文件。
+     *
+     * 手机端 SAF 选中的文件（content://）走这里，边读边传，
+     * 不再先整份复制到暂存目录——几 GB 文件省一倍空间、省一半时间。
+     *
+     * @param contentLength 已知字节数；<=0 时退化为 chunked 上传（两端服务端都支持）
+     */
+    suspend fun uploadStream(
+        device: DirectDevice,
+        name: String,
+        contentLength: Long,
+        openStream: () -> java.io.InputStream?,
+        onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> }
+    ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
         try {
-            val name = remoteName.ifBlank { localFile.name }
             val url = "http://${device.host}:${device.port}/upload" +
                     "?token=${encode(device.token)}" +
                     "&path=${encode(name)}"
-            val body = localFile.asRequestBody("application/octet-stream".toMediaType())
+            val body = StreamRequestBody(contentLength, openStream, onProgress)
             val req = Request.Builder().url(url).post(body).build()
             client.newCall(req).execute().use { resp ->
                 val text = resp.body.string()
                 if (resp.isSuccessful) {
-                    true to "已发送到 ${device.name.ifBlank { device.host }}：$name（${formatFileSize(localFile.length())}）"
+                    val sizeText = if (contentLength > 0) formatFileSize(contentLength) else "大小未知"
+                    true to "已发送到 ${device.name.ifBlank { device.host }}：$name（$sizeText）"
                 } else {
                     false to "HTTP ${resp.code}：${text.take(200)}"
                 }
@@ -119,7 +141,7 @@ object DirectTransfer {
                 "DIRECT",
                 "上传到 ${device.host}:${device.port} 失败：${e.javaClass.simpleName}: ${e.message}"
             )
-            false to "上传失败：${e.message}"
+            false to "上传失败：${e.javaClass.simpleName}: ${e.message}"
         }
     }
 

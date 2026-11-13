@@ -31,6 +31,10 @@ object RemoteTools {
 
     private const val MAX_TRANSFER_BYTES = 10L * 1024 * 1024
 
+    /** 最近一次 HTTP 直传失败的真实原因，用于如实回报而不是笼统说「未就绪」。 */
+    @Volatile
+    private var lastHttpError: String = ""
+
     // HTTP 流式传输客户端：文件走电脑 /upload /download 端点，
     // 分块过网、不整块进内存，没有 base64 通道的大小限制
     private val httpClient by lazy {
@@ -168,15 +172,21 @@ object RemoteTools {
 
         if (!PcBridgeClient.isConnected()) return "失败：未连接到电脑"
 
-        // HTTP 流式优先：body 直接从文件分块读，无大小限制
+        // HTTP 流式优先：body 直接从文件分块读，无大小限制。
+        // 端口信息可能过期，先就地补一次握手再判断（避免误报「未就绪」）。
+        PcBridgeClient.ensureHttpInfo()
         if (PcBridgeClient.getHttpPort() > 0 && PcBridgeClient.getHttpToken().isNotBlank()) {
             val r = withContext(Dispatchers.IO) { uploadViaPcHttp(file) }
             if (r != null) return r
-            // HTTP 通道异常 → 回退 base64（受 10MB 限制）
+            // 通道在，但这次请求本身失败了：如实回报失败原因
+            return "失败：HTTP 直传失败（${lastHttpError.ifBlank { "未知原因" }}）。" +
+                    "文件 ${formatFileSize(file.length())} 未发送，可重试；" +
+                    "若持续失败请检查电脑端防火墙与接收目录剩余空间。"
         }
 
         if (file.length() > MAX_TRANSFER_BYTES) {
-            return "失败：文件过大（${formatFileSize(file.length())}）。该设备 HTTP 通道未就绪。"
+            return "失败：文件过大（${formatFileSize(file.length())}），且电脑未上报 HTTP 文件端口" +
+                    "（httpPort=${PcBridgeClient.getHttpPort()}）。大文件必须走 HTTP 直传，请重新连接电脑。"
         }
 
         return withContext(Dispatchers.IO) {
@@ -221,6 +231,7 @@ object RemoteTools {
                 }
             }
         } catch (e: Exception) {
+            lastHttpError = "${e.javaClass.simpleName}: ${e.message}"
             AgentLogger.log(
                 "ERR",
                 "HTTP 上传到电脑失败（${file.name}）：${e.javaClass.simpleName}: ${e.message}"

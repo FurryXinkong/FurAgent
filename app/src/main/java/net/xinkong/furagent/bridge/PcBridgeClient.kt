@@ -10,13 +10,12 @@ import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.data.*
 import net.xinkong.furagent.shared.*
 import net.xinkong.furagent.shared.util.FileNaming
+import net.xinkong.furagent.shared.util.StreamRequestBody
 import net.xinkong.furagent.shared.util.formatFileSize
 import net.xinkong.furagent.shared.util.isToolFailure
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.tools.WolHelper
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.asRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -285,7 +284,9 @@ object PcBridgeClient {
                 pendingPings.set(0)
 
                 try {
-                    val hp = AndroidHttpFileServer.getPort()
+                    // 握手时确保 HTTP 服务已起来（启动失败会在这里重试），
+                    // 否则 hello 会一直上报端口 0，电脑端永远认为「未就绪」
+                    val hp = AndroidHttpFileServer.ensureStarted()
                     val ht = AndroidHttpFileServer.getToken()
                     val hello = BridgeMessage.helloExtended(
                         from = EndpointId.PHONE,
@@ -490,7 +491,7 @@ object PcBridgeClient {
                 try {
                     val info = BridgeMessage.deviceInfo(
                         EndpointId.PHONE,
-                        AndroidHttpFileServer.getPort(),
+                        AndroidHttpFileServer.ensureStarted(),
                         AndroidHttpFileServer.getToken()
                     )
                     ws.send(info.encodeToString())
@@ -650,6 +651,37 @@ object PcBridgeClient {
     }
 
     /**
+     * 主动向电脑补要一次 HTTP 端口 / token。
+     *
+     * 端口只在 hello/welcome 握手时交换一次。若握手那一刻电脑端 HTTP 服务
+     * 还没起来（端口=0），或中途服务重启换了端口，本地记录会一直是 0，
+     * 之后每次传输都误报「HTTP 通道未就绪」，但实际只是信息过期。
+     * 这里就地补一次握手，避免让用户手动断开重连。
+     */
+    suspend fun ensureHttpInfo(timeoutMs: Long = 3000L): Boolean {
+        if (_httpPort.value > 0 && _httpToken.value.isNotBlank()) return true
+        val ws = webSocket ?: return false
+        if (_status.value != Status.CONNECTED) return false
+        try {
+            val id = UUID.randomUUID().toString()
+            ws.send(BridgeMessage.requestDeviceInfo(id, EndpointId.PHONE).encodeToString())
+            AgentLogger.log("BRIDGE", "HTTP 端口信息缺失，已请求电脑重新下发 device_info")
+        } catch (e: Exception) {
+            AgentLogger.log(
+                "BRIDGE",
+                "请求 device_info 失败：${e.javaClass.simpleName}: ${e.message}"
+            )
+            return false
+        }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (_httpPort.value > 0 && _httpToken.value.isNotBlank()) return true
+            delay(100)
+        }
+        return _httpPort.value > 0 && _httpToken.value.isNotBlank()
+    }
+
+    /**
      * 上传文件到电脑的 HTTP 服务。
      *
      * 原来 PcHubPage.uploadFileViaHttp 和 sendRelayFile 各写了一份 OkHttp 上传逻辑，
@@ -661,37 +693,58 @@ object PcBridgeClient {
     suspend fun uploadFileToPc(
         localFile: File,
         dir: String = ""
+    ): Pair<Boolean, String> {
+        if (!localFile.exists() || !localFile.isFile) {
+            return false to "文件不存在：${localFile.absolutePath}"
+        }
+        return uploadStreamToPc(
+            fileName = localFile.name,
+            contentLength = localFile.length(),
+            dir = dir,
+            openStream = { localFile.inputStream() }
+        )
+    }
+
+    /**
+     * 直接从输入流上传到电脑，不要求本地已有文件。
+     *
+     * 手机端 SAF 选中的文件（content://）走这里：边读边传，不再先整份复制
+     * 到本地暂存目录，几 GB 文件不会因存储不足而「导入失败」。
+     *
+     * @param contentLength 已知字节数；<=0 时退化为 chunked（电脑端 /upload 支持）
+     */
+    suspend fun uploadStreamToPc(
+        fileName: String,
+        contentLength: Long,
+        dir: String = "",
+        openStream: () -> java.io.InputStream?,
+        onProgress: (sent: Long, total: Long) -> Unit = { _, _ -> }
     ): Pair<Boolean, String> = withContext(Dispatchers.IO) {
+        // 端口信息可能过期（握手时电脑 HTTP 服务还没起来），先就地补一次
+        ensureHttpInfo()
         val hp = _httpPort.value
         val ht = _httpToken.value
         if (hp <= 0 || ht.isBlank()) {
-            // 诊断增强 把端口和 token 长度打出来：
-            // hp=0 表示电脑端没在 welcome/device_info 里给出 HTTP 端口，
-            // 通常是电脑 HttpFileServer 启动失败（端口被占用 fallback 到随机端口，
-            // 或防火墙/初始化顺序问题）。ht 为空表示握手没带 httpToken。
             AgentLogger.log(
                 "BRIDGE",
-                "上传失败：HTTP 通道未就绪（httpPort=$hp tokenLength=${ht.length}）"
+                "上传失败：电脑未下发 HTTP 端口（httpPort=$hp tokenLength=${ht.length}）"
             )
-            return@withContext false to "HTTP 通道未就绪（httpPort=$hp）"
-        }
-        if (!localFile.exists() || !localFile.isFile) {
-            return@withContext false to "文件不存在：${localFile.absolutePath}"
+            return@withContext false to "电脑未上报文件端口（httpPort=$hp），请确认电脑端服务正常后重连"
         }
 
         val url = buildString {
             append("http://$currentHost:$hp/upload")
             append("?token=").append(encode(ht))
-            append("&path=").append(encode(localFile.name))
+            append("&path=").append(encode(fileName))
             if (dir.isNotBlank()) append("&dir=").append(encode(dir))
         }
 
         try {
             AgentLogger.log(
                 "BRIDGE",
-                "上传开始：${localFile.name}（${formatFileSize(localFile.length())}）→ $url"
+                "上传开始：$fileName（${if (contentLength > 0) formatFileSize(contentLength) else "大小未知"}）→ $url"
             )
-            val body = localFile.asRequestBody("application/octet-stream".toMediaType())
+            val body = StreamRequestBody(contentLength, openStream, onProgress)
             val req = Request.Builder().url(url).post(body).build()
             httpClient.newCall(req).execute().use { resp ->
                 // 诊断增强 读取响应体可能失败，包一层，失败时至少能打出 HTTP 状态码
@@ -699,9 +752,10 @@ object PcBridgeClient {
                 if (resp.isSuccessful) {
                     AgentLogger.log(
                         "BRIDGE",
-                        "上传成功：${localFile.name}（HTTP ${resp.code}）"
+                        "上传成功：$fileName（HTTP ${resp.code}）"
                     )
-                    true to "已上传：${localFile.name}（${formatFileSize(localFile.length())}）"
+                    val sizeText = if (contentLength > 0) formatFileSize(contentLength) else "大小未知"
+                    true to "已上传：$fileName（$sizeText）"
                 } else {
                     // 失败时把服务端的错误响应完整截出来：
                     // 常见响应：
@@ -716,11 +770,16 @@ object PcBridgeClient {
                 }
             }
         } catch (e: Exception) {
+            // 端口可能已过期（电脑端服务重启换了端口）：清空缓存，下次调用会自动重新协商
+            if (e is java.net.ConnectException || e is java.net.SocketTimeoutException) {
+                _httpPort.value = 0
+                _httpToken.value = ""
+            }
             AgentLogger.log(
                 "BRIDGE",
                 "上传异常：${e.javaClass.simpleName}: ${e.message}"
             )
-            false to "上传失败：${e.message}"
+            false to "上传失败：${e.javaClass.simpleName}: ${e.message}"
         }
     }
 
@@ -819,15 +878,29 @@ object PcBridgeClient {
     }
 
     suspend fun sendRelayFile(targetClientId: String, localFile: File): String {
+        return sendRelayStream(
+            targetClientId = targetClientId,
+            fileName = localFile.name,
+            size = localFile.length(),
+            openStream = { localFile.inputStream() }
+        )
+    }
+
+    /** 中转文件：从输入流上传（手机端选中 content:// 文件时用，免本地暂存）。 */
+    suspend fun sendRelayStream(
+        targetClientId: String,
+        fileName: String,
+        size: Long,
+        openStream: () -> java.io.InputStream?
+    ): String {
         val ws = webSocket ?: throw RuntimeException("未连接到电脑")
         if (_status.value != Status.CONNECTED) throw RuntimeException("连接状态异常")
 
         val relayId = UUID.randomUUID().toString().replace("-", "").take(16)
         val relayDir = "relay/$relayId"
-        val fileName = localFile.name
 
-        // 上传逻辑统一走 uploadFileToPc（内部已做 HTTP 通道/文件校验）
-        val (uploaded, uploadMsg) = uploadFileToPc(localFile, relayDir)
+        // 上传逻辑统一走 uploadStreamToPc（内部已做 HTTP 通道校验）
+        val (uploaded, uploadMsg) = uploadStreamToPc(fileName, size, relayDir, openStream)
         if (!uploaded) throw RuntimeException(uploadMsg)
 
         val msgId = UUID.randomUUID().toString()
@@ -837,7 +910,7 @@ object PcBridgeClient {
             targetClientId = targetClientId,
             relayId = relayId,
             fileName = fileName,
-            size = localFile.length(),
+            size = size,
             relayPath = "$relayDir/$fileName",
             source = getLocalDeviceName()
         )
@@ -854,7 +927,7 @@ object PcBridgeClient {
 
         AgentLogger.log(
             "BRIDGE",
-            "relay 已发起：relayId=$relayId → $targetClientId，file=$fileName（${formatFileSize(localFile.length())}）"
+            "relay 已发起：relayId=$relayId → $targetClientId，file=$fileName（${formatFileSize(size)}）"
         )
         return relayId
     }

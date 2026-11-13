@@ -25,6 +25,7 @@ object AndroidHttpFileServer {
     @Volatile private var pool: ExecutorService? = null
     @Volatile private var token: String = ""
     @Volatile private var port: Int = 0
+    @Volatile private var preferredPort: Int = 0
     @Volatile private var receiveDir: String = "/sdcard/FurAgent/downloads"
 
     @Volatile private var appContext: Context? = null
@@ -40,6 +41,7 @@ object AndroidHttpFileServer {
      */
     fun start(context: Context, preferredPort: Int): Pair<Int, String> {
         if (serverSocket != null) return port to token
+        this.preferredPort = preferredPort
         appContext = context.applicationContext
         // token 从持久化文件读，首次生成后不再变
         token = loadOrCreateToken()
@@ -103,6 +105,19 @@ object AndroidHttpFileServer {
     fun getPort() = port
     fun getToken() = token
     fun isRunning() = serverSocket != null
+
+    /**
+     * 按需启动 / 重启。
+     *
+     * 启动时若端口全被占用，port 会留在 0，之后 hello 一直上报 0，
+     * 对端就会永远认为「HTTP 通道未就绪」。握手时调用本方法可以就地重试，
+     * 端口恢复正常后无需用户手动重连。
+     */
+    fun ensureStarted(): Int {
+        if (serverSocket != null && port > 0) return port
+        val ctx = appContext ?: return port
+        return start(ctx, preferredPort).first
+    }
 
     /**
      * 从 token 派生的短码（6 位大写 HEX）。

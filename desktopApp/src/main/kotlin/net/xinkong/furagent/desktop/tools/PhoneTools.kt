@@ -65,6 +65,30 @@ object PhoneTools {
 
     fun hasPhoneHttp(): Boolean = clientHttpMap.values.any { it.port > 0 && it.token.isNotBlank() }
 
+    /**
+     * 取（或补取）某台手机的 HTTP 端口信息。
+     *
+     * 手机只在 hello 握手时上报一次端口。若握手那一刻手机 HTTP 服务还没起来
+     * （端口=0），桌面端会一直记着「未就绪」，实际只是信息过期。
+     * 这里主动发 request_device_info 让手机重报一次，最多等 3 秒。
+     */
+    private suspend fun ensureClientHttp(
+        clientId: String,
+        timeoutMs: Long = 3000L
+    ): ClientHttpInfo? {
+        clientHttpMap[clientId]?.let { if (it.port > 0 && it.token.isNotBlank()) return it }
+        val id = UUID.randomUUID().toString()
+        if (!BridgeServer.sendTo(clientId, BridgeMessage.requestDeviceInfo(id, EndpointId.PC))) {
+            return clientHttpMap[clientId]?.takeIf { it.port > 0 && it.token.isNotBlank() }
+        }
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            clientHttpMap[clientId]?.let { if (it.port > 0 && it.token.isNotBlank()) return it }
+            delay(100)
+        }
+        return clientHttpMap[clientId]?.takeIf { it.port > 0 && it.token.isNotBlank() }
+    }
+
     /** 第一台在线手机的 client_id，供投屏面板默认选中。 */
     fun firstPhoneClientId(): String? = findPhoneClient()
 
@@ -175,7 +199,8 @@ object PhoneTools {
         remoteDir: String
     ): Pair<Boolean, String> {
         if (!localFile.exists() || !localFile.isFile) return false to "文件不存在：${localFile.absolutePath}"
-        val info = clientHttpMap[clientId] ?: return false to "目标设备 HTTP 通道未就绪"
+        val info = ensureClientHttp(clientId)
+            ?: return false to "目标设备未上报文件端口（手机端 HTTP 服务可能未启动），请重连后重试"
         val host = findHostByClientId(clientId) ?: return false to "目标设备 IP 未知"
         if (info.port <= 0 || info.token.isBlank()) return false to "HTTP 信息不完整"
 
@@ -206,7 +231,8 @@ object PhoneTools {
         remotePath: String,
         localFile: File
     ): Pair<Boolean, String> {
-        val info = clientHttpMap[clientId] ?: return false to "目标设备 HTTP 通道未就绪"
+        val info = ensureClientHttp(clientId)
+            ?: return false to "目标设备未上报文件端口（手机端 HTTP 服务可能未启动），请重连后重试"
         val host = findHostByClientId(clientId) ?: return false to "目标设备 IP 未知"
         if (info.port <= 0 || info.token.isBlank()) return false to "HTTP 信息不完整"
 
@@ -223,7 +249,8 @@ object PhoneTools {
         clientId: String,
         remotePath: String
     ): Pair<Boolean, String> {
-        val info = clientHttpMap[clientId] ?: return false to "HTTP 通道未就绪"
+        val info = ensureClientHttp(clientId)
+            ?: return false to "目标设备未上报文件端口，请重连后重试"
         val host = findHostByClientId(clientId) ?: return false to "IP 未知"
         if (info.port <= 0 || info.token.isBlank()) return false to "HTTP 信息不完整"
 
@@ -382,15 +409,16 @@ object PhoneTools {
                 "未找到目标手机（可能未连接，或 client_id 无效）。先用 phone_status 查看在线设备。"
             )
 
-        val httpInfo = clientHttpMap[clientId]
+        val httpInfo = ensureClientHttp(clientId)
         if (httpInfo != null && httpInfo.port > 0 && httpInfo.token.isNotBlank()) {
-            val r = uploadViaPhoneHttp(clientId, localFile, fileNameHint)
-            if (r != null) return r
+            // HTTP 失败时直接返回真实原因，不再静默回退到只有 10MB 的 base64 通道
+            return uploadViaPhoneHttp(clientId, localFile, fileNameHint)
         }
 
         if (localFile.length() > MAX_FILE_BYTES) {
             return ToolResult.fail(
-                "文件过大（${formatFileSize(localFile.length())}）。该设备 HTTP 通道未就绪。"
+                "文件过大（${formatFileSize(localFile.length())}），且手机未上报文件端口。" +
+                        "大文件必须走 HTTP 直传，请在手机上确认连接状态后重试。"
             )
         }
         val base64 = try {
@@ -412,10 +440,14 @@ object PhoneTools {
         clientId: String,
         localFile: File,
         fileNameHint: String
-    ): ToolResult? = withContext(Dispatchers.IO) {
-        val info = clientHttpMap[clientId] ?: return@withContext null
-        val host = findHostByClientId(clientId) ?: return@withContext null
-        if (info.port <= 0 || info.token.isBlank()) return@withContext null
+    ): ToolResult = withContext(Dispatchers.IO) {
+        val info = clientHttpMap[clientId]
+            ?: return@withContext ToolResult.fail("手机未上报文件端口，请重连后重试")
+        val host = findHostByClientId(clientId)
+            ?: return@withContext ToolResult.fail("手机 IP 未知，请重连后重试")
+        if (info.port <= 0 || info.token.isBlank()) {
+            return@withContext ToolResult.fail("手机上报的文件端口无效（port=${info.port}），请重连后重试")
+        }
         try {
             val url = "http://$host:${info.port}/upload" +
                     "?token=${URLEncoder.encode(info.token, "UTF-8")}" +
@@ -429,11 +461,15 @@ object PhoneTools {
                 } else ToolResult.fail("HTTP ${resp.code}：$text")
             }
         } catch (e: Exception) {
+            // 端口可能已过期（手机端服务重启换了端口）：清掉缓存，下次调用会自动重新协商
+            if (e is java.net.ConnectException || e is java.net.SocketTimeoutException) {
+                clientHttpMap.remove(clientId)
+            }
             net.xinkong.furagent.desktop.system.DesktopLogger.warn(
                 "PhoneTools",
                 "HTTP 上传失败：${e.javaClass.simpleName}: ${e.message}"
             )
-            null
+            ToolResult.fail("HTTP 直传失败：${e.javaClass.simpleName}: ${e.message}")
         }
     }
 
@@ -446,7 +482,7 @@ object PhoneTools {
                 "未找到目标手机（可能未连接，或 client_id 无效）。先用 phone_status 查看在线设备。"
             )
 
-        val httpInfo = clientHttpMap[clientId]
+        val httpInfo = ensureClientHttp(clientId)
         if (httpInfo != null && httpInfo.port > 0 && httpInfo.token.isNotBlank()) {
             val host = findHostByClientId(clientId)
             if (host != null) {
@@ -470,7 +506,10 @@ object PhoneTools {
         return try {
             // 先按 base64 文本长度估算（4/3 膨胀），避免直接 decode 几 GB 数据先 OOM
             if (base64.length / 4 * 3 > MAX_FILE_BYTES) {
-                return ToolResult.fail("文件过大且该设备 HTTP 通道未就绪；大文件需通过 HTTP 直连传输")
+                return ToolResult.fail(
+                    "文件过大（约 ${formatFileSize(base64.length / 4 * 3L)}），且手机未上报文件端口，" +
+                            "无法走 HTTP 直传。请在手机上确认连接状态后重试。"
+                )
             }
             val bytes = Base64.getDecoder().decode(base64)
             if (bytes.size > MAX_FILE_BYTES) return ToolResult.fail("文件过大（${formatFileSize(bytes.size.toLong())}）")

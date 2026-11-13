@@ -371,7 +371,7 @@ object BridgeServer {
                     val welcomeMsg = BridgeMessage.welcomeWithHttp(
                         from = EndpointId.PC,
                         version = BridgeConfig.PROTOCOL_VERSION,
-                        httpPort = HttpFileServer.getPort(),
+                        httpPort = HttpFileServer.ensureStarted(),
                         httpToken = HttpFileServer.getToken(),
                         deviceName = getSystemHostname(),
                         mac = primaryMacAddress()
@@ -390,7 +390,7 @@ object BridgeServer {
             MessageType.REQUEST_DEVICE_INFO -> {
                 try {
                     conn.send(BridgeMessage.deviceInfo(
-                        EndpointId.PC, HttpFileServer.getPort(), HttpFileServer.getToken()
+                        EndpointId.PC, HttpFileServer.ensureStarted(), HttpFileServer.getToken()
                     ).encodeToString())
                 } catch (e: Exception) {
                     DesktopLogger.error("Bridge", "发送 deviceInfo 失败：${e.message}")
