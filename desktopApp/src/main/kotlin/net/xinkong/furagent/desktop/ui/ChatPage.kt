@@ -37,6 +37,7 @@ import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Shadow
 import net.xinkong.furagent.shared.ThinkingLevel
 import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.ui.TaskProgressBanner
 import net.xinkong.furagent.shared.util.*
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.milliseconds
@@ -180,6 +181,16 @@ fun ChatPage(
                         // 子会话是 AI 派发的任务上下文，用户没有发消息的场景，
                         // 留个灰掉的输入框只会让人一直想点。
                         if (!isSubSession) {
+                            // 任务进度常驻条：与输入框同层，跟随输入框一起上移，不随消息列表滚动。
+                            TaskProgressBanner(
+                                // 传全量历史（组件内带 400 条上限），避免并行工具消息
+                                // 把带清单的回复挤出固定窗口，进度条执行到一半消失。
+                                historyTexts = remember(messages, streamingText) {
+                                    messages.map { it.content } + streamingText
+                                },
+                                sessionKey = sessionId ?: "",
+                                modifier = Modifier.padding(bottom = 8.dp)
+                            )
                             ChatInputCard(
                                 inputText = inputText,
                                 onInputChange = onInputChange,

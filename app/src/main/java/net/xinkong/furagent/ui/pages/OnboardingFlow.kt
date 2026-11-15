@@ -1,7 +1,6 @@
 @file:OptIn(ExperimentalMaterial3Api::class)
 
 package net.xinkong.furagent.ui.pages
-import net.xinkong.furagent.ui.theme.AppRadius
 
 import android.Manifest
 import android.content.ComponentName
@@ -19,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,10 +39,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.system.MediaSessionListenerService
 import net.xinkong.furagent.system.ScreenAccessibilityService
 import net.xinkong.furagent.system.ShizukuHelper
 import net.xinkong.furagent.system.notifyToastLong
+import net.xinkong.furagent.ui.theme.AppRadius
 import kotlin.time.Duration.Companion.milliseconds
 
 // 权限引导
@@ -150,8 +150,8 @@ private fun buildSteps(context: Context): List<OnboardingStep> {
         )
     )
 
-    // 4. 文件访问（跳设置，API 30+）
-    if (Build.VERSION.SDK_INT >= 30) {
+    // 4. 文件访问（minSdk 31 起该步骤恒成立）
+    run {
         steps.add(
             OnboardingStep(
                 key = "file_access",
@@ -247,8 +247,8 @@ private fun buildSteps(context: Context): List<OnboardingStep> {
         )
     )
 
-    // 7. 精确闹钟（跳设置，API 31+）
-    if (Build.VERSION.SDK_INT >= 31) {
+    // 7. 精确闹钟（minSdk 31 起该步骤恒成立）
+    run {
         steps.add(
             OnboardingStep(
                 key = "exact_alarm",

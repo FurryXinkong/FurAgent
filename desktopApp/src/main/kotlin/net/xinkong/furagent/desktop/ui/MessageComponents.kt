@@ -43,6 +43,8 @@ import net.xinkong.furagent.desktop.ui.theme.Shadow
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.tools.BackupHelper
 import net.xinkong.furagent.shared.tools.TrashHelper
+import net.xinkong.furagent.shared.ui.InlineBlocks
+import net.xinkong.furagent.shared.ui.stripInlineBlocks
 import net.xinkong.furagent.shared.util.*
 import java.awt.Desktop
 import java.io.File
@@ -387,7 +389,7 @@ internal fun TextMessageRow(
                             SelectionContainer {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     MarkdownText(
-                                        text = displayContent,
+                                        text = stripInlineBlocks(displayContent),
                                         color = TextPrimary(),
                                         plainText = isStreaming
                                     )
@@ -419,7 +421,7 @@ internal fun TextMessageRow(
                             SelectionContainer {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     MarkdownText(
-                                        text = displayContent,
+                                        text = stripInlineBlocks(displayContent),
                                         color = TextPrimary(),
                                         plainText = isStreaming
                                     )
@@ -440,6 +442,7 @@ internal fun TextMessageRow(
                     }
                 }
             }
+            if (!isStreaming) InlineBlocks(content = msg.content)
             if (!isStreaming && showTime) {
                 Spacer(Modifier.height(2.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {

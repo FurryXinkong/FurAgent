@@ -39,7 +39,9 @@ import androidx.compose.ui.unit.sp
 import androidx.core.net.toUri
 import net.xinkong.furagent.data.ChatMessage
 import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.ui.InlineBlocks
 import net.xinkong.furagent.shared.ui.applyStreamingGradient
+import net.xinkong.furagent.shared.ui.stripInlineBlocks
 import net.xinkong.furagent.shared.util.*
 import net.xinkong.furagent.tools.ToolRegistry
 import net.xinkong.furagent.ui.theme.AppRadius
@@ -1879,9 +1881,10 @@ fun RichMessageText(
 
     if (plainText) {
         // 流式输出：原有的 Text 渲染逻辑
-        // applyStreamingGradient 可能会对大文本做复杂的 AnnotatedString 构造，
-        // 这里用 remember 缓存，且依赖项更严谨。
-        val annotatedString = remember(content, textColor) { applyStreamingGradient(content, textColor) }
+        // 流式过程中也去掉富内容块，避免 chart / tasks 原始代码闪现；
+        // 渲染完成（plainText=false）后由 InlineBlocks 单独出卡片。
+        val streamText = remember(content) { stripInlineBlocks(content) }
+        val annotatedString = remember(streamText, textColor) { applyStreamingGradient(streamText, textColor) }
         var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
 
         Text(
@@ -1938,7 +1941,7 @@ fun RichMessageText(
         }
         key(content) {
             ComposeMarkdownRenderer(
-                text = content,
+                text = stripInlineBlocks(content),
                 colors = mdColors,
                 modifier = modifier,
                 maxLines = maxLines,
@@ -1955,6 +1958,7 @@ fun RichMessageText(
                 onTap = onTap
             )
         }
+        InlineBlocks(content = content)
     }
 }
 

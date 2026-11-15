@@ -1,6 +1,8 @@
 package net.xinkong.furagent.data
 
+import net.xinkong.furagent.shared.ExpertPreset
 import net.xinkong.furagent.shared.ThinkingLevel
+import net.xinkong.furagent.shared.WorkMode
 
 /**
  * ChatMessage 抽到 shared/data/ChatMessage.kt。
@@ -147,6 +149,10 @@ data class AppSettings(
      * 开启后按厂商加“启用思考”参数，强度按厂商能力降级。
      */
     val thinkingLevel: ThinkingLevel = ThinkingLevel.DEFAULT,
+    /** 工作模式：agent / plan / ask，见 shared.WorkMode。 */
+    val workMode: String = WorkMode.AUTO.id,
+    /** 专家预设：general / coder / writer / analyst / researcher，见 shared.ExpertPreset。 */
+    val expertPreset: String = ExpertPreset.GENERAL.id,
     val autoSpeakReplies: Boolean = false,
     val maxToolCallLoops: Int = 20,
     /**
@@ -185,6 +191,13 @@ data class AppSettings(
      * 空串 = 不启用会话摘要。
      */
     val summaryProfileId: String = "",
+
+    /**
+     * 上下文压缩专用模型 id。
+     * 空串 = 跟随会话摘要模型；两者都没选时用主对话模型。
+     * 压缩量大、对推理要求低，单独配个便宜快的模型更划算。
+     */
+    val compactProfileId: String = "",
 
     /**
      * 子代理专用模型 id（kind != "image"）。
@@ -240,6 +253,10 @@ fun AppSettings.currentImageProfile(): ModelProfile? =
  */
 fun AppSettings.currentSummaryProfile(): ModelProfile? =
     profiles.firstOrNull { it.id == summaryProfileId && it.kind != "image" }
+
+/** 当前生效的上下文压缩模型（没选返回 null，由 Agent 决定回退顺序）。 */
+fun AppSettings.currentCompactProfile(): ModelProfile? =
+    profiles.firstOrNull { it.id == compactProfileId && it.kind != "image" }
 
 /**
  * 当前生效的子代理模型。

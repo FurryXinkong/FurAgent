@@ -28,7 +28,13 @@ object WorkflowTools {
         ToolDef(
             name = "workflow",
             displayName = "工作流",
-            description = "工作流管理。op=create 创建或更新工作流（name + steps_json，可选 description / params）；op=delete 按 name 删除；op=list 列出所有工作流；op=run 执行指定工作流（name，可选 params）。steps_json 是 JSON 数组，每元素描述一个步骤，stepType 支持 call/condition/loop/delay/set_var。",
+            description = "工作流管理。op=create 创建或更新工作流（name + steps_json，可选 description / params）；op=delete 按 name 删除；op=list 列出所有工作流；op=run 执行指定工作流（name，可选 params）。" +
+                    "steps_json 是 JSON 数组，每元素一个步骤，公共字段 stepType 取值 call/condition/loop/delay/set_var。" +
+                    "各类型必填字段：call=tool（工具名）+ args（参数对象）；condition=conditionExpr + trueBranch/falseBranch（步骤数组）；" +
+                    "loop=loopVar + loopItems + loopBody（步骤数组）；delay=delaySeconds（整数秒，必须>0）；" +
+                    "set_var=varName（变量名，必须非空）+ varValue（变量值）。" +
+                    "字段名区分大小写；兼容别名 name→varName、value→varValue、seconds→delaySeconds。" +
+                    "缺少必填字段会在 create 时直接报错并指出第几步，不会静默变成空值。",
             paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["create","delete","list","run"]},"name":{"type":"string"},"description":{"type":"string"},"params":{"type":"object"},"steps_json":{"type":"string"}},"required":["op"]}"""
         )
     )
@@ -73,6 +79,22 @@ object WorkflowTools {
         }
         val steps = parseWorkflowSteps(stepsArr)
         if (steps.isEmpty()) return ToolResult.fail("工作流没有有效步骤")
+        // 旧实现字段名写错时会静默取空串（set_var 回显成「✎  = 」），极难排查。
+        // 这里在创建阶段就明确指出第几步缺什么，让错误尽早暴露。
+        val problems = mutableListOf<String>()
+        steps.forEachIndexed { i, s ->
+            when (s.stepType) {
+                "delay" -> if (s.delaySeconds <= 0)
+                    problems.add("第 ${i + 1} 步 delay 缺少 delaySeconds（或别名 seconds），需为正整数秒")
+                "set_var" -> if (s.varName.isBlank())
+                    problems.add("第 ${i + 1} 步 set_var 缺少 varName（或别名 name）")
+                "call", "condition", "loop" -> { }
+                else -> problems.add("第 ${i + 1} 步 stepType 未知：${s.stepType}")
+            }
+        }
+        if (problems.isNotEmpty()) {
+            return ToolResult.fail("steps_json 字段有误，工作流未创建：\n" + problems.joinToString("\n"))
+        }
 
         val existing = WorkflowStore.find(name)
         val id = existing?.id ?: WorkflowStore.newId()
@@ -103,9 +125,10 @@ object WorkflowTools {
                     loopVar = o.optString("loopVar", ""),
                     loopItems = o.optString("loopItems", ""),
                     loopBody = o.optJSONArray("loopBody")?.let { parseWorkflowSteps(it) } ?: emptyList(),
-                    delaySeconds = o.optInt("delaySeconds", 0),
-                    varName = o.optString("varName", ""),
-                    varValue = o.optString("varValue", "")
+                    // 兼容直觉字段名，避免写成 name/value/seconds 时被静默丢弃成空串
+                    delaySeconds = o.optInt("delaySeconds", o.optInt("seconds", 0)),
+                    varName = o.optString("varName", o.optString("name", "")),
+                    varValue = o.optString("varValue", o.optString("value", ""))
                 )
             )
         }

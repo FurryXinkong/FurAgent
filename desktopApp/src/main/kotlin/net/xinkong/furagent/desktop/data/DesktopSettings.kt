@@ -1,5 +1,8 @@
 package net.xinkong.furagent.desktop.data
 
+import net.xinkong.furagent.shared.WorkMode
+import net.xinkong.furagent.shared.ExpertPreset
+
 import net.xinkong.furagent.desktop.system.DesktopLogger
 import net.xinkong.furagent.shared.SecretCodec
 import net.xinkong.furagent.shared.ThinkingLevel
@@ -81,6 +84,9 @@ data class DesktopSettings(
      */
     val summaryProfileId: String = "",
 
+    /** 上下文压缩专用模型 id。空串 = 跟随会话摘要模型，再回退主模型。 */
+    val compactProfileId: String = "",
+
     /**
      * 文生图专用模型 id（kind == "image"）。
      * 空串 = 不启用独立生图模型。
@@ -134,6 +140,10 @@ data class DesktopSettings(
      * 四档：关闭 / 快速 / 标准 / 深度。默认关闭。
      */
     val thinkingLevel: ThinkingLevel = ThinkingLevel.DEFAULT,
+    /** 工作模式：auto / agent / plan / ask，见 shared.WorkMode。 */
+    val workMode: String = WorkMode.AUTO.id,
+    /** 专家预设，见 shared.ExpertPreset。 */
+    val expertPreset: String = ExpertPreset.GENERAL.id,
 
     val requireConfirmWrite: Boolean = true,
     val requireConfirmDelete: Boolean = true,
@@ -240,6 +250,7 @@ data class DesktopSettings(
                 })
                 put("currentProfileId", currentProfileId)
                 put("summaryProfileId", summaryProfileId)
+                put("compactProfileId", compactProfileId)
                 put("imageProfileId", imageProfileId)
                 put("subAgentProfileId", subAgentProfileId)
                 put("apiKeySource", apiKeySource)
@@ -252,6 +263,8 @@ data class DesktopSettings(
                 put("systemPromptFull", systemPromptFull)
                 put("autoSpeak", autoSpeak)
                 put("thinkingLevel", thinkingLevel.id)
+                put("workMode", workMode)
+                put("expertPreset", expertPreset)
                 put("port", port)
                 put("requireConfirmWrite", requireConfirmWrite)
                 put("requireConfirmDelete", requireConfirmDelete)
@@ -413,6 +426,7 @@ data class DesktopSettings(
                     profiles = profiles,
                     currentProfileId = currentId,
                     summaryProfileId = o.optString("summaryProfileId", ""),
+                    compactProfileId = o.optString("compactProfileId", ""),
                     imageProfileId = o.optString("imageProfileId", ""),
                     subAgentProfileId = o.optString("subAgentProfileId", ""),
                     apiKeySource = o.optString("apiKeySource", "profile")
@@ -429,6 +443,9 @@ data class DesktopSettings(
                     thinkingLevel = if (o.has("thinkingLevel"))
                         ThinkingLevel.fromId(o.optString("thinkingLevel", null))
                     else ThinkingLevel.fromLegacyBoolean(o.optBoolean("enableThinking", false)),
+                    workMode = o.optString("workMode", "auto")
+                        .takeIf { it in listOf("auto", "agent", "plan", "ask") } ?: "auto",
+                    expertPreset = o.optString("expertPreset", "general"),
                     port = o.optInt("port", 8425).coerceIn(1, 65535),
                     requireConfirmWrite = o.optBoolean("requireConfirmWrite", true),
                     requireConfirmDelete = o.optBoolean("requireConfirmDelete", true),

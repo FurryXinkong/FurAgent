@@ -386,6 +386,68 @@ fun SettingsPage(
                     }
                 }
                 item { Spacer(Modifier.height(8.dp)) }
+                item {
+                    PocoCard {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text(
+                                "工作模式",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "默认「自动」：由 AI 自己判断要不要制定任务清单并连续执行，系统不再按关键词猜意图；手动锁定仅用于强制只规划或只问答。",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                ThemeOption("自动", "auto", settings.workMode) {
+                                    onSettingsChanged(maxTurns, settings.copy(workMode = it))
+                                }
+                                ThemeOption("执行", "agent", settings.workMode) {
+                                    onSettingsChanged(maxTurns, settings.copy(workMode = it))
+                                }
+                                ThemeOption("规划", "plan", settings.workMode) {
+                                    onSettingsChanged(maxTurns, settings.copy(workMode = it))
+                                }
+                                ThemeOption("问答", "ask", settings.workMode) {
+                                    onSettingsChanged(maxTurns, settings.copy(workMode = it))
+                                }
+                            }
+                            Spacer(Modifier.height(16.dp))
+                            Text(
+                                "专家预设",
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "按角色注入工作规范到系统提示词，不改变工具与权限。",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                ThemeOption("通用", "general", settings.expertPreset) {
+                                    onSettingsChanged(maxTurns, settings.copy(expertPreset = it))
+                                }
+                                ThemeOption("编程", "coder", settings.expertPreset) {
+                                    onSettingsChanged(maxTurns, settings.copy(expertPreset = it))
+                                }
+                                ThemeOption("写作", "writer", settings.expertPreset) {
+                                    onSettingsChanged(maxTurns, settings.copy(expertPreset = it))
+                                }
+                                ThemeOption("分析", "analyst", settings.expertPreset) {
+                                    onSettingsChanged(maxTurns, settings.copy(expertPreset = it))
+                                }
+                                ThemeOption("研究", "researcher", settings.expertPreset) {
+                                    onSettingsChanged(maxTurns, settings.copy(expertPreset = it))
+                                }
+                            }
+                        }
+                    }
+                }
                 }  // isVisible("appearance")
 
                 // ============ 文件 ============
@@ -551,6 +613,15 @@ fun SettingsPage(
                                 selectedId = local.summaryProfileId,
                                 emptyLabel = "不启用",
                                 onSelect = { quickSave(local.copy(summaryProfileId = it)) }
+                            )
+                            Spacer(Modifier.height(16.dp))
+                            ModelPickerRow(
+                                title = "上下文压缩模型",
+                                desc = "把较早的整段对话压成事实总结时用该模型。不选则跟随会话摘要模型；都没选时用主模型。",
+                                profiles = chatProfiles,
+                                selectedId = local.compactProfileId,
+                                emptyLabel = "跟随摘要模型",
+                                onSelect = { quickSave(local.copy(compactProfileId = it)) }
                             )
                             Spacer(Modifier.height(16.dp))
                             ModelPickerRow(

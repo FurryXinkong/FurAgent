@@ -125,6 +125,9 @@ fun AdvancedSettingsPage(
     pendingDeleteWorkflow?.let { w ->
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { pendingDeleteWorkflow = null },
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnClickOutside = false, dismissOnBackPress = false
+            ),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("删除工作流") },
             text = { Text("确定删除「${w.name}」？不可恢复。") },

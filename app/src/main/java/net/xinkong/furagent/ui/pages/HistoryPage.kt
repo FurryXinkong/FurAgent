@@ -249,6 +249,9 @@ fun HistoryPage(onBack: () -> Unit) {
         val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm")
         AlertDialog(
             onDismissRequest = { showRestoreConfirm = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnClickOutside = false, dismissOnBackPress = false
+            ),
             title = { Text("回档确认") },
             text = {
                 Text(
@@ -310,6 +313,9 @@ fun HistoryPage(onBack: () -> Unit) {
         val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm")
         AlertDialog(
             onDismissRequest = { showRestoreAllConfirm = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnClickOutside = false, dismissOnBackPress = false
+            ),
             title = { Text("整体回档确认") },
             text = {
                 Text(

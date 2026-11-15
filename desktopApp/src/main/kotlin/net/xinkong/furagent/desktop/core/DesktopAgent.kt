@@ -7,7 +7,7 @@ import net.xinkong.furagent.desktop.system.EnvDetector
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.tools.EditSessionTracker
 import net.xinkong.furagent.desktop.tools.PhoneTools
-import net.xinkong.furagent.shared.ThinkingLevel
+import net.xinkong.furagent.shared.*
 import net.xinkong.furagent.shared.tools.ToolResult
 import net.xinkong.furagent.shared.util.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -36,7 +36,7 @@ object DesktopAgent {
 1 执行操作必须调工具，禁止文字声称完成。
 2 只依据工具返回判断成败；以"失败"开头才算失败。
 3 危险操作（写/删文件、执行命令）前先说明。
-4 复杂任务先列编号计划。
+4 多步任务按系统下发的任务清单协议执行：在回复末尾输出 ```tasks 代码块，不要用「1. 2. 3.」编号列表代替清单，否则系统解析不到进度。
 5 用户给 URL 要看内容→直接抓正文，别只看搜索摘要。
 6 看图用 view_image；取时间用 time(op=now)。
 
@@ -59,11 +59,16 @@ object DesktopAgent {
 
 【路径】~ 主目录；桌面 ~/Desktop；下载 ~/Downloads；文档 ~/Documents；图片 ~/Pictures。
 产出目录（~/.furagent/）：screenshots 截图 / downloads 下载 / images 生成图 / exports 导出 / temp 临时 / logs 日志 / scripts 脚本。
-其它文件操作保持主目录内，系统目录会被拒。
+文件操作默认落在主目录；系统目录是否可写由操作系统权限决定。
 
 【工作目录】execute_command 默认 cwd 是应用启动目录（开发时仓库根，打包后 exe 所在目录），不是主目录也不是项目目录。相对路径先 cd 或用绝对路径。
 
 【失败处理】参数错→修正重试一次；权限问题→说明原因让用户决定；同工具同参数连失 2 次→停止换思路。
+
+【上下文压缩】上下文接近上限时，系统会把较早的工具过程压成「上下文压缩摘要」消息。看到它时：
+- 它是事实记录，不要重复其中已完成的操作；
+- 需要具体文件内容/命令输出时重新读一次，不要凭摘要猜测细节；
+- 按任务清单从第一个未完成项继续，不要因为过程被压缩就重头再来。
 
 【记忆】主动存：姓名/昵称、职业、偏好/习惯/忌讳、常用路径、用户纠正过的事实。不存：一次性信息、寒暄。取用 memory(op=recall)。
 
@@ -107,6 +112,15 @@ object DesktopAgent {
      * 机械重试十几次，每次都要重发完整上下文。
      */
     private const val TOOL_REPEAT_LIMIT = 3
+
+    /**
+     * 不算「干了活」的工具：元工具、只读探测、等待、子会话轮询。
+     * 它们不该触发「写工作日记」的兜底提醒，否则查个时间也会被要求写日记。
+     */
+    private val NON_WORK_TOOLS = setOf(
+        "tool_search", "tool_load", "time", "calculate", "sleep",
+        "sub_session", "run_sub_session", "memory", "diary"
+    )
 
     /**
      * API 请求最大重试次数（429 / 5xx / 网络异常）。
@@ -183,11 +197,50 @@ object DesktopAgent {
 
         val supportsVision = profile.supportsVision
 
+        // 工作模式默认自动判定：按用户本轮输入决定该规划、只问答还是直接执行。
+        val lastUserText = history.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val effectiveMode = WorkMode.resolve(settings.workMode, lastUserText)
+        DesktopLogger.info(
+            "Agent",
+            "[模式] 本轮=${effectiveMode.displayName}，依据=\"${lastUserText.take(40)}\""
+        )
+
+        // 被轮次截断丢掉的整段旧对话，用压缩模型压成事实总结，
+        // 作为紧跟 system prompt 的下一条 system 消息注入（而不是直接丢掉）。
+        val compactProfile = compactProfileFor(settings, profile)
+        val turnsForCompact = settings.maxTurns.coerceAtLeast(1)
+        val droppedForCompact = truncatedPrefix(
+            history = current,
+            maxTurns = turnsForCompact,
+            minKeep = minOf(MIN_KEEP_MESSAGES, turnsForCompact * 2),
+            roleOf = { it.role },
+            typeOf = { it.type }
+        )
+        val conversationDigest = if (droppedForCompact.size >= 4) {
+            compactConversation(settings, compactProfile, droppedForCompact, sessionId, effectiveApiKey)
+        } else ""
+
         val messages = JSONArray()
         messages.put(JSONObject().apply {
             put("role", "system")
-            put("content", buildSystemPrompt(settings, sessionPrompt))
+            put(
+                "content",
+                buildSystemPrompt(
+                    settings, sessionPrompt, effectiveMode,
+                    PlanTasks.latestFrom(
+                        history.filter { it.role == "assistant" }.map { it.content }
+                    )
+                )
+            )
         })
+
+        if (conversationDigest.isNotBlank()) {
+            messages.put(JSONObject().apply {
+                put("role", "system")
+                put("content", conversationDigest)
+            })
+            DesktopLogger.info("Agent", "[压缩] 已注入会话摘要 ${conversationDigest.length} 字")
+        }
 
         val envSection = try {
             EnvDetector.buildPromptSection()
@@ -202,22 +255,38 @@ object DesktopAgent {
             })
         }
 
-        val truncated = truncateHistory(current, settings.maxTurns, settings.contextTokenBudgetK)
+        // 「立即压缩」：面板请求后本轮把预算临时收紧一半，强制压缩一次。
+        val forceCompact = ContextUsageStore.consumeCompactRequest()
+        val effectiveBudgetK = if (forceCompact) {
+            val base = if (settings.contextTokenBudgetK > 0) settings.contextTokenBudgetK else 64
+            (base * 0.5).toInt().coerceAtLeast(8)
+        } else settings.contextTokenBudgetK
+        val truncated = truncateHistory(current, settings.maxTurns, effectiveBudgetK, settings)
         buildHistoryMessages(truncated, messages, settings, supportsVision)
 
         // 跨轮次累积"已加载工具"
-        val loadedToolNames = mutableSetOf<String>()
+        // 并行工具分支里多个 async 共享这些容器；普通 LinkedHashMap/HashSet 在
+        // 遍历 keys 时被另一协程 put 会抛 ConcurrentModificationException。
+        val loadedToolNames: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
         // 失败计数 同一工具同一参数连续失败 3 次则中断（与手机端 Agent.kt 一致）。
         // 签名忽略翻页/数量类参数，避免模型只改 limit/offset 就绕过计数。
-        val toolFailureStreak = mutableMapOf<String, Int>()
+        val toolFailureStreak = java.util.concurrent.ConcurrentHashMap<String, Int>()
         // 重复调用计数：同签名连续出现次数（不看成败）。
         // 与 toolFailureStreak 分开维护：失败计数在成功时清零，
         // 而重复计数只在「签名变了」时清零。
-        val toolRepeatStreak = mutableMapOf<String, Int>()
+        val toolRepeatStreak = java.util.concurrent.ConcurrentHashMap<String, Int>()
         var lastToolSig: String? = null
 
         val maxLoops = (maxLoopsOverride ?: settings.maxToolCallLoops).coerceAtLeast(1)
+        // 任务清单自动续跑计数：防止模型反复输出同一份未完成清单导致死循环。
+        var planContinueCount = 0
+
+        // 工作日记：本轮是否已写、是否已提醒、执行了多少个「真干活」的工具。
+        // 「每完成一个任务写一次日记」靠系统兜底，不依赖模型自觉。
+        var diaryWritten = false
+        var diaryNudged = false
+        var workToolCalls = 0
 
         repeat(maxLoops) { loopIndex ->
             // 每轮开头检查取消。用户点“停止”后 currentAgentJob.cancel()
@@ -227,7 +296,21 @@ object DesktopAgent {
             onThinking(if (loopIndex == 0) "思考中…" else "继续思考…")
 
             // 每轮重建 tools（loadedToolNames 会变化）
-            val tools = buildToolsArray(settings, supportsVision, loadedToolNames)
+            val tools = if (effectiveMode.toolsEnabled) {
+                buildToolsArray(settings, supportsVision, loadedToolNames)
+            } else {
+                JSONArray()
+            }
+
+            // 上报本轮上下文用量（输入区右下角面板订阅这个值）。
+            ContextUsageStore.report(
+                ContextUsageMeter.measure(
+                    messages = messages,
+                    tools = tools,
+                    budgetK = settings.contextTokenBudgetK,
+                    sessionId = ""
+                )
+            )
 
             // 用量监控 每轮请求前估算 prompt token，超阈值告警，便于定位烧钱点。
             val promptTokens = estimateMessagesTokens(messages)
@@ -397,6 +480,55 @@ object DesktopAgent {
             if (toolCalls.isEmpty()) {
                 onThinking("")
                 val final = contentStr.ifBlank { "(无回复)" }
+
+                // 硬推进：清单还有未完成项时，系统不允许本轮结束，
+                // 追加进度消息让模型继续执行下一项（不依赖模型自律）。
+                val openTasks = PlanTasks.parse(final)
+                if (PlanTasks.hasPending(openTasks) &&
+                    planContinueCount < PlanTasks.MAX_AUTO_CONTINUE &&
+                    loopIndex < maxLoops - 1
+                ) {
+                    planContinueCount++
+                    // 先把本轮回复放回上下文，再追加系统续跑指令，保持对话结构完整。
+                    messages.put(JSONObject().apply {
+                        put("role", "assistant")
+                        put("content", final)
+                    })
+                    messages.put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", PlanTasks.continuePrompt(openTasks))
+                    })
+                    current = current + DesktopMessage(
+                        role = "assistant", content = final, type = "text",
+                        reasoning = reasoningBuilder.toString()
+                    )
+                    onUpdate(current)
+                    onStreamCommit()
+                    DesktopLogger.info("Agent", "[任务] 清单未完成，自动续跑第 $planContinueCount 次")
+                    return@repeat
+                }
+
+                // 硬约束：本轮真干了活却没写日记，系统拦一次让模型补上。
+                if (!diaryWritten && !diaryNudged && workToolCalls >= 2 && loopIndex < maxLoops - 1) {
+                    diaryNudged = true
+                    messages.put(JSONObject().apply {
+                        put("role", "assistant")
+                        put("content", final)
+                    })
+                    messages.put(JSONObject().apply {
+                        put("role", "user")
+                        put("content", DiaryProtocol.NUDGE)
+                    })
+                    current = current + DesktopMessage(
+                        role = "assistant", content = final, type = "text",
+                        reasoning = reasoningBuilder.toString()
+                    )
+                    onUpdate(current)
+                    onStreamCommit()
+                    DesktopLogger.info("Agent", "[日记] 本轮未写工作日记，已拦截并提醒一次")
+                    return@repeat
+                }
+
                 current = current + DesktopMessage(
                     role = "assistant", content = final, type = "text",
                     reasoning = reasoningBuilder.toString()
@@ -539,7 +671,11 @@ object DesktopAgent {
                     onThinking("正在执行工具：${friendlyName(acc.name)}")
                     DesktopLogger.info("Agent", "调用工具（串行）：${acc.name}")
                     val startMs = System.currentTimeMillis()
-                    val r = runOneTool(acc.name, argsJson, settings, loadedToolNames, toolRepeatStreak, lastToolSig)
+                    val r = runOneTool(
+                        acc.name, argsJson, settings, loadedToolNames,
+                        toolRepeatStreak, lastToolSig,
+                        toolsEnabled = effectiveMode.toolsEnabled
+                    )
                     lastToolSig = try {
                         toolSignature(acc.name, JSONObject(argsJson.ifBlank { "{}" }))
                     } catch (_: Exception) { null }
@@ -565,7 +701,11 @@ object DesktopAgent {
                             onThinking("正在执行工具：${friendlyName(acc.name)}")
                             val startMs = System.currentTimeMillis()
                             val r = try {
-                                runOneTool(acc.name, acc.arguments.toString(), settings, loadedToolNames, toolRepeatStreak, lastToolSig)
+                                runOneTool(
+                                    acc.name, acc.arguments.toString(), settings, loadedToolNames,
+                                    toolRepeatStreak, lastToolSig,
+                                    toolsEnabled = effectiveMode.toolsEnabled
+                                )
                             } catch (ce: CancellationException) {
                                 throw ce
                             } catch (t: Throwable) {
@@ -608,6 +748,16 @@ object DesktopAgent {
                     put("tool_call_id", callId)
                     put("content", result.output)
                 })
+
+                // 日记状态跟踪：写成功才算写过；元工具/查询类不算「干活」。
+                if (acc.name == "diary") {
+                    val op = try {
+                        JSONObject(acc.arguments.toString()).optString("op")
+                    } catch (_: Exception) { "" }
+                    if (op.lowercase() == "write" && !isToolFailure(result.output)) diaryWritten = true
+                } else if (acc.name !in NON_WORK_TOOLS) {
+                    workToolCalls++
+                }
 
                 // 失败计数 元工具跳过；同一签名连续失败 3 次则中断循环。
                 if (acc.name != "tool_search" && acc.name != "tool_load") {
@@ -759,10 +909,11 @@ object DesktopAgent {
 
     // 历史截断 / 重建
 
-    private fun truncateHistory(
+    private suspend fun truncateHistory(
         history: List<DesktopMessage>,
         maxTurns: Int,
-        budgetKTokens: Int
+        budgetKTokens: Int,
+        settings: DesktopSettings
     ): List<DesktopMessage> {
         if (history.isEmpty()) return history
         if (maxTurns <= 0) return history
@@ -782,7 +933,7 @@ object DesktopAgent {
         )
         // token 预算二次裁剪 见 trimByTokenBudget
         val byTurns = if (startIdx <= 0) history else history.subList(startIdx, history.size)
-        return trimByTokenBudget(byTurns, budgetKTokens)
+        return trimByTokenBudget(byTurns, budgetKTokens, settings)
     }
 
 
@@ -796,13 +947,14 @@ object DesktopAgent {
      * 一轮里读十个大文件，光工具输出就能吃掉几万 token，maxTurns 完全拦不住。
      * 这里再按 token 预算从最旧的「工具过程」开始丢，人类消息与助手文字回复一律保留。
      */
-    private fun trimByTokenBudget(
+    private suspend fun trimByTokenBudget(
         history: List<DesktopMessage>,
-        budgetKTokens: Int
+        budgetKTokens: Int,
+        settings: DesktopSettings
     ): List<DesktopMessage> {
         val budget = budgetKTokens * 1000
         if (budget <= 0) return history
-        return trimToolProcessByBudget(
+        val trimmed = trimToolProcessByBudget(
             history = history,
             budgetTokens = budget,
             entryTokens = { estimateMessageTokens(it) },
@@ -815,8 +967,111 @@ object DesktopAgent {
                     content = "（此处省略 $n 条工具调用记录，为节省上下文未逐条保留）",
                     type = "system_note"
                 )
-            }
-        ).kept
+            },
+            // 超预算时压成结构化摘要，保住「做了什么、改了哪些文件、成败」。
+            // 首选让当前对话模型自己压（理解语义后重写），失败再退回抽取式摘要。
+            textOf = { it.content },
+            makeDigestNote = { digest ->
+                DesktopMessage(role = "assistant", content = digest, type = "system_note")
+            },
+            digestProvider = { texts -> llmCompact(settings, texts) }
+        )
+        ContextUsageStore.noteCompaction(trimmed.compacted, trimmed.compactedChars)
+        return trimmed.kept
+    }
+
+    /**
+     * 上下文压缩的模型调用（桌面版）。
+     *
+     * 用当前对话模型把被裁掉的旧工具过程重写成事实摘要；失败/未配置时返回空串，
+     * 由 [ContextCompactor.summarize] 自动退回抽取式摘要。
+     * 节流 60s：避免「每轮都超预算」时反复压，压缩本身也吃额度。
+     */
+    /** 压缩模型：用户单独指定 → 会话摘要模型 → 主对话模型。 */
+    private fun compactProfileFor(
+        settings: DesktopSettings,
+        main: DesktopModelProfile
+    ): DesktopModelProfile =
+        settings.profiles.firstOrNull { it.id == settings.compactProfileId && it.kind != "image" }
+            ?: settings.profiles.firstOrNull { it.id == settings.summaryProfileId && it.kind != "image" }
+            ?: main
+
+    /** 会话级压缩：整段旧对话 → 一条 system 摘要消息。 */
+    private suspend fun compactConversation(
+        settings: DesktopSettings,
+        profile: DesktopModelProfile,
+        dropped: List<DesktopMessage>,
+        sessionKey: String,
+        fallbackKey: String
+    ): String {
+        // 压缩模型没单独配 Key（本地模型常见）时，用主对话已解析出来的 Key
+        val resolved = ApiKeyResolver.resolve(settings, profile)
+        val key = if (resolved is ApiKeyResolver.Result.Found) resolved.key
+        else fallbackKey.ifBlank { "" }
+        if (key.isBlank()) return ""
+        val entries = dropped
+            .map { ConversationCompactor.formatEntry(it.role, it.type, it.content) }
+            .filter { it.isNotBlank() }
+        val cfg = OneShotConfig(
+            baseUrl = profile.baseUrl, apiKey = key, model = profile.model,
+            protocol = profile.protocol, maxTokens = 2000, temperature = 0.2, timeoutSeconds = 60
+        )
+        DesktopLogger.info("Agent", "[压缩] 会话级压缩 ${dropped.size} 条旧消息，模型=${profile.name}")
+        return ConversationCompactor.summarize(sessionKey, entries) { s, u ->
+            LlmOneShot.complete(cfg, s, u)
+        }
+    }
+
+    private var lastLlmCompactAt = 0L
+
+    private suspend fun llmCompact(settings: DesktopSettings, texts: List<String>): String {
+        if (texts.isEmpty()) return ""
+        val totalChars = texts.sumOf { it.length }
+        if (totalChars < 1200) return ContextCompactor.digest(texts)
+
+        val main = settings.currentProfile() ?: return ContextCompactor.digest(texts)
+        // 压缩走用户指定的压缩模型（或摘要模型），不抢主对话的贵模型额度
+        val profile = compactProfileFor(settings, main)
+        if (profile.baseUrl.isBlank()) return ContextCompactor.digest(texts)
+        val keyResult = ApiKeyResolver.resolve(settings, profile)
+        if (keyResult !is ApiKeyResolver.Result.Found) {
+            DesktopLogger.warn("Agent", "[压缩] 取不到 API Key，本轮用抽取式摘要")
+            return ContextCompactor.digest(texts)
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastLlmCompactAt < 60_000L) {
+            DesktopLogger.debug("Agent", "[压缩] 距上次模型压缩不足 60s，本轮用抽取式摘要")
+            return ContextCompactor.digest(texts)
+        }
+        lastLlmCompactAt = now
+
+        val cfg = OneShotConfig(
+            baseUrl = profile.baseUrl,
+            apiKey = keyResult.key,
+            model = profile.model,
+            protocol = profile.protocol,
+            maxTokens = 1600,
+            temperature = 0.2,
+            timeoutSeconds = 60
+        )
+        DesktopLogger.info("Agent", "[压缩] 用模型压缩 ${texts.size} 条旧记录（$totalChars 字）…")
+        val out = LlmOneShot.complete(cfg, ContextCompactor.SYSTEM_PROMPT, buildCompactUserPrompt(texts))
+        if (out.isNullOrBlank()) {
+            DesktopLogger.warn("Agent", "[压缩] 模型未返回内容，退回抽取式摘要")
+            return ContextCompactor.digest(texts)
+        }
+        DesktopLogger.info("Agent", "[压缩] 模型摘要 ${out.length} 字")
+        return ContextCompactor.summarize(texts) { _, _ -> out }
+    }
+
+    private fun buildCompactUserPrompt(texts: List<String>): String = buildString {
+        appendLine("下面是需要压缩的旧交互记录，请按要求输出四段式事实摘要。")
+        appendLine()
+        texts.forEachIndexed { i, t ->
+            appendLine("--- 记录 ${i + 1} ---")
+            appendLine(if (t.length > 1500) t.take(1000) + "\n…（略）…\n" + t.takeLast(500) else t)
+        }
     }
 
     private fun buildHistoryMessages(
@@ -1188,7 +1443,9 @@ object DesktopAgent {
         settings: DesktopSettings,
         loadedToolNames: MutableSet<String>,
         repeatStreak: MutableMap<String, Int>? = null,
-        lastSig: String? = null
+        lastSig: String? = null,
+        /** 本轮工作模式是否允许执行工具，由 runTurn 的自动判定结果下发。 */
+        toolsEnabled: Boolean = true
     ): ToolResult {
         // 重复调用拦截：同签名连续 N 次直接不执行，返回纠正提示。
         //
@@ -1201,12 +1458,19 @@ object DesktopAgent {
             } catch (_: Exception) {
                 "$name|$argsJson"
             }
-            val prev = repeatStreak[sig] ?: 0
-            val streak = prev + 1
-            repeatStreak[sig] = streak
-            // 签名变了，其他签名的计数清零（只关心「连续」）
-            if (lastSig != null && lastSig != sig) {
-                repeatStreak.keys.retainAll { it == sig }
+            // 并行分支下多个 async 同时进入这里：retainAll 会遍历 keys，
+            // 另一协程同时 put 就会抛 ConcurrentModificationException
+            //（实测 schedule / phone_status / execute_command / sub_session(status) 并行必崩，串行正常）。
+            // 读-改-写 + 清理必须在同一把锁内完成。
+            val streak = synchronized(repeatStreak) {
+                val prev = repeatStreak[sig] ?: 0
+                val next = prev + 1
+                repeatStreak[sig] = next
+                // 签名变了，其他签名的计数清零（只关心「连续」）
+                if (lastSig != null && lastSig != sig) {
+                    repeatStreak.keys.retainAll { it == sig }
+                }
+                next
             }
             if (streak > TOOL_REPEAT_LIMIT) {
                 DesktopLogger.warn(
@@ -1261,17 +1525,24 @@ object DesktopAgent {
                     }
                 }
             }
-            else -> executeTool(name, argsJson, settings)
+            else -> executeTool(name, argsJson, settings, toolsEnabled)
         }
     }
 
     private suspend fun executeTool(
-        name: String, argsJson: String, settings: DesktopSettings
+        name: String, argsJson: String, settings: DesktopSettings,
+        toolsEnabled: Boolean = true
     ): ToolResult {
         // 工具执行前再确认一次未取消。
         // 调用方（runOneTool）已经检查过，但元工具分支可能耗时（tool_search 扫目录），
         // 这里再兵一道，避免“用户已点停止但工具仍被执行”。
         currentCoroutineContext().ensureActive()
+        // 用本轮自动判定的结果，而不是设置里的原始值：
+        // 设置为 auto 时 fromId 会得到 AUTO(true)，会把 plan/ask 轮次误放行。
+        if (!toolsEnabled) {
+            DesktopLogger.warn("Agent", "当前工作模式禁止调用工具：$name")
+            return ToolResult.fail("当前为规划/问答模式，不允许调用工具")
+        }
         if (name in settings.disabledTools) {
             DesktopLogger.warn("Agent", "拒绝调用已禁用工具：$name")
             return ToolResult.fail("工具 $name 已被禁用")
@@ -1305,7 +1576,12 @@ object DesktopAgent {
         }
     }
 
-    private fun buildSystemPrompt(settings: DesktopSettings, sessionPrompt: String = ""): String {
+    private fun buildSystemPrompt(
+        settings: DesktopSettings,
+        sessionPrompt: String = "",
+        effectiveMode: WorkMode = WorkMode.AGENT,
+        plan: List<PlanTasks.Task> = emptyList()
+    ): String {
         // 时间戳只到天
         val now = DateFormats.formatDate()
         val os = "${System.getProperty("os.name")} ${System.getProperty("os.version")} (${System.getProperty("os.arch")})"
@@ -1338,6 +1614,30 @@ object DesktopAgent {
         // 会话专用提示词：只作用于当前会话，追加在全局指令之后
         if (sessionPrompt.isNotBlank()) {
             prompt += "\n\n【本会话专用指令】\n$sessionPrompt"
+        }
+        if (effectiveMode.instruction.isNotBlank()) {
+            prompt += "\n\n【本轮工作模式由系统自动判定】\n${effectiveMode.instruction}"
+        }
+        val expert = ExpertPreset.fromId(settings.expertPreset).instruction
+        if (expert.isNotBlank()) prompt += "\n\n$expert"
+
+        // 任务规划交给 AI 自己判断：注入执行规范 + 回注上一轮未完成的清单进度。
+        if (effectiveMode.toolsEnabled) {
+            prompt += "\n\n" + PlanTasks.PROTOCOL
+            if (plan.isNotEmpty()) prompt += "\n\n" + PlanTasks.toPrompt(plan)
+
+            // 工作日记：写入规范 + 最近两天日记回注，让跨天任务能接上进度。
+            // 用户禁用 diary 工具后不再注入，避免要求 AI 调用不存在的工具。
+            if ("diary" !in settings.disabledTools) {
+                prompt += "\n\n" + DiaryProtocol.RULES
+                val recentDiary = try {
+                    DiaryStore.recentForPrompt(DesktopPaths.rootDir())
+                } catch (_: Exception) {
+                    ""
+                }
+                val diaryPrompt = DiaryProtocol.toPrompt(recentDiary)
+                if (diaryPrompt.isNotBlank()) prompt += "\n\n" + diaryPrompt
+            }
         }
         return prompt
     }

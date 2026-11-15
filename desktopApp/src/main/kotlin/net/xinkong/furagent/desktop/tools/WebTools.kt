@@ -1,6 +1,7 @@
 package net.xinkong.furagent.desktop.tools
 
 import net.xinkong.furagent.shared.tools.ToolResult
+import net.xinkong.furagent.shared.util.DeepResearch
 import net.xinkong.furagent.shared.util.WebSearchEngine
 import org.json.JSONObject
 
@@ -19,7 +20,7 @@ object WebTools {
         ToolDef(
             "web", "联网",
             "联网工具。op=search 搜索（最多 8 条结果，可 page 翻页；可选 engine=bing/baidu/360 指定搜索源，不填按 360→百度→必应 顺序自动回退）；op=fetch 抓取指定 URL 的网页正文（可 max_length 控制长度，默认 8000）。用户提供 URL 且要求总结或查看内容时，直接用 fetch 抓正文，不要只依赖搜索摘要。",
-            """{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch"]},"query":{"type":"string"},"page":{"type":"integer"},"engine":{"type":"string"},"url":{"type":"string"},"max_length":{"type":"integer"}},"required":["op"]}"""
+            """{"type":"object","properties":{"op":{"type":"string","enum":["search","fetch","research"]},"query":{"type":"string"},"page":{"type":"integer"},"engine":{"type":"string"},"url":{"type":"string"},"max_length":{"type":"integer"}},"required":["op"]}"""
         )
     )
 
@@ -43,7 +44,11 @@ object WebTools {
                 val maxLength = args.optInt("max_length", 8000).coerceIn(500, 20000)
                 wrapResult(WebSearchEngine.fetchContent(url, maxLength))
             }
-            else -> ToolResult.fail("op 只能是 search / fetch")
+            "research" -> {
+                val topic = args.optString("query", "").trim()
+                wrapResult(DeepResearch.run(topic))
+            }
+            else -> ToolResult.fail("op 只能是 search / fetch / research")
         }
     }
 

@@ -1278,6 +1278,7 @@ fun App(settings: DesktopSettings, onSettingsChange: (DesktopSettings) -> Unit) 
                             }
                         }
                     )
+                    AppPage.DIARY -> DiaryPage()
                     AppPage.MEMORY -> MemoryPage(
                         onOpenSession = { sid ->
                             if (sessionList.any { it.id == sid }) {

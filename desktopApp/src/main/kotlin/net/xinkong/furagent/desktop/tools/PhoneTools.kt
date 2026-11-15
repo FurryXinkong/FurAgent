@@ -135,20 +135,6 @@ object PhoneTools {
                     "可选 client_id 指定设备；不填时默认用第一台在线设备。",
             paramsSchema = """{"type":"object","properties":{"remote_path":{"type":"string"},"local_path":{"type":"string"},"client_id":{"type":"string"}},"required":["remote_path"]}"""
         ),
-        PhoneTool(
-            name = "phone_remote",
-            displayName = "远程协助控制手机",
-            description = "Windows 通过现有双向桥接远程协助控制安卓手机，等价于 adb 的常用能力，无需 USB。" +
-                    "op=status 查控制通道/屏幕尺寸；op=dump 取 UI 元素树；op=find 按文本找元素；" +
-                    "op=tap(x,y) 点击；op=long_press 长按；op=swipe(start_x/start_y/end_x/end_y) 滑动；" +
-                    "op=text 输入文字（带 node_id 可精确写入输入框）；op=key(back/home/recents/enter) 按键；" +
-                    "op=screencap 截屏并返回手机端路径，随后用 phone_receive_file 拉取；" +
-                    "op=scroll(x,y,dx,dy) 滚动（对应鼠标滚轮）；" +
-                    "op=shell 执行 shell 命令（需 Shizuku，手机端会弹确认）；op=apps 列应用；op=launch(package) 启动应用。" +
-                    "典型流程：phone_remote(op=status) → dump/find → tap/text → 再 dump 验证。" +
-                    "手机端需开启无障碍服务或 Shizuku；可选 client_id 指定设备。",
-            paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["status","dump","find","tap","long_press","swipe","text","key","screencap","scroll","shell","apps","launch"]},"x":{"type":"integer"},"y":{"type":"integer"},"dx":{"type":"integer"},"dy":{"type":"integer"},"start_x":{"type":"integer"},"start_y":{"type":"integer"},"end_x":{"type":"integer"},"end_y":{"type":"integer"},"duration_ms":{"type":"integer"},"text":{"type":"string"},"node_id":{"type":"string"},"key":{"type":"string"},"command":{"type":"string"},"timeout":{"type":"integer"},"package":{"type":"string"},"max_depth":{"type":"integer"},"max_nodes":{"type":"integer"},"client_id":{"type":"string"}},"required":["op"]}"""
-        )
     )
 
     private val pending = ConcurrentHashMap<String, CompletableDeferred<BridgeMessage>>()
@@ -187,7 +173,6 @@ object PhoneTools {
                 "phone_call" -> phoneCall(args)
                 "phone_send_file" -> phoneSendFile(args)
                 "phone_receive_file" -> phoneReceiveFile(args)
-                "phone_remote" -> phoneRemote(args)
                 else -> ToolResult.fail("未知手机工具：$name")
             }
         } catch (e: Exception) { ToolResult.fail("执行异常：${e.message}") }
@@ -368,32 +353,6 @@ object PhoneTools {
                 "未找到目标手机（可能未连接，或 client_id 无效）。先用 phone_status 查看在线设备。"
             )
         return callRemoteTool(clientId, tool, toolArgs, timeoutSec)
-    }
-
-    /**
-     * Windows → 安卓远程协助：把 adb 风格的 op 透传给手机端的 `adb` 工具。
-     *
-     * 链路完全复用现有 BridgeServer → PcBridgeClient 的 toolCall/toolResult，
-     * 不新增协议、不依赖 USB。手机端 RemoteControlTools 负责把 op 翻译成
-     * 无障碍手势或 Shizuku 命令。
-     */
-    private suspend fun phoneRemote(args: JSONObject): ToolResult {
-        val op = args.optString("op", "").trim().lowercase()
-        if (op.isBlank()) return ToolResult.fail("未提供 op 参数")
-        val clientId = resolveClientId(args)
-            ?: return ToolResult.fail(
-                "未找到目标手机（可能未连接，或 client_id 无效）。先用 phone_status 查看在线设备。"
-            )
-        // 透传全部参数（手机端忽略不认识的字段），避免这里再维护一份参数白名单。
-        val remoteArgs = JSONObject(args.toString())
-        remoteArgs.put("op", op)
-        val timeoutSec = args.optInt("timeout", 60).coerceIn(5, 300)
-        val result = callRemoteTool(clientId, "adb", remoteArgs, timeoutSec)
-        return if (result.success) {
-            ToolResult.ok("「${clientDisplayName(clientId)}」远程操作 $op 结果：\n${result.output}")
-        } else {
-            ToolResult.fail("远程操作 $op 失败：${result.output}")
-        }
     }
 
     private suspend fun phoneSendFile(args: JSONObject): ToolResult {

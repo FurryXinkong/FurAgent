@@ -28,6 +28,8 @@ import net.xinkong.furagent.desktop.system.openExternalUrl
 import net.xinkong.furagent.desktop.tools.DesktopTools
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Spacing
+import net.xinkong.furagent.shared.ExpertPreset
+import net.xinkong.furagent.shared.WorkMode
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.update.UpdateChecker
 import net.xinkong.furagent.shared.util.ApiUrlResolver
@@ -519,6 +521,55 @@ fun SettingsPage(
                                 }
                             }
 
+                            // 上下文压缩模型（同会话摘要模型样式）
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("上下文压缩模型", fontSize = 13.sp, color = TextPrimary())
+                                    Text(
+                                        "把较早的整段对话压成事实总结时用该模型。不选则跟随会话摘要模型；都没选时用主模型。",
+                                        fontSize = 11.sp,
+                                        color = TextMuted()
+                                    )
+                                }
+                                var compactMenuOpen by remember { mutableStateOf(false) }
+                                val compactName = settings.chatProfiles()
+                                    .firstOrNull { it.id == settings.compactProfileId }?.name ?: "跟随摘要模型"
+                                Box {
+                                    SecondaryButton(
+                                        text = compactName,
+                                        icon = Icons.Default.ExpandMore,
+                                        modifier = Modifier.width(160.dp)
+                                    ) { compactMenuOpen = true }
+                                    DropdownMenu(
+                                        expanded = compactMenuOpen,
+                                        onDismissRequest = { compactMenuOpen = false },
+                                        containerColor = CardColor()
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text("跟随摘要模型", fontSize = 12.sp, color = TextPrimary()) },
+                                            onClick = {
+                                                compactMenuOpen = false
+                                                onSettingsChange(settings.copy(compactProfileId = ""))
+                                            }
+                                        )
+                                        settings.chatProfiles().forEach { p ->
+                                            DropdownMenuItem(
+                                                text = { Text(p.name, fontSize = 12.sp, color = TextPrimary()) },
+                                                onClick = {
+                                                    compactMenuOpen = false
+                                                    onSettingsChange(settings.copy(compactProfileId = p.id))
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
                             // 子代理模型选择（同会话摘要模型样式）
                             Spacer(Modifier.height(8.dp))
                             Row(
@@ -676,6 +727,62 @@ fun SettingsPage(
                             settings.autoSpeak
                         ) {
                             onSettingsChange(settings.copy(autoSpeak = it))
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "工作模式",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "默认「自动」：由 AI 自己判断要不要制定任务清单并连续执行，系统不再按关键词猜意图。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            WorkMode.entries.forEach { mode ->
+                                FilterChip(
+                                    selected = settings.workMode == mode.id,
+                                    onClick = {
+                                        onSettingsChange(settings.copy(workMode = mode.id))
+                                    },
+                                    label = { Text(mode.displayName) }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(14.dp))
+                        Text(
+                            "专家预设",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "按角色注入工作规范到系统提示词，不改变工具与权限。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ExpertPreset.entries.forEach { preset ->
+                                FilterChip(
+                                    selected = settings.expertPreset == preset.id,
+                                    onClick = {
+                                        onSettingsChange(settings.copy(expertPreset = preset.id))
+                                    },
+                                    label = { Text(preset.displayName) }
+                                )
+                            }
                         }
                     }
                 }

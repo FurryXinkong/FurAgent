@@ -303,8 +303,31 @@ object MemoryStore {
         } else {
             enabledList
         }
-        val sb = StringBuilder("已知关于用户的信息：\n")
-        list.forEach { sb.append("- ${it.content}\n") }
-        return sb.toString()
+        // 三层记忆：用户长期信息 / 项目工作区笔记 / 近期工作日志。
+        // 旧数据没有前缀一律归入用户信息，不破坏存量。
+        val user = mutableListOf<String>()
+        val project = mutableListOf<String>()
+        val daily = mutableListOf<String>()
+        list.forEach {
+            when {
+                it.content.startsWith("[项目]") -> project.add(it.content.removePrefix("[项目]").trim())
+                it.content.startsWith("[日志]") -> daily.add(it.content.removePrefix("[日志]").trim())
+                else -> user.add(it.content)
+            }
+        }
+        val sb = StringBuilder()
+        if (user.isNotEmpty()) {
+            sb.append("已知关于用户的信息：\n")
+            user.forEach { sb.append("- $it\n") }
+        }
+        if (project.isNotEmpty()) {
+            sb.append("\n项目 / 工作区笔记：\n")
+            project.forEach { sb.append("- $it\n") }
+        }
+        if (daily.isNotEmpty()) {
+            sb.append("\n近期工作日志：\n")
+            daily.forEach { sb.append("- $it\n") }
+        }
+        return sb.toString().trim()
     }
 }

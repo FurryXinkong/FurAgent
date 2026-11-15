@@ -65,6 +65,7 @@ object DocumentTools {
                     "Word 表格支持 merge 合并单元格、colWidths 列宽、cellStyles 单元格样式。\n" +
                     "Excel 支持 formula 公式、merge 合并、conditional 条件格式、validation 数据验证、chart 图表。\n" +
                     "PPT 支持 notes 备注、layout 版式、per-slide 背景。\n" +
+                    "PPT 的 pagebreak 是「分页指令」而非「空白页」：它让下一个内容块从新页开始，本身不占一页；连续或末尾的 pagebreak 自动合并，不会产生空页。\n" +
                     "生成后返回文件路径。",
             paramsSchema = """{"type":"object","properties":{""" +
                     """"op":{"type":"string","enum":["create_docx","create_xlsx","create_pptx","read_docx","read_xlsx","read_pptx","edit_docx","edit_xlsx"]},""" +
@@ -853,6 +854,27 @@ object DocumentTools {
                 renderPptxBlock(canvas, block, cfg, host)
             }
 
+            // 兜底：删掉完全没有形状的空白页（例如渲染异常或旧数据留下的空页）。
+            // 放在加页码/页脚之前，否则页码文本框会让空页看起来「非空」。
+            // 至少保留一页，避免生成 0 页的非法 pptx。
+            try {
+                if (ppt.slides.size > 1) {
+                    for (idx in ppt.slides.indices.reversed()) {
+                        if (ppt.slides.size <= 1) break
+                        val s = ppt.slides[idx]
+                        // 只删真正没有内容的页：带演讲者备注的页 shapes 可能为空，不能误删。
+                        val hasNotes = try {
+                            val n = s.notes
+                            n != null && n.shapes.any { shape ->
+                                (shape as? org.apache.poi.sl.usermodel.TextShape<*, *>)
+                                    ?.text?.isNotBlank() == true
+                            }
+                        } catch (_: Throwable) { true }
+                        if (s.shapes.isEmpty() && !hasNotes) ppt.removeSlide(idx)
+                    }
+                }
+            } catch (_: Throwable) { }
+
             // 页码 / 页脚（跳过首页）
             if (pageNumber || footerText.isNotBlank()) {
                 val slides = ppt.slides
@@ -892,6 +914,11 @@ object DocumentTools {
     ) {
         var slide: org.apache.poi.xslf.usermodel.XSLFSlide? = null
         var y: Double = TOP_MARGIN
+        /**
+         * 惰性分页标记。pagebreak 只提出换页请求，下一个真正要画内容的块才建页，
+         * 这样连续 pagebreak / 末尾 pagebreak / pagebreak 紧跟 title 都不会多出空白页。
+         */
+        private var pendingPageBreak = false
         /** 当前横向区域：left / width（像素） */
         var areaLeft: Int = SIDE_MARGIN
         var areaWidth: Int = pageSize.width - SIDE_MARGIN * 2
@@ -912,17 +939,26 @@ object DocumentTools {
             val s = ppt.createSlide()
             if (cfg.bgColor != null) fillSlideBackground(s, cfg.bgColor)
             slide = s
+            pendingPageBreak = false
             y = TOP_MARGIN
             areaLeft = SIDE_MARGIN
             areaWidth = pageSize.width - SIDE_MARGIN * 2
             return s
         }
 
-        /** 确保当前页有 h 像素空间，不够则自动开新页。返回可用的 slide。 */
+        /** 确保当前页有 h 像素空间，不够或已请求分页则开新页。返回可用的 slide。 */
         fun ensureSpace(h: Double): org.apache.poi.xslf.usermodel.XSLFSlide {
+            if (pendingPageBreak) return newSlide()
             val cur = slide
             if (cur == null || remaining < h) return newSlide()
             return cur
+        }
+
+        /** pagebreak：只登记换页请求，不立即建页；当前页还是空的则直接忽略。 */
+        fun requestPageBreak() {
+            val cur = slide ?: return
+            if (cur.shapes.isEmpty()) return
+            pendingPageBreak = true
         }
 
         /** 设置横向区域（分栏用）。ratio 为宽度占比，side=left/right。 */
@@ -1075,7 +1111,7 @@ object DocumentTools {
                 pic.anchor = java.awt.Rectangle(canvas.areaLeft, canvas.y.toInt(), w, h)
                 canvas.y += h + 10
             }
-            "pagebreak" -> canvas.newSlide()
+            "pagebreak" -> canvas.requestPageBreak()
             "shape" -> {
                 val shapeType = block.optString("shape", "rect").lowercase()
                 val w = block.optInt("width", canvas.areaWidth)

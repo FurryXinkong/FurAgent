@@ -72,8 +72,12 @@ import net.xinkong.furagent.core.SessionSummarizer
 import net.xinkong.furagent.core.mcp.McpManager
 import net.xinkong.furagent.data.*
 import net.xinkong.furagent.service.FloatingService
+import net.xinkong.furagent.shared.ContextUsageStore
 import net.xinkong.furagent.shared.data.deleteMessagePair
 import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.ui.ContextUsageChip
+import net.xinkong.furagent.shared.ui.ContextUsagePanelContent
+import net.xinkong.furagent.shared.ui.TaskProgressBanner
 import net.xinkong.furagent.shared.update.UpdateChecker
 import net.xinkong.furagent.shared.update.UpdateInfo
 import net.xinkong.furagent.shared.util.ChatListItem
@@ -103,6 +107,7 @@ private const val TAG = "MainActivity"
  */
 enum class AppPage {
     MEMORY,
+    DIARY,
     SETTINGS,
     ADVANCED_SETTINGS,
     LOG,
@@ -494,6 +499,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     // 检查更新结果。 = 还没查完 / 查失败，此时不显示红点也不改按钮文案。
     var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
     var showMorePanel by rememberSaveable { mutableStateOf(false) }
+    var showCtxPanel by rememberSaveable { mutableStateOf(false) }
+    val ctxUsage by ContextUsageStore.state.collectAsState()
     // 会话专用提示词弹窗
     var showSessionPrompt by remember { mutableStateOf(false) }
 
@@ -1401,10 +1408,8 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                 PcBridgeClient.updateSettings(settings)
                 // 从「安装未知应用」设置页回来：权限给了就直接装
                 pendingInstallApk?.let { apk ->
-                    if (apk.exists() &&
-                        (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.O ||
-                            context.packageManager.canRequestPackageInstalls())
-                    ) {
+                    // minSdk 31 起「安装未知应用」权限恒需检查，不再做 API 26 分支。
+                    if (apk.exists() && context.packageManager.canRequestPackageInstalls()) {
                         pendingInstallApk = null
                         installApk(context, apk)
                     }
@@ -1461,7 +1466,9 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     PermissionRequestBroker.pending?.let { pending ->
         PocoAlertDialog(
-            onDismiss = { PermissionRequestBroker.onUserRejected() },
+            // 不允许通过背景/返回键关闭：那会被当成「拒绝授权」。
+            // 决定只能来自下方「前往设置」或「取消」按钮。
+            onDismiss = { },
             title = pending.title,
             text = { Text(pending.message) },
             confirmText = "前往设置",
@@ -1474,7 +1481,9 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
 
     ConfirmationBroker.pending?.let { pending ->
         PocoAlertDialog(
-            onDismiss = { ConfirmationBroker.resolve(false) },
+            // 不允许通过背景/返回键关闭：旧实现会 resolve(false)，
+            // AI 收到「用户拒绝执行」，实际只是误触了背景。
+            onDismiss = { },
             title = pending.title,
             text = {
                 androidx.compose.foundation.text.selection.SelectionContainer {
@@ -1626,6 +1635,31 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
     }
     filePyPath?.let { p ->
         AndroidPyRunDialog(path = p, onDismiss = { filePyPath = null })
+    }
+
+    if (showCtxPanel) {
+        AlertDialog(
+            onDismissRequest = { showCtxPanel = false },
+            confirmButton = {},
+            containerColor = glassSheetBg(),
+            text = {
+                ContextUsagePanelContent(
+                    usage = ctxUsage,
+                    budgetK = ctxUsage.budgetK,
+                    onBudgetChange = { k ->
+                        val ns = settings.copy(contextTokenBudgetK = k)
+                        settings = ns
+                        SettingsStore.save(prefs, ns)
+                        ContextUsageStore.report(ctxUsage.copy(budgetK = k))
+                    },
+                    onCompactNow = {
+                        ContextUsageStore.requestCompact()
+                        showCtxPanel = false
+                    },
+                    onDismiss = { showCtxPanel = false }
+                )
+            }
+        )
     }
 
     if (showMorePanel) {
@@ -1834,6 +1868,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                         onOpenMcp = { openPageFromDrawer(AppPage.MCP) },
                         onOpenSkill = { openPageFromDrawer(AppPage.SKILL) },
                         onOpenMemory = { openPageFromDrawer(AppPage.MEMORY) },
+                        onOpenDiary = { openPageFromDrawer(AppPage.DIARY) },
                         onOpenAdvancedSettings = { openPageFromDrawer(AppPage.ADVANCED_SETTINGS) },
                         onToggleFloating = {
                             scope.launch { drawerState.close() }
@@ -2277,6 +2312,18 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Column {
+                                // 任务进度常驻条：与输入框同层，不随消息列表滚动，也不嵌在 AI 气泡里。
+                                // 早期挂在气泡尾部会被挤到最右侧、宽度趋近于零，手机端完全看不见。
+                                // 传全量历史：只扫最后 40 条时，一轮并行工具产生的
+                                // tool_call / tool_result 会把带清单的回复挤出窗口，导致进度条中途消失。
+                                val planTexts = remember(chatHistory, streamingText) {
+                                    chatHistory.map { it.content } + streamingText
+                                }
+                                TaskProgressBanner(
+                                    historyTexts = planTexts,
+                                    sessionKey = currentSessionId ?: "",
+                                    modifier = Modifier.padding(bottom = 8.dp)
+                                )
                                 // ── 分层配色（ChatGPT 式）────────────────────────
                                 // 上：输入区，不透明底色（surface），文字直接坐在上面
                                 // 下：工具行，另一层底色（surfaceContainerHigh），视觉上「下沉」
@@ -2528,6 +2575,13 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                                                 }
                                             }
 
+                                            // 上下文用量：放在添加附件按钮左边，点开是占用明细面板。
+                                            ContextUsageChip(
+                                                ratio = ctxUsage.ratio,
+                                                onClick = { showCtxPanel = true }
+                                            )
+                                            Spacer(Modifier.width(4.dp))
+
                                             IconButton(
                                                 onClick = {
                                                     keyboardController?.hide()
@@ -2700,6 +2754,7 @@ fun FurAgentMainScreen(onThemeModeChanged: (String) -> Unit) {
                     )
 
                     AppPage.MEMORY -> MemoryPage(onBack = { currentPage = null })
+                    AppPage.DIARY -> DiaryPage(onBack = { currentPage = null })
 
                     AppPage.PERMISSIONS -> PermissionsPage(onBack = { currentPage = null })
 
@@ -2988,8 +3043,8 @@ private fun downloadUpdateApk(
  * 所以先查 canRequestPackageInstalls()，没有就跳设置页。
  */
 private fun installApk(context: android.content.Context, apk: java.io.File) {
-    // 1. 权限检查（Android 8.0+）
-    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+    // 1. 权限检查（minSdk 31 起恒需，旧 API 26 分支已移除）
+    run {
         if (!context.packageManager.canRequestPackageInstalls()) {
             pendingInstallApk = apk
             notifyToast(context, "请先允许 FurAgent 安装应用")

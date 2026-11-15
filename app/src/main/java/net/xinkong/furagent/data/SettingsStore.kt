@@ -85,6 +85,8 @@ object SettingsStore {
             thinkingLevel = if (prefs.contains("thinking_level"))
                 ThinkingLevel.fromId(prefs.getString("thinking_level", null))
             else ThinkingLevel.fromLegacyBoolean(prefs.getBoolean("enable_thinking", false)),
+            workMode = prefs.getString("work_mode", "auto") ?: "auto",
+            expertPreset = prefs.getString("expert_preset", "general") ?: "general",
             autoSpeakReplies = prefs.getBoolean("auto_speak_replies", false),
             // 去掉硬编码上限 用户设多少就多少，只保证 >= 1
             maxToolCallLoops = prefs.getInt("max_tool_call_loops", 20).coerceAtLeast(1),
@@ -114,6 +116,7 @@ object SettingsStore {
             },
             imageProfileId = prefs.getString("image_profile_id", "") ?: "",
             summaryProfileId = prefs.getString("summary_profile_id", "") ?: "",
+            compactProfileId = prefs.getString("compact_profile_id", "") ?: "",
             subAgentProfileId = prefs.getString("sub_agent_profile_id", "") ?: "",
             showTokenBar = prefs.getBoolean("show_token_bar", false),
             showModifiedFiles = prefs.getBoolean("show_modified_files", false),
@@ -157,6 +160,8 @@ object SettingsStore {
                 .putString("custom_system", s.customSystemPrompt)
                 .putString("disabled_tools", s.disabledTools.joinToString("|"))
                 .putString("thinking_level", s.thinkingLevel.id)
+                .putString("work_mode", s.workMode)
+                .putString("expert_preset", s.expertPreset)
                 .putBoolean("auto_speak_replies", s.autoSpeakReplies)
                 .putInt("max_tool_call_loops", s.maxToolCallLoops.coerceAtLeast(1))
             .putInt("context_token_budget_k", s.contextTokenBudgetK.coerceIn(0, 2000))
@@ -171,6 +176,7 @@ object SettingsStore {
                 .putString("pc_receive_dir", s.pcReceiveDir)
                 .putString("image_profile_id", s.imageProfileId)
                 .putString("summary_profile_id", s.summaryProfileId)
+                .putString("compact_profile_id", s.compactProfileId)
                 .putString("sub_agent_profile_id", s.subAgentProfileId)
                 .putBoolean("show_token_bar", s.showTokenBar)
                 .putBoolean("show_modified_files", s.showModifiedFiles)

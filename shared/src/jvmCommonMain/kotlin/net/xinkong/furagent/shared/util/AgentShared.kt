@@ -404,6 +404,29 @@ private fun alignToTurnBoundary(userIndices: List<Int>, startIdx: Int, size: Int
     return 0
 }
 
+/**
+ * 取「轮次截断」丢掉的那一段（含用户消息、助手文字、工具过程）。
+ *
+ * 以前这一段被直接丢掉，只有工具过程超预算才有摘要，导致长任务里
+ * 用户的目标/约束/决策彻底丢失。现在交给会话级压缩器压成 system 摘要。
+ */
+fun <T> truncatedPrefix(
+    history: List<T>,
+    maxTurns: Int,
+    minKeep: Int,
+    roleOf: (T) -> String,
+    typeOf: (T) -> String
+): List<T> {
+    val startIdx = computeTruncateStart(
+        history = history,
+        maxTurns = maxTurns,
+        minKeep = minKeep,
+        roleOf = roleOf,
+        typeOf = typeOf
+    )
+    return if (startIdx <= 0) emptyList() else history.subList(0, startIdx)
+}
+
 // Token 预算：工具过程降级
 
 /** 工具过程预算裁剪的结果。 */
@@ -415,7 +438,11 @@ data class ToolBudgetResult<T>(
     /** 裁剪前估算 token */
     val tokensBefore: Int,
     /** 裁剪后估算 token */
-    val tokensAfter: Int
+    val tokensAfter: Int,
+    /** 被裁掉的内容是否已压缩成结构化摘要（false = 退回「省略 N 条」） */
+    val compacted: Boolean = false,
+    /** 压缩节省的字符数（原文长度 - 摘要长度） */
+    val compactedChars: Int = 0
 ) {
     val trimmed: Boolean get() = droppedToolEntries > 0
 }
@@ -447,12 +474,24 @@ data class ToolBudgetResult<T>(
  * @param isTurnStart   判断是否是人类消息（用于不跨越它去丢东西）
  * @param makeElidedNote 生成“已省略 N 次工具调用”的占位消息
  */
-fun <T> trimToolProcessByBudget(
+suspend fun <T> trimToolProcessByBudget(
     history: List<T>,
     budgetTokens: Int,
     entryTokens: (T) -> Int,
     isToolEntry: (T) -> Boolean,
-    makeElidedNote: (droppedCount: Int) -> T
+    makeElidedNote: (droppedCount: Int) -> T,
+    /**
+     * 可选：把被丢弃的条目文本交给压缩器生成结构化摘要。
+     * 传入后，被丢弃区段会尽量替换成「压缩摘要」而不是空泛的「省略 N 条」。
+     */
+    textOf: ((T) -> String)? = null,
+    /** 用摘要文本构造占位消息；返回 null 表示退回 makeElidedNote。 */
+    makeDigestNote: ((digest: String) -> T?)? = null,
+    /**
+     * 可选：摘要生成器（通常是「用当前模型压一次」）。
+     * 传入即走模型压缩；返回空串或抛异常时自动退回抽取式摘要。
+     */
+    digestProvider: (suspend (entries: List<String>) -> String)? = null
 ): ToolBudgetResult<T> {
     val perEntry = history.map(entryTokens)
     var total = perEntry.sum()
@@ -483,7 +522,6 @@ fun <T> trimToolProcessByBudget(
     // 2) 从最旧的批次开始丢，直到回落到预算内
     val dropped = BooleanArray(history.size)
     var droppedToolEntries = 0
-    var droppedCount = 0
     for (b in batches) {
         if (total <= budgetTokens) break
         // 整批丢。丢完工具过程还不够低于预算时，剩下的只能靠轮次截断，这里不越权。
@@ -491,7 +529,6 @@ fun <T> trimToolProcessByBudget(
             dropped[k] = true
             droppedToolEntries++
         }
-        droppedCount++
         total -= b.tokens
     }
 
@@ -499,8 +536,10 @@ fun <T> trimToolProcessByBudget(
         return ToolBudgetResult(history, 0, tokensBefore, total)
     }
 
-    // 3) 重建：被丢的连续区间合并成一条「已省略」提示
+    // 3) 重建：被丢的连续区间合并成一条压缩摘要 / 「已省略」提示
     val kept = mutableListOf<T>()
+    var compacted = false
+    var compactedChars = 0
     i = 0
     while (i < history.size) {
         if (!dropped[i]) {
@@ -510,9 +549,41 @@ fun <T> trimToolProcessByBudget(
         }
         var j = i
         while (j < history.size && dropped[j]) j++
-        kept.add(makeElidedNote(j - i))
+
+        var replaced = false
+        if (textOf != null && makeDigestNote != null) {
+            val texts = (i until j).mapNotNull { k ->
+                try { textOf(history[k]) } catch (_: Throwable) { null }
+            }
+            // 有模型压缩器就用模型压；没有或失败则退回抽取式摘要。
+            val digest = try {
+                digestProvider?.invoke(texts)?.takeIf { it.isNotBlank() }
+                    ?: ContextCompactor.digest(texts)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Throwable) {
+                ContextCompactor.digest(texts)
+            }
+            if (digest.isNotBlank()) {
+                makeDigestNote(digest)?.let {
+                    kept.add(it)
+                    replaced = true
+                    compacted = true
+                    val rawLen = texts.sumOf { t -> t.length }
+                    compactedChars += (rawLen - digest.length).coerceAtLeast(0)
+                }
+            }
+        }
+        if (!replaced) kept.add(makeElidedNote(j - i))
         i = j
     }
 
-    return ToolBudgetResult(kept, droppedToolEntries, tokensBefore, total)
+    return ToolBudgetResult(
+        kept = kept,
+        droppedToolEntries = droppedToolEntries,
+        tokensBefore = tokensBefore,
+        tokensAfter = total,
+        compacted = compacted,
+        compactedChars = compactedChars
+    )
 }

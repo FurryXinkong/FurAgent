@@ -127,6 +127,7 @@ fun SideDrawerContent(
     onOpenMcp: () -> Unit,
     onOpenSkill: () -> Unit = {},
     onOpenMemory: () -> Unit,
+    onOpenDiary: () -> Unit = {},
     onOpenAdvancedSettings: () -> Unit,
     onToggleFloating: () -> Unit,
     // 手机端排版 从顶栏挪进来的入口
@@ -223,6 +224,10 @@ fun SideDrawerContent(
             DrawerItem(
                 Icons.Default.Psychology, "长期记忆", onOpenMemory,
                 selected = currentPage == AppPage.MEMORY
+            )
+            DrawerItem(
+                Icons.Default.Description, "工作日记", onOpenDiary,
+                selected = currentPage == AppPage.DIARY
             )
             DrawerItem(Icons.Default.Share, "子代理", onOpenSubList)
 

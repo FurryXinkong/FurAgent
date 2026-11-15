@@ -17,7 +17,7 @@ object MemoryTools {
         ToolDef(
             name = "memory",
             displayName = "记忆",
-            description = "长期记忆管理。op=save 保存一条记忆（content）；op=recall 按 query 检索记忆（query 为空则列出全部）；op=list 列出所有记忆（带 ID）；op=delete 按 memory_id 或 keyword 删除。当用户透露姓名、职业、偏好、习惯、忌讳或明确纠正你的事实时主动保存，不要等用户说\"记住\"。",
+            description = "长期记忆管理。op=save 保存一条记忆（content）；op=recall 按 query 检索记忆（query 为空则列出全部）；op=list 列出所有记忆（带 ID）；op=delete 按 memory_id 或 keyword 删除。保存项目/工作区资料时以 [项目] 开头、近期工作日志以 [日志] 开头，系统会在提示词里分层呈现。当用户透露姓名、职业、偏好、习惯、忌讳或明确纠正你的事实时主动保存，不要等用户说\"记住\"。",
             paramsSchema = """{"type":"object","properties":{"op":{"type":"string","enum":["save","recall","list","delete"]},"content":{"type":"string"},"query":{"type":"string"},"memory_id":{"type":"string"},"keyword":{"type":"string"}},"required":["op"]}"""
         )
     )

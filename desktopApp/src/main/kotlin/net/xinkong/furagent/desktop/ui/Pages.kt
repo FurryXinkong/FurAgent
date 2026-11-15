@@ -4,7 +4,9 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.*
@@ -41,7 +43,6 @@ import net.xinkong.furagent.shared.EndpointId
 import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.shared.util.formatFileSize
 import java.io.File
-import java.util.*
 
 // 定时任务页面 → 已拆到 SchedulesPage.kt
 
@@ -172,9 +173,6 @@ fun StatusPage() {
     var deletingEntry by remember { mutableStateOf<LocalFileEntry?>(null) }
     // 内置带行号文本阅读器：文本文件不再一律丢给系统默认程序打开
     var textViewerPath by remember { mutableStateOf<String?>(null) }
-    // Windows → 安卓远程协助面板
-    var remoteAssistOpen by remember { mutableStateOf(false) }
-
     var expandedDeviceId by remember { mutableStateOf<String?>(null) }
     var pendingSendPath by remember { mutableStateOf<String?>(null) }
 
@@ -292,31 +290,6 @@ fun StatusPage() {
                             modifier = Modifier.weight(1f))
                         StatCard("工具调用", toolCallCount.toString(), AccentColor(),
                             modifier = Modifier.weight(1f))
-                    }
-                }
-
-                item {
-                    GlassCard(padding = PaddingValues(Spacing.CARD_PADDING)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text(
-                                    "远程协助",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = TextPrimary()
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    "通过现有桥接通道控制已连接的安卓手机：查看状态、读 UI 树、点击、滑动、输入、按键、截屏。无需 USB。",
-                                    fontSize = 12.sp,
-                                    color = TextSecondary()
-                                )
-                            }
-                            Spacer(Modifier.width(12.dp))
-                            Button(onClick = { remoteAssistOpen = true }) {
-                                Text("打开远程协助")
-                            }
-                        }
                     }
                 }
 
@@ -814,9 +787,6 @@ fun StatusPage() {
         TextFileViewerDialog(path = p, onDismiss = { textViewerPath = null })
     }
 
-    if (remoteAssistOpen) {
-        RemoteAssistDialog(onDismiss = { remoteAssistOpen = false })
-    }
 }
 
 // 通用输入对话框

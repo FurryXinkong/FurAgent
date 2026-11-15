@@ -31,11 +31,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import net.xinkong.furagent.desktop.data.DesktopSettingsHolder
 import net.xinkong.furagent.desktop.system.NativeFilePicker
 import net.xinkong.furagent.desktop.ui.theme.Radius
 import net.xinkong.furagent.desktop.ui.theme.Shadow
+import net.xinkong.furagent.shared.ContextUsageStore
 import net.xinkong.furagent.shared.ThinkingLevel
 import net.xinkong.furagent.shared.icons.Icons
+import net.xinkong.furagent.shared.ui.ContextUsageChip
+import net.xinkong.furagent.shared.ui.ContextUsagePanelContent
 import java.awt.KeyboardFocusManager
 import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
@@ -70,6 +74,8 @@ fun ChatInputCard(
     val focusRequester = remember { FocusRequester() }
     var focused by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
+    var ctxPanelOpen by remember { mutableStateOf(false) }
+    val ctxUsage by ContextUsageStore.state.collectAsState()
     var lastError by remember { mutableStateOf<String?>(null) }
 
     var fieldValue by remember {
@@ -282,6 +288,13 @@ fun ChatInputCard(
 
                     Spacer(Modifier.weight(1f))
 
+                    // 上下文用量：放在添加附件按钮左边。
+                    ContextUsageChip(
+                        ratio = ctxUsage.ratio,
+                        onClick = { ctxPanelOpen = true }
+                    )
+                    Spacer(Modifier.width(8.dp))
+
                     Box {
                         HoverTip("添加附件") {
                             IconActionButton(
@@ -360,6 +373,31 @@ fun ChatInputCard(
                         Text("×", fontSize = 14.sp, color = TextSecondary(),
                             modifier = Modifier.clickable { lastError = null })
                     }
+                }
+
+                if (ctxPanelOpen) {
+                    AlertDialog(
+                        onDismissRequest = { ctxPanelOpen = false },
+                        confirmButton = {},
+                        containerColor = CardColor(),
+                        text = {
+                            ContextUsagePanelContent(
+                                usage = ctxUsage,
+                                budgetK = ctxUsage.budgetK,
+                                onBudgetChange = { k ->
+                                    val s = DesktopSettingsHolder.current.copy(contextTokenBudgetK = k)
+                                    DesktopSettingsHolder.current = s
+                                    s.save()
+                                    ContextUsageStore.report(ctxUsage.copy(budgetK = k))
+                                },
+                                onCompactNow = {
+                                    ContextUsageStore.requestCompact()
+                                    ctxPanelOpen = false
+                                },
+                                onDismiss = { ctxPanelOpen = false }
+                            )
+                        }
+                    )
                 }
             }
         }

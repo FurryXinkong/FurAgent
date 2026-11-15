@@ -8,29 +8,20 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
-import net.xinkong.furagent.shared.icons.Icons
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.content.edit
 import net.xinkong.furagent.core.AgentLogger
+import net.xinkong.furagent.shared.icons.Icons
 import net.xinkong.furagent.system.notifyToast
-import net.xinkong.furagent.ui.ApplyBackgroundBlur
-import net.xinkong.furagent.ui.GlassSheen
-import net.xinkong.furagent.ui.PocoCard
-import net.xinkong.furagent.ui.PocoEmptyState
-import net.xinkong.furagent.ui.PocoPageTopBar
-import net.xinkong.furagent.ui.glassPageBg
-import net.xinkong.furagent.ui.pocoFieldColors
+import net.xinkong.furagent.ui.*
 import net.xinkong.furagent.ui.theme.AppRadius
 
 /**
@@ -214,6 +205,9 @@ fun EnvStorePage(onBack: () -> Unit) {
     pendingDeleteKey?.let { key ->
         AlertDialog(
             onDismissRequest = { pendingDeleteKey = null },
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnClickOutside = false, dismissOnBackPress = false
+            ),
             shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("删除变量") },
@@ -236,6 +230,9 @@ fun EnvStorePage(onBack: () -> Unit) {
     if (showClearConfirm) {
         AlertDialog(
             onDismissRequest = { showClearConfirm = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnClickOutside = false, dismissOnBackPress = false
+            ),
             shape = RoundedCornerShape(AppRadius.DIALOG),
             containerColor = MaterialTheme.colorScheme.surface,
             title = { Text("清空全部变量") },

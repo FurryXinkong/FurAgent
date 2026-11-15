@@ -46,6 +46,8 @@ object ToolCategory {
         "http_request",
         // 记忆
         "memory",
+        // 工作日记（按天归档，任务完成后必须写，属于常驻能力）
+        "diary",
         // 等待
         "sleep",
         // 屏幕控制（高频，UI 交互场景都要用）
@@ -81,6 +83,7 @@ object ToolCategory {
         "convert" to listOf("单位换算", "进制转换", "颜色转换", "换算"),
         "statistics" to listOf("统计", "平均值", "方差", "中位数"),
         "memory" to listOf("记忆", "记住", "回忆"),
+        "diary" to listOf("日记", "工作日记", "写日记", "今天做了什么", "上次做到哪", "日志", "工作记录"),
         "ui" to listOf("屏幕控制", "点屏幕", "界面操作", "点击"),
         "screenshot" to listOf("截图", "截屏", "屏幕截图"),
         "view_image" to listOf("看图", "查看图片", "图片识别"),
@@ -160,7 +163,7 @@ object ToolCategory {
         "phone_send_file", "phone_receive_file" -> "remote"
 
         // 记忆
-        "memory" -> "memory"
+        "memory", "diary" -> "memory"
 
         // 代码
         "code_edit" -> "code"

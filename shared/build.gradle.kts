@@ -12,7 +12,7 @@ kotlin {
     android {
         namespace = "net.xinkong.furagent.shared"
         compileSdk = 37
-        minSdk = 30
+        minSdk = 31
         compilerOptions {
             jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
         }

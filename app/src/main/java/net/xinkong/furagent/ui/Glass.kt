@@ -25,6 +25,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -362,10 +363,22 @@ fun PocoAlertDialog(
     titleContentColor: Color = MaterialTheme.colorScheme.onSurface,
     textContentColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
     /** 确定按钮是否可点（如输入框为空时置 false）。 */
-    confirmEnabled: Boolean = true
+    confirmEnabled: Boolean = true,
+    /**
+     * 是否允许点击弹窗外背景 / 按返回键关闭。
+     *
+     * 默认 false：确认类弹窗被误触关闭时，调用方常把 onDismiss 写成
+     * 「resolve(false)」，AI 会直接收到「用户拒绝执行」。决定必须由按钮显式给出。
+     * 纯查看类弹窗若确需保留旧行为，可显式传 true。
+     */
+    dismissOnClickOutside: Boolean = false
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            dismissOnClickOutside = dismissOnClickOutside,
+            dismissOnBackPress = dismissOnClickOutside
+        ),
         shape = RoundedCornerShape(AppRadius.DIALOG),
         containerColor = MaterialTheme.colorScheme.surface,
         titleContentColor = titleContentColor,

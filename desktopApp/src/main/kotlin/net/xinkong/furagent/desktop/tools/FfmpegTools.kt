@@ -26,7 +26,9 @@ object FfmpegTools {
         ToolDef(
             name = "ffmpeg",
             displayName = "音视频处理",
-            description = "FFmpeg 工具集。mode=run 执行任意 FFmpeg 命令（args 是完整参数，不含可执行文件名，例如 -i input.mp4 -c copy output.mp4）；mode=probe 读取媒体信息（path，可选 format=text/json）；mode=preset 使用预设快速处理（preset + input + output，可选 options）；mode=capabilities 查询能力（type=version/codecs/formats/hwaccels，可选 filter）。危险操作，需确认。换容器不换内容（mkv→mp4、提取音轨、裁剪不改码）必须用 -c copy，不要重编码。",
+            description = "FFmpeg 工具集。mode=run 执行任意 FFmpeg 命令（args 是完整参数，不含可执行文件名，例如 -i input.mp4 -c copy output.mp4）；" +
+                    "mode=run 也可单独传 output 指定输出路径，工具会自动把它追加到 args 末尾（args 里已含输出文件时不要同时传 output，会报错）；" +
+                    "mode=probe 读取媒体信息（path，可选 format=text/json）；mode=preset 使用预设快速处理（preset + input + output，可选 options）；mode=capabilities 查询能力（type=version/codecs/formats/hwaccels，可选 filter）。危险操作，需确认。换容器不换内容（mkv→mp4、提取音轨、裁剪不改码）必须用 -c copy，不要重编码。",
             paramsSchema = """{"type":"object","properties":{"mode":{"type":"string","enum":["run","probe","preset","capabilities"]},"args":{"type":"string"},"timeout":{"type":"integer"},"path":{"type":"string"},"format":{"type":"string"},"preset":{"type":"string"},"input":{"type":"string"},"output":{"type":"string"},"options":{"type":"object"},"type":{"type":"string"},"filter":{"type":"string"}},"required":["mode"]}"""
         )
     )
@@ -174,8 +176,31 @@ object FfmpegTools {
         if (rawArgs.isBlank()) return ToolResult.fail("未提供 args")
         val timeoutSec = args.optInt("timeout", 1800).coerceIn(10, 7200)
 
-        val argList = parseCommandLine(rawArgs)
+        val argList = parseCommandLine(rawArgs).toMutableList()
         if (argList.isEmpty()) return ToolResult.fail("无法解析参数")
+
+        // output 参数在 mode=run 下同样生效：早期只认 args，传 output 被静默忽略，
+        // FFmpeg 随后报「At least one output file must be specified」，参数形同虚设。
+        val outputArg = args.optString("output", "").trim()
+        if (outputArg.isNotBlank()) {
+            val resolved = resolvePath(outputArg)
+                ?: return ToolResult.fail("output 路径无效：$outputArg")
+            val existing = extractOutputPath(argList)
+            if (existing != null) {
+                // 两边用同一套路径解析规则再比较：args 里常写相对路径，
+                // 若直接拿原始字符串跟 resolvePath 展开后的绝对路径比，会把
+                // 「同一个文件」误判成冲突。
+                val existingResolved = resolvePath(existing) ?: existing
+                val existingFile = java.io.File(existingResolved).absoluteFile.normalize()
+                val resolvedFile = java.io.File(resolved).absoluteFile.normalize()
+                if (existingFile != resolvedFile) {
+                    return ToolResult.fail(
+                        "args 里已经包含输出文件（$existing），同时又传了 output=$resolved。请二选一：" +
+                                "要么把输出路径写在 args 末尾，要么只传 output 让工具自动追加。"
+                    )
+                }
+            } else argList.add(resolved)
+        }
 
         val outPath = extractOutputPath(argList)
         if (outPath != null && File(outPath).exists()) {
@@ -677,6 +702,9 @@ object FfmpegTools {
         val t = input.trim().trim('"', '\'', '`')
         if (File(t).isAbsolute) return t
         val home = System.getProperty("user.home") ?: return null
+        // Java File 不展开 ~，会把 ~/.furagent/x.mp4 当成相对路径下的字面目录名。
+        if (t == "~") return home
+        if (t.startsWith("~/") || t.startsWith("~\\")) return home + t.substring(1)
         return File(home, t).absolutePath
     }
 

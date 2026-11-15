@@ -47,6 +47,7 @@ import net.xinkong.furagent.desktop.ui.theme.Radius
 enum class AppPage(val label: String) {
     CHAT("聊天"),
     MEMORY("长期记忆"),
+    DIARY("工作日记"),
     HISTORY("修改历史"),
     SCHEDULES("定时任务"),
     MCP("MCP"),
@@ -147,6 +148,8 @@ fun Sidebar(
 
         // ============ 主导航 ============
         NavItem(Icons.Default.Memory, AppPage.MEMORY, currentPage, expanded, onNavigate)
+        Spacer(Modifier.height(1.dp))
+        NavItem(Icons.Default.Description, AppPage.DIARY, currentPage, expanded, onNavigate)
         Spacer(Modifier.height(1.dp))
         NavItem(Icons.Default.Schedule, AppPage.SCHEDULES, currentPage, expanded, onNavigate)
         Spacer(Modifier.height(1.dp))

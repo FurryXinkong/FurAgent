@@ -73,6 +73,9 @@ object DesktopTools {
         val memory = MemoryTools.TOOLS.map {
             DesktopTool(it.name, it.displayName, it.description, it.paramsSchema)
         }
+        val diary = DiaryTools.TOOLS.map {
+            DesktopTool(it.name, it.displayName, it.description, it.paramsSchema)
+        }
         val ffmpeg = FfmpegTools.TOOLS.map {
             DesktopTool(it.name, it.displayName, it.description, it.paramsSchema)
         }
@@ -110,7 +113,7 @@ object DesktopTools {
         }
 
         common + private + workflow + schedule + system + apps + screenshot +
-                memory + ffmpeg + python + web + screen + codeEdit + skill + dynamicSkills + document + imageGen + download + history
+                memory + diary + ffmpeg + python + web + screen + codeEdit + skill + dynamicSkills + document + imageGen + download + history
     }
 
     @Volatile private var cachedToolList: List<DesktopTool>? = null
@@ -433,15 +436,21 @@ object DesktopTools {
             val summary: String
         )
 
-        private val entries = LinkedHashMap<String, Entry>()
+        // 子会话运行中，status 查询与 start/update/finish 可能并发；
+        // 用同步 Map + 快照，保证任何遍历都不会撞上并发修改。
+        private val entries: MutableMap<String, Entry> =
+            java.util.Collections.synchronizedMap(LinkedHashMap<String, Entry>())
         private val _state = kotlinx.coroutines.flow.MutableStateFlow(State())
         val state: kotlinx.coroutines.flow.StateFlow<State> = _state
         private val _events =
             kotlinx.coroutines.flow.MutableSharedFlow<Completed>(extraBufferCapacity = 32)
         val events: kotlinx.coroutines.flow.SharedFlow<Completed> = _events
 
+        @Synchronized
         private fun refresh() {
-            val newest = entries.values.lastOrNull()
+            // Collections.synchronizedMap 的集合视图遍历必须显式锁 map 本身，
+            // 否则子会话运行中 status 查询仍可能撞上 start/update 的写入。
+            val newest = synchronized(entries) { entries.values.lastOrNull() }
             _state.value = State(
                 running = entries.isNotEmpty(),
                 activeCount = entries.size,
@@ -477,7 +486,7 @@ object DesktopTools {
             refresh()
         }
 
-        @Synchronized fun snapshot(): Map<String, Entry> = LinkedHashMap(entries)
+        @Synchronized fun snapshot(): Map<String, Entry> = synchronized(entries) { LinkedHashMap(entries) }
 
         @Synchronized fun emitCompleted(c: Completed) {
             _events.tryEmit(c)
@@ -1061,6 +1070,9 @@ object DesktopTools {
             }
             if (name == "memory") {
                 MemoryTools.execute(name, args)?.let { return it }
+            }
+            if (name == "diary") {
+                DiaryTools.execute(name, args)?.let { return it }
             }
             if (name == "ffmpeg") {
                 FfmpegTools.execute(name, args)?.let { return it }

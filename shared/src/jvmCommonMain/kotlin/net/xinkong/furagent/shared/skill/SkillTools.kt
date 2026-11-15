@@ -36,7 +36,9 @@ object SkillTools {
             description = "管理用户的自定义 Python 脚本（放在 scripts/ 下，一个 .py 一个脚本）。" +
                     "op=list 列出所有脚本；op=info 查看详情（name）；op=run 执行（name + args）；" +
                     "op=create 创建新脚本（name + description + params + code）；op=delete 删除（name）；" +
-                    "op=config 读写脚本配置（name + config / values / enabled / timeout）。" +
+                    "op=config 读写脚本配置（name）。写入配置推荐 values={\"键\":\"值\"}；" +
+                    "也支持 config={\"values\":{\"键\":\"值\"},\"enabled\":true,\"timeout\":30} 或扁平 config={\"键\":\"值\"}。" +
+                    "参数结构解析不出可写字段会直接报错，不会返回成功但什么都没写。" +
                     "\n\n【环境限制】手机端内置了 numpy, pillow, beautifulsoup4, pyyaml（不支持 requests，网络请用标准库 urllib.request 或内置工具），不支持在运行时 pip install 其他库。桌面端环境取决于系统 Python，可随意安装。" +
                     "\n\n【重要】每个脚本也会单独注册成一个工具（名字形如 pytool_<脚本名>），" +
                     "你可以直接调用那个工具，不用先 list 再 run。" +
@@ -53,6 +55,8 @@ object SkillTools {
                     "（格式同 params，额外支持 secret:true 打码、default 默认值），" +
                     "再用 op=config 写入实际值。运行时配置会以 args[\"_config\"] 和环境变量 " +
                     "FURAGENT_SKILL_CONFIG 注入脚本，脚本里读 args.get(\"_config\", {}) 即可。" +
+                    "\n【配置结构】values 和 config.values 都是「键到值」对象；不要把键直接放在外层 args 上，" +
+                    "例如写 values={\"signature\":\"xxx\"}，不要写 args.signature。写入后会回读校验并回报实际写入的键。" +
                     "\n【密钥安全】声明 secret:true 的配置项必须写清楚 description（如「GitHub Personal Access Token」），" +
                     "否则 create 会被拒绝。密钥值由用户在自定义脚本页手动填写，" +
                     "**你不要也不要尝试用 op=config 写入密钥值**，更不要用 read_file 去读 scripts/ 下的配置文件。" +
@@ -123,8 +127,14 @@ object SkillTools {
      * op=config：读 / 写脚本配置。
      *
      * 只传 name → 读配置（敏感项打码）。
-     * 传 values / enabled / timeout → 合并写入。
-     * 传 config（整个对象）→ 覆盖写入。
+     * 写入支持三种等价形式（后两种都接受，不再静默丢弃）：
+     *   - values={"k":"v"}                          合并写入（推荐）
+     *   - config={"values":{"k":"v"},"enabled":true} 整体写入
+     *   - config={"k":"v"}                          扁平写法，兼容直觉
+     * 另可单独传 enabled / timeout。
+     *
+     * 结构解析不出任何可写字段时直接返回失败，不再返回「已更新」；
+     * 写入后回读校验，杜绝「提示成功但文件里 values 仍是 {}」。
      */
     private fun doConfig(args: JSONObject): ToolResult {
         val name = args.optString("name", "").trim()
@@ -139,59 +149,100 @@ object SkillTools {
         }
 
         val cur = SkillStore.loadConfig(name)
-        val newCfg = if (args.has("config")) {
-            val c = args.optJSONObject("config") ?: JSONObject()
-            val values = mutableMapOf<String, Any?>()
-            c.optJSONObject("values")?.let { v ->
-                v.keys().forEach { k -> values[k] = v.opt(k) }
-            }
-            // 安全：敏感项（secret=true）只能由用户在 UI 里填，AI 不得覆盖。
-            val rejected = values.keys.filter { meta.configSpec[it]?.secret == true }
-            if (rejected.isNotEmpty()) {
-                return ToolResult.fail(
-                    "拒绝写入敏感配置项：${rejected.joinToString(", ")}\n\n" +
-                            "这些项声明了 secret=true，只能由用户在「自定义脚本 → 配置」里手动填写。" +
-                            "AI 不得读写密钥。"
+        val values = cur.values.toMutableMap()
+        var enabled = cur.enabled
+        var timeout = cur.timeout
+        val writtenKeys = mutableListOf<String>()
+
+        if (args.has("config")) {
+            val c = args.optJSONObject("config")
+                ?: return ToolResult.fail(
+                    "config 必须是 JSON 对象。正确写法：config={\"values\":{\"键\":\"值\"}} " +
+                            "或扁平写法 config={\"键\":\"值\"}。"
                 )
-            }
-            SkillConfig(
-                enabled = c.optBoolean("enabled", cur.enabled),
-                timeout = if (c.has("timeout") && !c.isNull("timeout")) {
-                    c.optInt("timeout", 0).takeIf { it > 0 }?.coerceIn(1, 3600)
-                } else cur.timeout,
-                values = if (values.isEmpty()) cur.values else values
-            )
-        } else {
-            val values = cur.values.toMutableMap()
-            val rejected = mutableListOf<String>()
-            args.optJSONObject("values")?.let { v ->
-                v.keys().forEach { k ->
-                    if (meta.configSpec[k]?.secret == true) rejected.add(k)
-                    else values[k] = v.opt(k)
+            val nested = c.optJSONObject("values")
+            if (nested != null) {
+                nested.keys().forEach { k -> values[k] = nested.opt(k); writtenKeys.add(k) }
+            } else {
+                // 扁平写法：除保留字段外，其余键都当作配置值。
+                c.keys().forEach { k ->
+                    if (k != "enabled" && k != "timeout") {
+                        values[k] = c.opt(k)
+                        writtenKeys.add(k)
+                    }
                 }
             }
-            if (rejected.isNotEmpty()) {
-                return ToolResult.fail(
-                    "拒绝写入敏感配置项：${rejected.joinToString(", ")}\n\n" +
-                            "这些项声明了 secret=true，只能由用户在「自定义脚本 → 配置」里手动填写。" +
-                            "AI 不得读写密钥。"
-                )
+            if (c.has("enabled")) enabled = c.optBoolean("enabled", enabled)
+            if (c.has("timeout") && !c.isNull("timeout")) {
+                timeout = c.optInt("timeout", 0).takeIf { it > 0 }?.coerceIn(1, 3600)
             }
-            SkillConfig(
-                enabled = if (args.has("enabled")) args.optBoolean("enabled", cur.enabled) else cur.enabled,
-                timeout = if (args.has("timeout")) {
-                    args.optInt("timeout", 0).takeIf { it > 0 }?.coerceIn(1, 3600)
-                } else cur.timeout,
-                values = values
+        } else {
+            if (args.has("values")) {
+                val v = args.optJSONObject("values")
+                    ?: return ToolResult.fail(
+                        "values 必须是 JSON 对象，例如 values={\"键\":\"值\"}。"
+                    )
+                v.keys().forEach { k -> values[k] = v.opt(k); writtenKeys.add(k) }
+            }
+            if (args.has("enabled")) enabled = args.optBoolean("enabled", enabled)
+            if (args.has("timeout")) {
+                timeout = args.optInt("timeout", 0).takeIf { it > 0 }?.coerceIn(1, 3600)
+            }
+        }
+
+        // 只改 enabled / timeout 也是合法写入；其余情况必须有实际配置值。
+        val metaOnly = writtenKeys.isEmpty() &&
+                (args.has("enabled") || args.has("timeout") ||
+                        args.optJSONObject("config")?.has("enabled") == true ||
+                        args.optJSONObject("config")?.has("timeout") == true)
+        if (writtenKeys.isEmpty() && !metaOnly) {
+            return ToolResult.fail(
+                "没有解析到任何配置项，配置未改动。正确写法：\n" +
+                        "  values={\"键\":\"值\"}\n" +
+                        "  config={\"values\":{\"键\":\"值\"}}\n" +
+                        "  config={\"键\":\"值\"}（扁平写法）"
             )
         }
 
-        val err = SkillStore.saveConfig(name, newCfg)
-        return if (err == null) {
-            ToolResult.ok("已更新脚本 $name 的配置。\n\n" + renderConfig(meta, newCfg))
-        } else {
-            ToolResult.fail(err)
+        // 安全：敏感项（secret=true）只能由用户在 UI 里填，AI 不得覆盖。
+        val rejected = writtenKeys.filter { meta.configSpec[it]?.secret == true }
+        if (rejected.isNotEmpty()) {
+            return ToolResult.fail(
+                "拒绝写入敏感配置项：${rejected.joinToString(", ")}\n\n" +
+                        "这些项声明了 secret=true，只能由用户在「自定义脚本 → 配置」里手动填写。" +
+                        "AI 不得读写密钥。"
+            )
         }
+
+        val newCfg = SkillConfig(enabled = enabled, timeout = timeout, values = values)
+        val err = SkillStore.saveConfig(name, newCfg)
+        if (err != null) return ToolResult.fail(err)
+
+        // 回读校验：确认值真的落盘，避免「返回成功但 values 仍为 {}」的静默失败。
+        val saved = SkillStore.loadConfig(name)
+        // JSONObject 会把整数统一成 Integer/Long，直接 toString 比较可能把 1 与 1.0
+        // 误判为「未写入」；数值按 Double 比较，其余按字符串比较。
+        val lost = writtenKeys.filter { k ->
+            val expected = values[k]
+            val actual = saved.values[k]
+            when {
+                expected == null -> actual != null
+                actual == null -> true
+                expected is Number && actual is Number ->
+                    expected.toDouble() != actual.toDouble()
+                else -> expected.toString() != actual.toString()
+            }
+        }
+        if (lost.isNotEmpty()) {
+            return ToolResult.fail(
+                "配置写入校验失败，以下项未生效：${lost.joinToString(", ")}。" +
+                        "请检查配置文件是否可写，或改用 values= 参数重试。"
+            )
+        }
+        return ToolResult.ok(
+            "已更新脚本 $name 的配置（写入 ${writtenKeys.size} 项：${writtenKeys.joinToString(", ")}）。\n\n" +
+                    renderConfig(meta, saved)
+        )
     }
 
     /** 渲染配置给 AI 看（敏感项打码）。 */

@@ -33,7 +33,9 @@ android {
 
     defaultConfig {
         applicationId = "net.xinkong.furagent"
-        minSdk = 30
+        // minSdk 31：Android RenderEffect / Compose blur 需要 API 31+，
+        // 为后续柔光玻璃 / 液态玻璃效果铺路（不再为 API 30 保留降级分支）。
+        minSdk = 31
         targetSdk = 37
         versionCode = rootProject.extra["buildVersionCode"] as Int
         // 版本号格式与桌面端统一为 yy.mm.build（如 26.10.24119）。

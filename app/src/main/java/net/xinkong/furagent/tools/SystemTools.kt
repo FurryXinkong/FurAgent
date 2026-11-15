@@ -17,10 +17,7 @@ import kotlinx.coroutines.withContext
 import net.xinkong.furagent.core.AgentLogger
 import net.xinkong.furagent.core.ConfirmationBroker
 import net.xinkong.furagent.data.*
-import net.xinkong.furagent.shared.util.DateFormats
-import net.xinkong.furagent.shared.util.TaskCondition
-import net.xinkong.furagent.shared.util.WebSearchEngine
-import net.xinkong.furagent.shared.util.formatFileSize
+import net.xinkong.furagent.shared.util.*
 import net.xinkong.furagent.system.MediaSessionListenerService
 import net.xinkong.furagent.system.NotificationHelper
 import net.xinkong.furagent.system.PermissionRequestBroker
@@ -37,7 +34,7 @@ object SystemTools {
     private val RE_NUM_OP = Regex("^(>=|<=|==|=|>|<)(-?\\d+(?:\\.\\d+)?)$")
 
     val TOOLS = setOf(
-        "app", "device", "calendar", "schedule", "workflow", "memory", "web",
+        "app", "device", "calendar", "schedule", "workflow", "memory", "diary", "web",
         "set_alarm", "execute_shell", "get_location", "add_contact", "notifications"
     )
 
@@ -56,6 +53,7 @@ object SystemTools {
         "schedule" -> doSchedule(args, context, settings)
         "workflow" -> doWorkflow(args, context, settings)
         "memory" -> doMemory(args, context)
+        "diary" -> doDiary(args, context)
         "web" -> doWeb(args)
         "set_alarm" -> doSetAlarm(args, context)
         "execute_shell" -> doExecuteShell(args, settings)
@@ -998,6 +996,64 @@ object SystemTools {
         }
     }
 
+    // diary
+    private fun doDiary(args: JSONObject, context: Context): String {
+        val op = args.optString("op", "").trim().lowercase()
+        val root = context.filesDir
+        return when (op) {
+            "write" -> {
+                val title = args.optString("title", "").trim()
+                val content = args.optString("content", "").trim()
+                if (content.isBlank()) return "失败：未提供 content（日记正文不能为空）"
+                val tags = mutableListOf<String>()
+                args.optJSONArray("tags")?.let { arr ->
+                    for (i in 0 until arr.length()) {
+                        val t = arr.optString(i, "").trim()
+                        if (t.isNotBlank()) tags.add(t)
+                    }
+                }
+                try {
+                    val r = net.xinkong.furagent.shared.util.DiaryStore.write(
+                        root = root,
+                        title = title.ifBlank { "工作记录" },
+                        content = content,
+                        tags = tags
+                    )
+                    "已写入 ${r.date} 工作日记（当天第 ${r.indexInDay} 条）：${r.path}"
+                } catch (e: Exception) {
+                    "失败：${e.message ?: e.javaClass.simpleName}"
+                }
+            }
+            "read" -> {
+                val date = args.optString("date", "").trim()
+                val keyword = args.optString("keyword", "").trim()
+                val days = args.optInt("days", 1)
+                val text = net.xinkong.furagent.shared.util.DiaryStore.read(
+                    root = root,
+                    date = date.ifBlank { null },
+                    keyword = keyword.ifBlank { null },
+                    days = days
+                )
+                if (text.isBlank()) {
+                    if (date.isNotBlank()) "失败：$date 没有日记记录"
+                    else "暂无日记记录"
+                } else text
+            }
+            "list" -> {
+                val limit = args.optInt("limit", 30)
+                val days = net.xinkong.furagent.shared.util.DiaryStore.listDays(root, limit)
+                if (days.isEmpty()) "暂无日记记录"
+                else buildString {
+                    appendLine("共 ${days.size} 天有日记（新 → 旧）：")
+                    days.forEach { d ->
+                        appendLine("- ${d.date}：${d.entries} 条${if (d.preview.isNotBlank()) " · ${d.preview}" else ""}")
+                    }
+                }.trim()
+            }
+            else -> "失败：op 只能是 write / read / list"
+        }
+    }
+
     // web
     private suspend fun doWeb(args: JSONObject): String {
         val op = args.optString("op", "").lowercase()
@@ -1015,7 +1071,11 @@ object SystemTools {
                 val selector = args.optString("selector", "").trim()
                 WebSearchEngine.fetchContent(url, maxLength, selector)
             }
-            else -> "失败：op 只能是 search / fetch"
+            "research" -> {
+                val topic = args.optString("query", "").trim()
+                DeepResearch.run(topic)
+            }
+            else -> "失败：op 只能是 search / fetch / research"
         }
     }
 
